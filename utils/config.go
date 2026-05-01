@@ -59,6 +59,7 @@ const (
 
 const (
 	defaultPageTitle                = "海豹尬聊 SealChat"
+	maxPageDescriptionLength        = 60
 	defaultExportStorageDir         = "./data/exports"
 	defaultExportHTMLPageSize       = 100
 	defaultExportHTMLPageSizeMax    = 500
@@ -269,6 +270,7 @@ type AppConfig struct {
 	RegisterInviteRequired    bool                    `json:"registerInviteRequired" yaml:"-"`
 	WebUrl                    string                  `json:"webUrl" yaml:"webUrl"`
 	PageTitle                 string                  `json:"pageTitle" yaml:"pageTitle"`
+	PageDescription           string                  `json:"pageDescription" yaml:"pageDescription"`
 	FaviconAttachmentID       string                  `json:"faviconAttachmentId" yaml:"faviconAttachmentId"`
 	ChatHistoryPersistentDays int64                   `json:"chatHistoryPersistentDays" yaml:"chatHistoryPersistentDays"`
 	MessageSortBasis          MessageSortBasis        `json:"messageSortBasis" yaml:"messageSortBasis"`
@@ -513,6 +515,7 @@ func ReadConfig() *AppConfig {
 	if strings.TrimSpace(config.PageTitle) == "" {
 		config.PageTitle = defaultPageTitle
 	}
+	config.PageDescription = NormalizePageDescription(config.PageDescription)
 	config.MessageSortBasis = NormalizeMessageSortBasis(config.MessageSortBasis)
 	normalizedServeAt, serveAtChanged := NormalizeServeAt(config.ServeAt)
 	if serveAtChanged {
@@ -674,6 +677,14 @@ func NormalizeMessageSortBasis(value MessageSortBasis) MessageSortBasis {
 	default:
 		return MessageSortBasisTypingStart
 	}
+}
+
+func NormalizePageDescription(value string) string {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) > maxPageDescriptionLength {
+		runes = runes[:maxPageDescriptionLength]
+	}
+	return string(runes)
 }
 
 func applyExportDefaults(cfg *ExportConfig) {
@@ -1016,6 +1027,7 @@ func WriteConfig(config *AppConfig) {
 		if strings.TrimSpace(config.PageTitle) == "" {
 			config.PageTitle = defaultPageTitle
 		}
+		config.PageDescription = NormalizePageDescription(config.PageDescription)
 		normalizedServeAt, serveAtChanged := NormalizeServeAt(config.ServeAt)
 		if serveAtChanged {
 			config.ServeAt = normalizedServeAt
@@ -1034,6 +1046,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("registerInviteCode", strings.TrimSpace(config.RegisterInviteCode))
 		_ = k.Set("webUrl", config.WebUrl)
 		_ = k.Set("pageTitle", config.PageTitle)
+		_ = k.Set("pageDescription", config.PageDescription)
 		_ = k.Set("faviconAttachmentId", config.FaviconAttachmentID)
 		_ = k.Set("chatHistoryPersistentDays", config.ChatHistoryPersistentDays)
 		_ = k.Set("messageSortBasis", string(config.MessageSortBasis))

@@ -10,6 +10,7 @@ import { api, urlBase } from '@/stores/_config';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useLoginGlass } from '@/composables/useLoginGlass';
 import { useCapWidget } from '@/composables/useCapWidget';
+import { normalizePageDescription } from '@/utils/pageDescription';
 
 declare global {
   interface Window {
@@ -60,6 +61,10 @@ const config = ref<ServerConfig | null>(null);
 const signInTitle = computed(() => {
   const title = (config.value?.pageTitle ?? utils.config?.pageTitle)?.trim();
   return title && title.length > 0 ? title : DEFAULT_PAGE_TITLE;
+});
+
+const signInDescription = computed(() => {
+  return normalizePageDescription(config.value?.pageDescription ?? utils.config?.pageDescription);
 });
 
 // Login background
@@ -374,7 +379,10 @@ onBeforeUnmount(() => {
       :class="{ 'sc-glass-panel': hasLoginBg }"
       :style="hasLoginBg ? loginGlassStyle : undefined"
     >
-      <h2 class="font-bold text-xl mb-8">{{ signInTitle }}</h2>
+      <div class="sign-in-header">
+        <h2 class="font-bold text-xl sign-in-title">{{ signInTitle }}</h2>
+        <p v-if="signInDescription" class="sign-in-description">{{ signInDescription }}</p>
+      </div>
 
       <n-form ref="formRef" :model="model" :rules="rules" class="w-full px-8 max-w-md">
       <n-form-item path="account" label="用户名/昵称/邮箱">
@@ -485,5 +493,22 @@ onBeforeUnmount(() => {
 
 .sign-in-content.sc-glass-panel {
   border-radius: 12px;
+}
+
+.sign-in-header {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.sign-in-title {
+  margin: 0;
+}
+
+.sign-in-description {
+  max-width: 28rem;
+  margin: 0.35rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  opacity: 0.68;
 }
 </style>

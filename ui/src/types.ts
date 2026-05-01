@@ -286,6 +286,7 @@ export interface ServerConfig {
   registerInviteRequired?: boolean;
   webUrl: string;
   pageTitle?: string;
+  pageDescription?: string;
   faviconAttachmentId?: string;
   chatHistoryPersistentDays: number;
   messageSortBasis?: 'typing_start' | 'send_time';
