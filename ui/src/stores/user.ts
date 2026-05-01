@@ -178,13 +178,14 @@ export const useUserStore = defineStore({
       }
     },
 
-    async signUp(form: { username: string; password: string; nickname: string; captchaId?: string; captchaValue?: string; turnstileToken?: string; capToken?: string }) {
+    async signUp(form: { username: string; password: string; nickname: string; invitationCode?: string; captchaId?: string; captchaValue?: string; turnstileToken?: string; capToken?: string }) {
       try {
         // 在此处进行用户鉴权操作，获取 accessToken
         const resp = await api.post('api/v1/user-signup', {
           username: form.username,
           password: form.password,
           nickname: form.nickname,
+          invitationCode: form.invitationCode,
           captchaId: form.captchaId,
           captchaValue: form.captchaValue,
           turnstileToken: form.turnstileToken,
@@ -259,12 +260,12 @@ export const useUserStore = defineStore({
     },
 
     // 邮箱认证相关
-    async sendSignupEmailCode(payload: { email: string; captchaId?: string; captchaValue?: string; turnstileToken?: string; capToken?: string }) {
+    async sendSignupEmailCode(payload: { email: string; invitationCode?: string; captchaId?: string; captchaValue?: string; turnstileToken?: string; capToken?: string }) {
       const resp = await api.post('api/v1/email-auth/signup-code', payload);
       return resp;
     },
 
-    async signUpWithEmail(payload: { username: string; password: string; nickname: string; email: string; code: string }) {
+    async signUpWithEmail(payload: { username: string; password: string; nickname: string; email: string; code: string; invitationCode?: string }) {
       const resp = await api.post('api/v1/email-auth/signup', payload);
       const data = resp.data as { token: string; user: any };
       if (data.token) {

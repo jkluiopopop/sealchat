@@ -265,6 +265,8 @@ type AppConfig struct {
 	Domain                    string                  `json:"domain" yaml:"domain"`
 	ImageBaseURL              string                  `json:"imageBaseUrl" yaml:"imageBaseUrl"`
 	RegisterOpen              bool                    `json:"registerOpen" yaml:"registerOpen"`
+	RegisterInviteCode        string                  `json:"registerInviteCode" yaml:"registerInviteCode"`
+	RegisterInviteRequired    bool                    `json:"registerInviteRequired" yaml:"-"`
 	WebUrl                    string                  `json:"webUrl" yaml:"webUrl"`
 	PageTitle                 string                  `json:"pageTitle" yaml:"pageTitle"`
 	FaviconAttachmentID       string                  `json:"faviconAttachmentId" yaml:"faviconAttachmentId"`
@@ -1029,6 +1031,7 @@ func WriteConfig(config *AppConfig) {
 			_ = k.Set("domain", config.Domain)
 		}
 		_ = k.Set("registerOpen", config.RegisterOpen)
+		_ = k.Set("registerInviteCode", strings.TrimSpace(config.RegisterInviteCode))
 		_ = k.Set("webUrl", config.WebUrl)
 		_ = k.Set("pageTitle", config.PageTitle)
 		_ = k.Set("faviconAttachmentId", config.FaviconAttachmentID)

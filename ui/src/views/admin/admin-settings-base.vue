@@ -14,6 +14,7 @@ const model = ref<ServerConfig>({
   serveAt: ':3212',
   domain: '127.0.0.1:3212',
   registerOpen: true,
+  registerInviteCode: '',
   // VisitorOpen: true,
   webUrl: '/',
   pageTitle: '海豹尬聊 SealChat',
@@ -190,6 +191,7 @@ const applyBasicSettingsToPayload = (payload: ServerConfig) => {
   payload.serveAt = model.value.serveAt;
   payload.domain = model.value.domain;
   payload.registerOpen = model.value.registerOpen;
+  payload.registerInviteCode = (model.value.registerInviteCode || '').trim();
   payload.webUrl = model.value.webUrl;
   payload.pageTitle = model.value.pageTitle;
   payload.faviconAttachmentId = (model.value.faviconAttachmentId || '').trim();
@@ -484,7 +486,17 @@ const sendSmtpTestEmail = async () => {
         <n-input v-model:value="model.domain" @focus="feedbackAdminShow = true" @blur="feedbackAdminShow = false" />
       </n-form-item>
       <n-form-item label="开放注册">
-        <n-switch v-model:value="model.registerOpen" />
+        <div class="flex gap-3 items-center w-full">
+          <n-switch v-model:value="model.registerOpen" />
+          <n-input
+            v-model:value="model.registerInviteCode"
+            type="password"
+            show-password-on="click"
+            placeholder="邀请码，留空则不需要"
+            style="max-width: 280px;"
+          />
+          <span class="text-xs text-gray-500">填写后，新用户注册前需先验证邀请码。</span>
+        </div>
       </n-form-item>
       <!-- <n-form-item label="开放游客">
               <n-switch v-model:value="model.VisitorOpen" disabled />

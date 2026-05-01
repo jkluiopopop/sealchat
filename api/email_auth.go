@@ -51,6 +51,7 @@ func getClientIP(c *fiber.Ctx) string {
 func EmailAuthSignupCodeSend(c *fiber.Ctx) error {
 	var req struct {
 		Email          string `json:"email"`
+		InvitationCode string `json:"invitationCode"`
 		CaptchaId      string `json:"captchaId"`
 		CaptchaValue   string `json:"captchaValue"`
 		TurnstileToken string `json:"turnstileToken"`
@@ -66,6 +67,12 @@ func EmailAuthSignupCodeSend(c *fiber.Ctx) error {
 	}
 
 	cfg := utils.GetConfig()
+	if cfg != nil && !cfg.RegisterOpen {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "注册已关闭"})
+	}
+	if !validateRegisterInviteCode(cfg, req.InvitationCode) {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "邀请码无效"})
+	}
 	captchaCfg := cfg.Captcha.Target(utils.CaptchaSceneSignup)
 	if err := verifyCaptchaByMode(utils.CaptchaSceneSignup, captchaCfg, req.CaptchaId, req.CaptchaValue, req.TurnstileToken, req.CapToken); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -343,11 +350,12 @@ func EmailAuthBindConfirm(c *fiber.Ctx) error {
 
 func EmailAuthSignupWithCode(c *fiber.Ctx) error {
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Nickname string `json:"nickname"`
-		Email    string `json:"email"`
-		Code     string `json:"code"`
+		Username       string `json:"username"`
+		Password       string `json:"password"`
+		Nickname       string `json:"nickname"`
+		Email          string `json:"email"`
+		Code           string `json:"code"`
+		InvitationCode string `json:"invitationCode"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "请求格式错误"})
@@ -369,6 +377,9 @@ func EmailAuthSignupWithCode(c *fiber.Ctx) error {
 	cfg := utils.GetConfig()
 	if !cfg.RegisterOpen {
 		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "注册已关闭"})
+	}
+	if !validateRegisterInviteCode(cfg, req.InvitationCode) {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"error": "邀请码无效"})
 	}
 
 	svc := service.NewEmailAuthService()

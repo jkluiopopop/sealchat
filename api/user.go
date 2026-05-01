@@ -57,12 +57,45 @@ func validateCaptchaForScene(scene utils.CaptchaScene, captchaId, captchaValue, 
 	return true, ""
 }
 
+func registerInviteRequired(cfg *utils.AppConfig) bool {
+	return cfg != nil && strings.TrimSpace(cfg.RegisterInviteCode) != ""
+}
+
+func validateRegisterInviteCode(cfg *utils.AppConfig, inviteCode string) bool {
+	expected := ""
+	if cfg != nil {
+		expected = strings.TrimSpace(cfg.RegisterInviteCode)
+	}
+	if expected == "" {
+		return true
+	}
+	return strings.TrimSpace(inviteCode) == expected
+}
+
+func RegisterInviteVerify(c *fiber.Ctx) error {
+	var requestBody struct {
+		InvitationCode string `json:"invitationCode" form:"invitationCode"`
+	}
+	if err := c.BodyParser(&requestBody); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"message": "请求参数错误",
+		})
+	}
+	if !validateRegisterInviteCode(utils.GetConfig(), requestBody.InvitationCode) {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{
+			"message": "邀请码无效",
+		})
+	}
+	return c.JSON(fiber.Map{"success": true})
+}
+
 // UserSignup 注册接口
 func UserSignup(c *fiber.Ctx) error {
 	type RequestBody struct {
 		Username       string `json:"username" form:"username" binding:"required"`
 		Password       string `json:"password" form:"password" binding:"required"`
 		Nickname       string `json:"nickname" form:"nickname" binding:"required"`
+		InvitationCode string `json:"invitationCode" form:"invitationCode"`
 		CaptchaId      string `json:"captchaId" form:"captchaId"`
 		CaptchaValue   string `json:"captchaValue" form:"captchaValue"`
 		TurnstileToken string `json:"turnstileToken" form:"turnstileToken"`
@@ -78,6 +111,18 @@ func UserSignup(c *fiber.Ctx) error {
 
 	username := requestBody.Username
 	password := requestBody.Password
+
+	cfg := utils.GetConfig()
+	if cfg != nil && !cfg.RegisterOpen {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{
+			"message": "注册已关闭",
+		})
+	}
+	if !validateRegisterInviteCode(cfg, requestBody.InvitationCode) {
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{
+			"message": "邀请码无效",
+		})
+	}
 
 	if username == "" || password == "" {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{

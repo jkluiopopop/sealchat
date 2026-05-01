@@ -71,6 +71,14 @@ const utils = useUtilsStore();
 const config = ref<ServerConfig | null>(null);
 const captchaMode = computed(() => config.value?.captcha?.signup?.mode ?? config.value?.captcha?.mode ?? 'off');
 const emailAuthEnabled = computed(() => config.value?.emailAuth?.enabled ?? false);
+const registerInviteRequired = computed(() => config.value?.registerInviteRequired ?? false);
+const inviteForm = reactive({ code: '' });
+const inviteVerified = ref(false);
+const inviteVerifying = ref(false);
+const inviteError = ref('');
+const verifiedInvitationCode = ref('');
+const canShowSignupForm = computed(() => !!config.value?.registerOpen && (!registerInviteRequired.value || inviteVerified.value));
+const currentInvitationCode = computed(() => registerInviteRequired.value ? verifiedInvitationCode.value : '');
 
 const emailCodeSending = ref(false);
 const emailCodeCountdown = ref(0);
@@ -88,6 +96,25 @@ const shouldForceCaptchaRetry = (errMsg: string) => {
     return false;
   }
   return ['请完成验证码验证', '请完成人机验证', '人机验证失败', '验证码错误', '验证码验证失败'].some((keyword) => errMsg.includes(keyword));
+};
+
+const verifyInvitationCode = async () => {
+  const code = inviteForm.code.trim();
+  if (!code) {
+    inviteError.value = '请输入邀请码';
+    return;
+  }
+  inviteVerifying.value = true;
+  inviteError.value = '';
+  try {
+    await api.post('api/v1/register-invite/verify', { invitationCode: code });
+    verifiedInvitationCode.value = code;
+    inviteVerified.value = true;
+  } catch (e: any) {
+    inviteError.value = e?.response?.data?.message || '邀请码无效';
+  } finally {
+    inviteVerifying.value = false;
+  }
 };
 
 const sendEmailCode = async () => {
@@ -119,6 +146,7 @@ const sendEmailCode = async () => {
   try {
     await userStore.sendSignupEmailCode({
       email,
+      invitationCode: currentInvitationCode.value,
       captchaId: captchaVerified.value ? '' : captchaId.value,
       captchaValue: captchaVerified.value ? '' : captchaInput.value.trim(),
       turnstileToken: captchaVerified.value ? '' : turnstileToken.value,
@@ -361,6 +389,23 @@ const renderTurnstileWidget = async () => {
   }
 };
 
+const renderCaptchaAfterSignupFormVisible = async () => {
+  if (!canShowSignupForm.value) {
+    return;
+  }
+  await nextTick();
+  if (!canShowSignupForm.value) {
+    return;
+  }
+  if (captchaMode.value === 'local') {
+    await fetchCaptcha();
+  } else if (captchaMode.value === 'turnstile') {
+    await renderTurnstileWidget();
+  } else if (captchaMode.value === 'cap') {
+    await renderCapWidget();
+  }
+};
+
 watch(
   () => captchaMode.value,
   (mode) => {
@@ -373,18 +418,50 @@ watch(
     if (mode === 'local') {
       destroyCapWidget();
       destroyTurnstile();
-      fetchCaptcha();
+      if (canShowSignupForm.value) {
+        fetchCaptcha();
+      }
     } else if (mode === 'turnstile') {
       destroyCapWidget();
       resetLocalCaptchaState();
-      renderTurnstileWidget();
+      if (canShowSignupForm.value) {
+        renderTurnstileWidget();
+      }
     } else if (mode === 'cap') {
       destroyTurnstile();
       resetLocalCaptchaState();
-      renderCapWidget();
+      if (canShowSignupForm.value) {
+        renderCapWidget();
+      }
     }
   },
   { immediate: true },
+);
+
+watch(
+  () => canShowSignupForm.value,
+  (visible) => {
+    if (visible) {
+      renderCaptchaAfterSignupFormVisible();
+      return;
+    }
+    resetLocalCaptchaState();
+    destroyCapWidget();
+    destroyTurnstile();
+  },
+  { immediate: true },
+);
+
+watch(
+  () => registerInviteRequired.value,
+  (required) => {
+    if (!required) {
+      inviteForm.code = '';
+      inviteVerified.value = false;
+      verifiedInvitationCode.value = '';
+      inviteError.value = '';
+    }
+  },
 );
 
 const signUp = async () => {
@@ -417,6 +494,7 @@ const signUp = async () => {
         nickname: form.nickname || form.username,
         email: form.email.trim().toLowerCase(),
         code: form.emailCode.trim(),
+        invitationCode: currentInvitationCode.value,
       });
       message.success('注册成功，即将前往世界大厅');
       router.replace({ name: 'world-lobby' });
@@ -451,6 +529,7 @@ const signUp = async () => {
     username: form.username,
     password: form.password,
     nickname: form.nickname,
+    invitationCode: currentInvitationCode.value,
     captchaId: captchaId.value,
     captchaValue,
     turnstileToken: turnstileToken.value,
@@ -515,7 +594,7 @@ onBeforeUnmount(() => {
     <div class="w-full max-w-sm mx-auto overflow-hidden rounded-lg shadow-md sign-up-card sc-form-scroll"
       :class="{ 'sc-glass-panel': hasLoginBg, 'sign-up-card--glass': hasLoginBg }"
       :style="hasLoginBg ? loginGlassStyle : undefined"
-      v-if="config?.registerOpen">
+      v-if="canShowSignupForm">
       <div class="px-8 py-6">
         <h3 class="mb-6 text-xl font-medium text-center auth-title">注册</h3>
 
@@ -653,8 +732,36 @@ onBeforeUnmount(() => {
     </div>
     <div class="w-full max-w-sm mx-auto overflow-hidden rounded-lg shadow-md sign-up-card"
       :class="{ 'sc-glass-panel': hasLoginBg, 'sign-up-card--glass': hasLoginBg }"
-      :style="hasLoginBg ? loginGlassStyle : undefined" v-else>
+      :style="hasLoginBg ? loginGlassStyle : undefined" v-else-if="!config?.registerOpen">
       <div class="p-6">你来晚了，门已经悄然关闭。</div>
+    </div>
+    <div class="w-full max-w-sm mx-auto overflow-hidden rounded-lg shadow-md sign-up-card"
+      :class="{ 'sc-glass-panel': hasLoginBg, 'sign-up-card--glass': hasLoginBg }"
+      :style="hasLoginBg ? loginGlassStyle : undefined" v-else-if="config?.registerOpen && registerInviteRequired">
+      <div class="px-8 py-6">
+        <h3 class="mb-3 text-xl font-medium text-center auth-title">输入邀请码</h3>
+        <p class="invite-hint">此站点需要邀请码后才能注册。</p>
+        <n-form class="w-full" @submit.prevent="verifyInvitationCode">
+          <n-form-item label="邀请码">
+            <n-input
+              v-model:value="inviteForm.code"
+              type="password"
+              show-password-on="click"
+              placeholder="请输入邀请码"
+              @keydown.enter.prevent="verifyInvitationCode"
+            />
+          </n-form-item>
+          <div v-if="inviteError" class="auth-error">{{ inviteError }}</div>
+          <div class="auth-actions">
+            <n-button type="primary" round :loading="inviteVerifying" @click.prevent="verifyInvitationCode">继续注册</n-button>
+          </div>
+        </n-form>
+      </div>
+      <div class="flex items-center justify-center py-4 text-center sign-up-footer">
+        <span class="text-sm sign-up-footer__text">已有账号 ？</span>
+        <router-link :to="{ name: 'user-signin' }"
+          class="mx-2 text-sm font-bold sign-up-footer__link hover:underline">登录</router-link>
+      </div>
     </div>
   </div>
 </template>
@@ -733,6 +840,13 @@ onBeforeUnmount(() => {
   margin-bottom: 12px;
   font-size: 12px;
   color: #ef4444;
+}
+
+.invite-hint {
+  margin-bottom: 1rem;
+  text-align: center;
+  font-size: 13px;
+  color: var(--sc-text-secondary, #475569);
 }
 
 .auth-actions {

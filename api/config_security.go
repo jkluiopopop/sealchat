@@ -11,6 +11,8 @@ func sanitizeConfigForClient(cfg *utils.AppConfig) utils.AppConfig {
 		return utils.AppConfig{}
 	}
 	ret := *cfg
+	ret.RegisterInviteRequired = strings.TrimSpace(cfg.RegisterInviteCode) != ""
+	ret.RegisterInviteCode = ""
 
 	// log upload token
 	ret.LogUpload.Token = ""

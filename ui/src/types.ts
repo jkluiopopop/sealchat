@@ -282,6 +282,8 @@ export interface ServerConfig {
   serveAt: string;
   domain: string;
   registerOpen: boolean;
+  registerInviteCode?: string;
+  registerInviteRequired?: boolean;
   webUrl: string;
   pageTitle?: string;
   faviconAttachmentId?: string;

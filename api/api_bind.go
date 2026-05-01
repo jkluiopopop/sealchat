@@ -342,6 +342,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	// Email auth routes (public)
 	v1.Post("/email-auth/signup-code", EmailAuthSignupCodeSend)
 	v1.Post("/email-auth/signup", EmailAuthSignupWithCode)
+	v1.Post("/register-invite/verify", RegisterInviteVerify)
 	v1.Post("/password-reset/verify", EmailAuthPasswordResetVerify)
 	v1.Post("/password-reset/request", EmailAuthPasswordResetRequest)
 	v1.Post("/password-reset/confirm", EmailAuthPasswordResetConfirm)
@@ -349,8 +350,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1.Get("/config", func(c *fiber.Ctx) error {
 		ret := sanitizeConfigForClient(appConfig)
 		u := getCurUser(c)
-		if u == nil || !pm.CanWithSystemRole(u.ID, pm.PermModAdmin) {
+		isAdmin := u != nil && pm.CanWithSystemRole(u.ID, pm.PermModAdmin)
+		if !isAdmin {
 			ret.ServeAt = ""
+		} else if appConfig != nil {
+			ret.RegisterInviteCode = appConfig.RegisterInviteCode
 		}
 		ffmpegAvailable := false
 		if svc := service.GetAudioService(); svc != nil {

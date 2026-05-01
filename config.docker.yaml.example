@@ -35,6 +35,7 @@ dbUrl: ./data/chat.db
 
 # 功能开关
 registerOpen: true                           # 是否开放注册
+registerInviteCode: ""                       # 注册邀请码，留空则不需要
 builtInSealBotEnable: true                   # 启用内置小海豹
 chatHistoryPersistentDays: -1                # 聊天记录保留天数 (-1 永久)
 
