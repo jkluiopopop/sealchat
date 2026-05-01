@@ -77,7 +77,7 @@ export const useUserStore = defineStore({
       return resp;
     },
 
-    async signIn(payload: { username: string; password: string; captchaId?: string; captchaValue?: string; turnstileToken?: string }) {
+    async signIn(payload: { username: string; password: string; captchaId?: string; captchaValue?: string; turnstileToken?: string; capToken?: string }) {
       // 在此处进行用户鉴权操作，获取 accessToken
       const resp = await api.post('api/v1/user-signin', {
         username: payload.username,
@@ -85,6 +85,7 @@ export const useUserStore = defineStore({
         captchaId: payload.captchaId,
         captchaValue: payload.captchaValue,
         turnstileToken: payload.turnstileToken,
+        capToken: payload.capToken,
       })
 
       const data = resp.data as { token: string, message: string };
@@ -177,16 +178,18 @@ export const useUserStore = defineStore({
       }
     },
 
-    async signUp(form: { username: string; password: string; nickname: string; captchaId?: string; captchaValue?: string; turnstileToken?: string }) {
+    async signUp(form: { username: string; password: string; nickname: string; invitationCode?: string; captchaId?: string; captchaValue?: string; turnstileToken?: string; capToken?: string }) {
       try {
         // 在此处进行用户鉴权操作，获取 accessToken
         const resp = await api.post('api/v1/user-signup', {
           username: form.username,
           password: form.password,
           nickname: form.nickname,
+          invitationCode: form.invitationCode,
           captchaId: form.captchaId,
           captchaValue: form.captchaValue,
           turnstileToken: form.turnstileToken,
+          capToken: form.capToken,
         })
 
         const data = resp.data as { token: string, message: string };
@@ -257,12 +260,12 @@ export const useUserStore = defineStore({
     },
 
     // 邮箱认证相关
-    async sendSignupEmailCode(payload: { email: string; captchaId?: string; captchaValue?: string; turnstileToken?: string }) {
+    async sendSignupEmailCode(payload: { email: string; invitationCode?: string; captchaId?: string; captchaValue?: string; turnstileToken?: string; capToken?: string }) {
       const resp = await api.post('api/v1/email-auth/signup-code', payload);
       return resp;
     },
 
-    async signUpWithEmail(payload: { username: string; password: string; nickname: string; email: string; code: string }) {
+    async signUpWithEmail(payload: { username: string; password: string; nickname: string; email: string; code: string; invitationCode?: string }) {
       const resp = await api.post('api/v1/email-auth/signup', payload);
       const data = resp.data as { token: string; user: any };
       if (data.token) {
@@ -271,12 +274,12 @@ export const useUserStore = defineStore({
       return resp;
     },
 
-    async verifyPasswordResetIdentity(payload: { account: string; captchaId?: string; captchaValue?: string; turnstileToken?: string }) {
+    async verifyPasswordResetIdentity(payload: { account: string; captchaId?: string; captchaValue?: string; turnstileToken?: string; capToken?: string }) {
       const resp = await api.post('api/v1/password-reset/verify', payload);
       return resp;
     },
 
-    async sendPasswordResetCode(payload: { account: string; captchaId?: string; captchaValue?: string; turnstileToken?: string; verified?: boolean }) {
+    async sendPasswordResetCode(payload: { account: string; captchaId?: string; captchaValue?: string; turnstileToken?: string; capToken?: string; verified?: boolean }) {
       const resp = await api.post('api/v1/password-reset/request', payload);
       return resp;
     },
@@ -286,7 +289,7 @@ export const useUserStore = defineStore({
       return resp;
     },
 
-    async sendBindEmailCode(payload: { email: string; captchaId?: string; captchaValue?: string; turnstileToken?: string }) {
+    async sendBindEmailCode(payload: { email: string; captchaId?: string; captchaValue?: string; turnstileToken?: string; capToken?: string }) {
       const resp = await api.post('api/v1/email-auth/bind-code', payload, {
         headers: { 'Authorization': this.token }
       });

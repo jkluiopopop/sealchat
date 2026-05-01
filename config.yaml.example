@@ -21,28 +21,67 @@
     version: 105
     note: "默认上传到海豹染色器获取BBcode/Docx"
   registerOpen: true
+  registerInviteCode: "" # 注册邀请码，留空则不需要
   serveAt: :3212
+  certificate:
+    enabled: false                # 第一版仅支持公网 IP 证书；启用后保存配置并重启生效
+    subjectIp: ""                 # 服务器公网 IPv4/IPv6，不能填写内网、回环或保留地址
+    issuer: letsencrypt_shortlived # letsencrypt_shortlived / zerossl_90d
+    challenge: http-01            # http-01 需要公网 80 端口；tls-alpn-01 需要公网 443 端口
+    email: ""
+    storageDir: ./data/certmagic
+    httpsServeAt: ""              # 留空复用 serveAt，同端口同时支持 HTTP/HTTPS；也可填 :443 或 :8443 使用独立 HTTPS 端口
+    forceHTTPS: true
+    redirectHTTP: true
+    zeroSSLAPIKey: ""             # ZeroSSL API Key；也可使用 EAB 凭据
+    zeroSSLEABKeyID: ""
+    zeroSSLEABMACKey: ""
+    staging: false
   version: 1
   webUrl: /
   pageTitle: "海豹尬聊 SealChat"
   faviconAttachmentId: "" # 可选：平台管理-基本设置上传网页图标后会写入此处
   captcha:
-    # 验证码：off 关闭/local 本地生成/turnstile 启动cloudflare turnstile盾，需要配置对应的key
+    # 验证码：off 关闭/local 本地图形码/turnstile Cloudflare Turnstile/cap 本地托管 Cap PoW 验证码
+    cap:
+      challengeCount: 50
+      challengeSize: 32
+      challengeDifficulty: 4
+      challengeExpiresSeconds: 600
+      tokenTTLSeconds: 1200
     signup:
-      mode: local
+      mode: cap
       turnstile:
         siteKey: ""
         secretKey: ""
+      cap:
+        challengeCount: 50
+        challengeSize: 32
+        challengeDifficulty: 4
+        challengeExpiresSeconds: 600
+        tokenTTLSeconds: 1200
     signin:
       mode: off
       turnstile:
         siteKey: ""
         secretKey: ""
+      cap:
+        challengeCount: 50
+        challengeSize: 32
+        challengeDifficulty: 4
+        challengeExpiresSeconds: 600
+        tokenTTLSeconds: 1200
     passwordReset:
-      mode: local
+      mode: cap
       turnstile:
         siteKey: ""
         secretKey: ""
+      cap:
+        challengeCount: 50
+        challengeSize: 32
+        challengeDifficulty: 4
+        challengeExpiresSeconds: 600
+        tokenTTLSeconds: 1200
 
   sqlite:
     # 是否启用 WAL 日志，提高读写并发

@@ -136,17 +136,27 @@ export interface TurnstileConfig {
   secretKey?: string;
 }
 
+export interface CaptchaCapConfig {
+  challengeCount?: number;
+  challengeSize?: number;
+  challengeDifficulty?: number;
+  challengeExpiresSeconds?: number;
+  tokenTTLSeconds?: number;
+}
+
 export interface CaptchaTargetConfig {
-  mode?: 'off' | 'local' | 'turnstile';
+  mode?: 'off' | 'local' | 'turnstile' | 'cap';
   turnstile?: TurnstileConfig;
+  cap?: CaptchaCapConfig;
 }
 
 export interface CaptchaConfig {
   signup?: CaptchaTargetConfig;
   signin?: CaptchaTargetConfig;
   passwordReset?: CaptchaTargetConfig;
-  mode?: 'off' | 'local' | 'turnstile';
+  mode?: 'off' | 'local' | 'turnstile' | 'cap';
   turnstile?: TurnstileConfig;
+  cap?: CaptchaCapConfig;
 }
 
 export interface LoginBackgroundConfig {
@@ -226,12 +236,57 @@ export interface ThemeManagementConfig {
   defaultPlatformThemeId?: string;
 }
 
+export type CertificateIssuer = 'letsencrypt_shortlived' | 'zerossl_90d';
+export type CertificateChallenge = 'http-01' | 'tls-alpn-01';
+
+export interface CertificateConfig {
+  enabled: boolean;
+  subjectIp: string;
+  issuer: CertificateIssuer;
+  challenge: CertificateChallenge;
+  email: string;
+  storageDir: string;
+  httpsServeAt?: string;
+  forceHTTPS: boolean;
+  redirectHTTP: boolean;
+  zeroSSLAPIKey?: string;
+  zeroSSLEABKeyID?: string;
+  zeroSSLEABMACKey?: string;
+  staging?: boolean;
+}
+
+export interface CertificateStatus {
+  enabled: boolean;
+  runtimeActive: boolean;
+  subjectIp: string;
+  issuer: string;
+  challenge: string;
+  certificatePresent: boolean;
+  notBefore?: string;
+  notAfter?: string;
+  remainingDays: number;
+  lastError?: string;
+}
+
+export interface CertificateLogEntry {
+  time: string;
+  level: string;
+  event: string;
+  message: string;
+  subjectIp?: string;
+  issuer?: string;
+  challenge?: string;
+}
+
 export interface ServerConfig {
   serveAt: string;
   domain: string;
   registerOpen: boolean;
+  registerInviteCode?: string;
+  registerInviteRequired?: boolean;
   webUrl: string;
   pageTitle?: string;
+  pageDescription?: string;
   faviconAttachmentId?: string;
   chatHistoryPersistentDays: number;
   messageSortBasis?: 'typing_start' | 'send_time';
@@ -257,6 +312,7 @@ export interface ServerConfig {
   audioImportEnabled?: boolean;
   loginBackground?: LoginBackgroundConfig;
   themeManagement?: ThemeManagementConfig;
+  certificate?: CertificateConfig;
 }
 
 export interface UserInfo {

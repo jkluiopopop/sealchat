@@ -2,6 +2,7 @@
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useUtilsStore } from '@/stores/utils';
 import type { ServerConfig } from '@/types';
+import { normalizePageDescription, PAGE_DESCRIPTION_MAX_LENGTH } from '@/utils/pageDescription';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import { cloneDeep } from 'lodash-es';
 import { useMessage } from 'naive-ui';
@@ -14,9 +15,11 @@ const model = ref<ServerConfig>({
   serveAt: ':3212',
   domain: '127.0.0.1:3212',
   registerOpen: true,
+  registerInviteCode: '',
   // VisitorOpen: true,
   webUrl: '/',
   pageTitle: '海豹尬聊 SealChat',
+  pageDescription: '',
   faviconAttachmentId: '',
   chatHistoryPersistentDays: 0,
   messageSortBasis: 'typing_start',
@@ -190,8 +193,10 @@ const applyBasicSettingsToPayload = (payload: ServerConfig) => {
   payload.serveAt = model.value.serveAt;
   payload.domain = model.value.domain;
   payload.registerOpen = model.value.registerOpen;
+  payload.registerInviteCode = (model.value.registerInviteCode || '').trim();
   payload.webUrl = model.value.webUrl;
   payload.pageTitle = model.value.pageTitle;
+  payload.pageDescription = normalizePageDescription(model.value.pageDescription);
   payload.faviconAttachmentId = (model.value.faviconAttachmentId || '').trim();
   payload.chatHistoryPersistentDays = model.value.chatHistoryPersistentDays;
   payload.messageSortBasis = model.value.messageSortBasis;
@@ -484,7 +489,17 @@ const sendSmtpTestEmail = async () => {
         <n-input v-model:value="model.domain" @focus="feedbackAdminShow = true" @blur="feedbackAdminShow = false" />
       </n-form-item>
       <n-form-item label="开放注册">
-        <n-switch v-model:value="model.registerOpen" />
+        <div class="flex gap-3 items-center w-full">
+          <n-switch v-model:value="model.registerOpen" />
+          <n-input
+            v-model:value="model.registerInviteCode"
+            type="password"
+            show-password-on="click"
+            placeholder="邀请码，留空则不需要"
+            style="max-width: 280px;"
+          />
+          <span class="text-xs text-gray-500">填写后，新用户注册前需先验证邀请码。</span>
+        </div>
       </n-form-item>
       <!-- <n-form-item label="开放游客">
               <n-switch v-model:value="model.VisitorOpen" disabled />
@@ -494,6 +509,14 @@ const sendSmtpTestEmail = async () => {
       </n-form-item>
       <n-form-item label="网页标题" feedback="留空将回退至「海豹尬聊 SealChat」">
         <n-input v-model:value="model.pageTitle" />
+      </n-form-item>
+      <n-form-item label="网页简介" feedback="保存后显示在登录页标题下方，最多 60 字">
+        <n-input
+          v-model:value="model.pageDescription"
+          :maxlength="PAGE_DESCRIPTION_MAX_LENGTH"
+          show-count
+          placeholder="留空则不显示"
+        />
       </n-form-item>
       <n-form-item label="网页图标" feedback="建议使用 64x64 或 128x128 的正方形 PNG/ICO。">
         <div class="flex items-center gap-3 flex-wrap">

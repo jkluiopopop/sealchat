@@ -324,72 +324,7 @@ const handleClose = () => {
 }
 
 const stopLivePreviewSafely = () => {
-  clearPreviewThemeVars()
-  if (typeof display.applyTheme === 'function') {
-    display.applyTheme()
-  }
-}
-
-const previewCssVars = [
-  '--sc-bg-surface', '--sc-bg-elevated', '--sc-bg-input', '--sc-bg-header',
-  '--sc-text-primary', '--sc-text-secondary',
-  '--chat-text-primary', '--chat-text-secondary',
-  '--custom-chat-ic-bg', '--custom-chat-ooc-bg', '--custom-chat-stage-bg', '--custom-chat-preview-bg', '--custom-chat-preview-dot',
-  '--sc-border-mute', '--sc-border-strong',
-  '--primary-color', '--primary-color-hover', '--sc-action-ribbon-hover-text',
-  '--custom-keyword-bg', '--custom-keyword-border',
-  '--chat-inline-code-bg', '--chat-inline-code-fg', '--chat-inline-code-border',
-]
-
-const clearPreviewThemeVars = () => {
-  if (typeof document === 'undefined') return
-  const root = document.documentElement
-  previewCssVars.forEach((name) => {
-    root.style.removeProperty(name)
-  })
-  delete root.dataset.customTheme
-}
-
-const applyPreviewColorsToRoot = (colors: CustomThemeColors) => {
-  if (typeof document === 'undefined') return
-  const root = document.documentElement
-  const setVar = (name: string, value?: string) => {
-    if (!value) return
-    root.style.setProperty(name, value)
-  }
-
-  clearPreviewThemeVars()
-
-  setVar('--sc-bg-surface', colors.bgSurface)
-  setVar('--sc-bg-elevated', colors.bgElevated)
-  setVar('--sc-bg-input', colors.bgInput)
-  setVar('--sc-bg-header', colors.bgHeader)
-
-  setVar('--sc-text-primary', colors.textPrimary)
-  setVar('--chat-text-primary', colors.textPrimary)
-  setVar('--sc-text-secondary', colors.textSecondary)
-  setVar('--chat-text-secondary', colors.textSecondary)
-
-  setVar('--custom-chat-ic-bg', colors.chatIcBg)
-  setVar('--custom-chat-ooc-bg', colors.chatOocBg)
-  setVar('--custom-chat-stage-bg', colors.chatStageBg || colors.chatIcBg)
-  setVar('--custom-chat-preview-bg', colors.chatPreviewBg)
-  setVar('--custom-chat-preview-dot', colors.chatPreviewDot)
-
-  setVar('--sc-border-mute', colors.borderMute)
-  setVar('--sc-border-strong', colors.borderStrong)
-
-  setVar('--primary-color', colors.primaryColor)
-  setVar('--primary-color-hover', colors.primaryColorHover)
-  setVar('--sc-action-ribbon-hover-text', colors.actionRibbonHoverText)
-
-  setVar('--custom-keyword-bg', colors.keywordBg)
-  setVar('--custom-keyword-border', colors.keywordBorder)
-  setVar('--chat-inline-code-bg', colors.inlineCodeBg)
-  setVar('--chat-inline-code-fg', colors.inlineCodeFg)
-  setVar('--chat-inline-code-border', colors.inlineCodeBorder)
-
-  root.dataset.customTheme = 'true'
+  display.stopCustomThemePreview()
 }
 
 const previewColorVarMap: Record<keyof CustomThemeColors, string[]> = {
@@ -462,7 +397,7 @@ const handleOpenLivePreview = () => {
       ...currentCssColors,
     }
     livePreviewFloatingVisible.value = true
-    applyPreviewColorsToRoot(buildLivePreviewColors())
+    display.startCustomThemePreview(buildLivePreviewColors())
   } catch (error) {
     console.error('[CustomThemePanel] 开启实时预览失败', error)
     livePreviewFloatingVisible.value = false
@@ -528,7 +463,7 @@ watch(
   () => themeColors.value,
   () => {
     if (!livePreviewFloatingVisible.value) return
-    applyPreviewColorsToRoot(buildLivePreviewColors())
+    display.updateCustomThemePreview(buildLivePreviewColors())
   },
   { deep: true },
 )

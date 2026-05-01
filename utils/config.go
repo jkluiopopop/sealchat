@@ -59,6 +59,7 @@ const (
 
 const (
 	defaultPageTitle                = "海豹尬聊 SealChat"
+	maxPageDescriptionLength        = 60
 	defaultExportStorageDir         = "./data/exports"
 	defaultExportHTMLPageSize       = 100
 	defaultExportHTMLPageSizeMax    = 500
@@ -74,6 +75,7 @@ const (
 	defaultBackupRetentionCount     = 5
 	defaultAuthTokenMaxAgeDays      = 15
 	defaultAuthRefreshThresholdDays = 7
+	defaultCertificateStorageDir    = "./data/certmagic"
 )
 
 type CaptchaMode string
@@ -82,6 +84,7 @@ const (
 	CaptchaModeOff       CaptchaMode = "off"
 	CaptchaModeLocal     CaptchaMode = "local"
 	CaptchaModeTurnstile CaptchaMode = "turnstile"
+	CaptchaModeCap       CaptchaMode = "cap"
 )
 
 type TurnstileConfig struct {
@@ -89,9 +92,18 @@ type TurnstileConfig struct {
 	SecretKey string `json:"secretKey" yaml:"secretKey"`
 }
 
+type CaptchaCapConfig struct {
+	ChallengeCount          int `json:"challengeCount" yaml:"challengeCount"`
+	ChallengeSize           int `json:"challengeSize" yaml:"challengeSize"`
+	ChallengeDifficulty     int `json:"challengeDifficulty" yaml:"challengeDifficulty"`
+	ChallengeExpiresSeconds int `json:"challengeExpiresSeconds" yaml:"challengeExpiresSeconds"`
+	TokenTTLSeconds         int `json:"tokenTTLSeconds" yaml:"tokenTTLSeconds"`
+}
+
 type CaptchaTargetConfig struct {
-	Mode      CaptchaMode     `json:"mode" yaml:"mode"`
-	Turnstile TurnstileConfig `json:"turnstile" yaml:"turnstile"`
+	Mode      CaptchaMode      `json:"mode" yaml:"mode"`
+	Turnstile TurnstileConfig  `json:"turnstile" yaml:"turnstile"`
+	Cap       CaptchaCapConfig `json:"cap" yaml:"cap"`
 }
 
 type CaptchaScene string
@@ -105,6 +117,7 @@ const (
 type CaptchaConfig struct {
 	Mode          CaptchaMode         `json:"mode,omitempty" yaml:"mode,omitempty"`
 	Turnstile     TurnstileConfig     `json:"turnstile,omitempty" yaml:"turnstile,omitempty"`
+	Cap           CaptchaCapConfig    `json:"cap,omitempty" yaml:"cap,omitempty"`
 	Signup        CaptchaTargetConfig `json:"signup" yaml:"signup"`
 	Signin        CaptchaTargetConfig `json:"signin" yaml:"signin"`
 	PasswordReset CaptchaTargetConfig `json:"passwordReset" yaml:"passwordReset"`
@@ -218,13 +231,46 @@ type LoginBackgroundConfig struct {
 	PanelShadowStrength int    `json:"panelShadowStrength" yaml:"panelShadowStrength"`
 }
 
+type CertificateIssuer string
+
+const (
+	CertificateIssuerLetsEncryptShortLived CertificateIssuer = "letsencrypt_shortlived"
+	CertificateIssuerZeroSSL90Days         CertificateIssuer = "zerossl_90d"
+)
+
+type CertificateChallenge string
+
+const (
+	CertificateChallengeHTTP01    CertificateChallenge = "http-01"
+	CertificateChallengeTLSALPN01 CertificateChallenge = "tls-alpn-01"
+)
+
+type CertificateConfig struct {
+	Enabled          bool                 `json:"enabled" yaml:"enabled"`
+	SubjectIP        string               `json:"subjectIp" yaml:"subjectIp"`
+	Issuer           CertificateIssuer    `json:"issuer" yaml:"issuer"`
+	Challenge        CertificateChallenge `json:"challenge" yaml:"challenge"`
+	Email            string               `json:"email" yaml:"email"`
+	StorageDir       string               `json:"storageDir" yaml:"storageDir"`
+	HTTPSServeAt     string               `json:"httpsServeAt" yaml:"httpsServeAt"`
+	ForceHTTPS       bool                 `json:"forceHTTPS" yaml:"forceHTTPS"`
+	RedirectHTTP     bool                 `json:"redirectHTTP" yaml:"redirectHTTP"`
+	ZeroSSLAPIKey    string               `json:"zeroSSLAPIKey,omitempty" yaml:"zeroSSLAPIKey"`
+	ZeroSSLEABKeyID  string               `json:"zeroSSLEABKeyID,omitempty" yaml:"zeroSSLEABKeyID"`
+	ZeroSSLEABMACKey string               `json:"zeroSSLEABMACKey,omitempty" yaml:"zeroSSLEABMACKey"`
+	Staging          bool                 `json:"staging" yaml:"staging"`
+}
+
 type AppConfig struct {
 	ServeAt                   string                  `json:"serveAt" yaml:"serveAt"`
 	Domain                    string                  `json:"domain" yaml:"domain"`
 	ImageBaseURL              string                  `json:"imageBaseUrl" yaml:"imageBaseUrl"`
 	RegisterOpen              bool                    `json:"registerOpen" yaml:"registerOpen"`
+	RegisterInviteCode        string                  `json:"registerInviteCode" yaml:"registerInviteCode"`
+	RegisterInviteRequired    bool                    `json:"registerInviteRequired" yaml:"-"`
 	WebUrl                    string                  `json:"webUrl" yaml:"webUrl"`
 	PageTitle                 string                  `json:"pageTitle" yaml:"pageTitle"`
+	PageDescription           string                  `json:"pageDescription" yaml:"pageDescription"`
 	FaviconAttachmentID       string                  `json:"faviconAttachmentId" yaml:"faviconAttachmentId"`
 	ChatHistoryPersistentDays int64                   `json:"chatHistoryPersistentDays" yaml:"chatHistoryPersistentDays"`
 	MessageSortBasis          MessageSortBasis        `json:"messageSortBasis" yaml:"messageSortBasis"`
@@ -250,6 +296,7 @@ type AppConfig struct {
 	AuthSession               AuthSessionConfig       `json:"authSession" yaml:"authSession"`
 	LoginBackground           LoginBackgroundConfig   `json:"loginBackground" yaml:"loginBackground"`
 	ThemeManagement           ThemeManagementConfig   `json:"themeManagement" yaml:"themeManagement"`
+	Certificate               CertificateConfig       `json:"certificate" yaml:"certificate"`
 }
 
 type ExportConfig struct {
@@ -371,8 +418,9 @@ func ReadConfig() *AppConfig {
 			AutoVacuumIntervalHours: 168,
 		},
 		Captcha: CaptchaConfig{
-			Signup: CaptchaTargetConfig{Mode: CaptchaModeLocal},
-			Signin: CaptchaTargetConfig{Mode: CaptchaModeOff},
+			Signup:        CaptchaTargetConfig{Mode: CaptchaModeCap},
+			Signin:        CaptchaTargetConfig{Mode: CaptchaModeOff},
+			PasswordReset: CaptchaTargetConfig{Mode: CaptchaModeCap},
 		},
 		EmailNotification: EmailNotificationConfig{
 			Enabled:          false,
@@ -425,6 +473,7 @@ func ReadConfig() *AppConfig {
 			PlatformThemes:         []PlatformThemeConfig{},
 			DefaultPlatformThemeID: "",
 		},
+		Certificate: defaultCertificateConfig(),
 	}
 
 	lo.Must0(k.Load(structs.Provider(&config, "yaml"), nil))
@@ -466,6 +515,7 @@ func ReadConfig() *AppConfig {
 	if strings.TrimSpace(config.PageTitle) == "" {
 		config.PageTitle = defaultPageTitle
 	}
+	config.PageDescription = NormalizePageDescription(config.PageDescription)
 	config.MessageSortBasis = NormalizeMessageSortBasis(config.MessageSortBasis)
 	normalizedServeAt, serveAtChanged := NormalizeServeAt(config.ServeAt)
 	if serveAtChanged {
@@ -498,10 +548,101 @@ func ReadConfig() *AppConfig {
 	applyBackupDefaults(&config.Backup)
 	applyAuthSessionDefaults(&config.AuthSession)
 	config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
+	config.Certificate = NormalizeCertificateConfig(config.Certificate)
 
 	k.Print()
 	currentConfig = &config
 	return currentConfig
+}
+
+func NormalizeCertificateConfig(cfg CertificateConfig) CertificateConfig {
+	cfg.SubjectIP = strings.TrimSpace(cfg.SubjectIP)
+	cfg.Email = strings.TrimSpace(cfg.Email)
+	cfg.StorageDir = strings.TrimSpace(cfg.StorageDir)
+	cfg.HTTPSServeAt = strings.TrimSpace(cfg.HTTPSServeAt)
+	cfg.ZeroSSLAPIKey = strings.TrimSpace(cfg.ZeroSSLAPIKey)
+	cfg.ZeroSSLEABKeyID = strings.TrimSpace(cfg.ZeroSSLEABKeyID)
+	cfg.ZeroSSLEABMACKey = strings.TrimSpace(cfg.ZeroSSLEABMACKey)
+
+	if cfg.Issuer == "" {
+		cfg.Issuer = CertificateIssuerLetsEncryptShortLived
+	}
+	if cfg.Challenge == "" {
+		cfg.Challenge = CertificateChallengeHTTP01
+	}
+	if cfg.StorageDir == "" {
+		cfg.StorageDir = defaultCertificateStorageDir
+	}
+	return cfg
+}
+
+func defaultCertificateConfig() CertificateConfig {
+	return NormalizeCertificateConfig(CertificateConfig{
+		Issuer:       CertificateIssuerLetsEncryptShortLived,
+		Challenge:    CertificateChallengeHTTP01,
+		StorageDir:   defaultCertificateStorageDir,
+		ForceHTTPS:   true,
+		RedirectHTTP: true,
+	})
+}
+
+func ValidateCertificateConfig(cfg CertificateConfig) error {
+	cfg = NormalizeCertificateConfig(cfg)
+	if !cfg.Enabled {
+		return nil
+	}
+	if cfg.Issuer != CertificateIssuerLetsEncryptShortLived && cfg.Issuer != CertificateIssuerZeroSSL90Days {
+		return fmt.Errorf("证书签发方无效: %s", cfg.Issuer)
+	}
+	if cfg.Challenge != CertificateChallengeHTTP01 && cfg.Challenge != CertificateChallengeTLSALPN01 {
+		return fmt.Errorf("证书验证方式无效: %s", cfg.Challenge)
+	}
+	if !isPublicCertificateIP(cfg.SubjectIP) {
+		return fmt.Errorf("证书 IP 必须是公网 IP")
+	}
+	if cfg.Email == "" {
+		return fmt.Errorf("证书签发邮箱不能为空")
+	}
+	if cfg.Issuer == CertificateIssuerZeroSSL90Days &&
+		cfg.ZeroSSLAPIKey == "" &&
+		(cfg.ZeroSSLEABKeyID == "" || cfg.ZeroSSLEABMACKey == "") {
+		return fmt.Errorf("ZeroSSL 证书需要 API Key 或 EAB 凭据")
+	}
+	if cfg.Issuer == CertificateIssuerZeroSSL90Days &&
+		cfg.Challenge == CertificateChallengeTLSALPN01 &&
+		(cfg.ZeroSSLEABKeyID == "" || cfg.ZeroSSLEABMACKey == "") {
+		return fmt.Errorf("ZeroSSL TLS-ALPN-01 证书需要 EAB 凭据")
+	}
+	return nil
+}
+
+func isPublicCertificateIP(value string) bool {
+	ip := net.ParseIP(strings.TrimSpace(value))
+	if ip == nil {
+		return false
+	}
+	if ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
+		return false
+	}
+	for _, cidr := range []string{
+		"0.0.0.0/8",
+		"100.64.0.0/10",
+		"192.0.0.0/24",
+		"192.0.2.0/24",
+		"198.18.0.0/15",
+		"198.51.100.0/24",
+		"203.0.113.0/24",
+		"240.0.0.0/4",
+		"2001:db8::/32",
+		"fc00::/7",
+		"fe80::/10",
+	} {
+		_, network, err := net.ParseCIDR(cidr)
+		if err == nil && network.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }
 
 func applySQLiteDefaults(cfg *SQLiteConfig) {
@@ -536,6 +677,14 @@ func NormalizeMessageSortBasis(value MessageSortBasis) MessageSortBasis {
 	default:
 		return MessageSortBasisTypingStart
 	}
+}
+
+func NormalizePageDescription(value string) string {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) > maxPageDescriptionLength {
+		runes = runes[:maxPageDescriptionLength]
+	}
+	return string(runes)
 }
 
 func applyExportDefaults(cfg *ExportConfig) {
@@ -786,12 +935,34 @@ func (cfg *CaptchaConfig) normalize() {
 	if cfg == nil {
 		return
 	}
-	applyCaptchaTargetDefaults(&cfg.Signup, cfg.Mode, CaptchaModeLocal, cfg.Turnstile)
-	applyCaptchaTargetDefaults(&cfg.Signin, cfg.Mode, CaptchaModeOff, cfg.Turnstile)
-	applyCaptchaTargetDefaults(&cfg.PasswordReset, cfg.Mode, CaptchaModeLocal, cfg.Turnstile)
+	normalizeCaptchaCapConfig(&cfg.Cap)
+	applyCaptchaTargetDefaults(&cfg.Signup, cfg.Mode, CaptchaModeCap, cfg.Turnstile, cfg.Cap)
+	applyCaptchaTargetDefaults(&cfg.Signin, cfg.Mode, CaptchaModeOff, cfg.Turnstile, cfg.Cap)
+	applyCaptchaTargetDefaults(&cfg.PasswordReset, cfg.Mode, CaptchaModeCap, cfg.Turnstile, cfg.Cap)
 }
 
-func applyCaptchaTargetDefaults(target *CaptchaTargetConfig, globalMode, fallbackMode CaptchaMode, fallbackTurnstile TurnstileConfig) {
+func normalizeCaptchaCapConfig(cfg *CaptchaCapConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.ChallengeCount <= 0 {
+		cfg.ChallengeCount = 50
+	}
+	if cfg.ChallengeSize <= 0 {
+		cfg.ChallengeSize = 32
+	}
+	if cfg.ChallengeDifficulty <= 0 {
+		cfg.ChallengeDifficulty = 4
+	}
+	if cfg.ChallengeExpiresSeconds <= 0 {
+		cfg.ChallengeExpiresSeconds = 600
+	}
+	if cfg.TokenTTLSeconds <= 0 {
+		cfg.TokenTTLSeconds = 1200
+	}
+}
+
+func applyCaptchaTargetDefaults(target *CaptchaTargetConfig, globalMode, fallbackMode CaptchaMode, fallbackTurnstile TurnstileConfig, fallbackCap CaptchaCapConfig) {
 	if target == nil {
 		return
 	}
@@ -807,6 +978,21 @@ func applyCaptchaTargetDefaults(target *CaptchaTargetConfig, globalMode, fallbac
 	}
 	if target.Turnstile.SecretKey == "" {
 		target.Turnstile.SecretKey = fallbackTurnstile.SecretKey
+	}
+	if target.Cap.ChallengeCount <= 0 {
+		target.Cap.ChallengeCount = fallbackCap.ChallengeCount
+	}
+	if target.Cap.ChallengeSize <= 0 {
+		target.Cap.ChallengeSize = fallbackCap.ChallengeSize
+	}
+	if target.Cap.ChallengeDifficulty <= 0 {
+		target.Cap.ChallengeDifficulty = fallbackCap.ChallengeDifficulty
+	}
+	if target.Cap.ChallengeExpiresSeconds <= 0 {
+		target.Cap.ChallengeExpiresSeconds = fallbackCap.ChallengeExpiresSeconds
+	}
+	if target.Cap.TokenTTLSeconds <= 0 {
+		target.Cap.TokenTTLSeconds = fallbackCap.TokenTTLSeconds
 	}
 }
 
@@ -835,11 +1021,13 @@ func WriteConfig(config *AppConfig) {
 	if config != nil {
 		config.Captcha.normalize()
 		config.Storage.normalize()
+		config.Certificate = NormalizeCertificateConfig(config.Certificate)
 		config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
 		config.MessageSortBasis = NormalizeMessageSortBasis(config.MessageSortBasis)
 		if strings.TrimSpace(config.PageTitle) == "" {
 			config.PageTitle = defaultPageTitle
 		}
+		config.PageDescription = NormalizePageDescription(config.PageDescription)
 		normalizedServeAt, serveAtChanged := NormalizeServeAt(config.ServeAt)
 		if serveAtChanged {
 			config.ServeAt = normalizedServeAt
@@ -855,8 +1043,10 @@ func WriteConfig(config *AppConfig) {
 			_ = k.Set("domain", config.Domain)
 		}
 		_ = k.Set("registerOpen", config.RegisterOpen)
+		_ = k.Set("registerInviteCode", strings.TrimSpace(config.RegisterInviteCode))
 		_ = k.Set("webUrl", config.WebUrl)
 		_ = k.Set("pageTitle", config.PageTitle)
+		_ = k.Set("pageDescription", config.PageDescription)
 		_ = k.Set("faviconAttachmentId", config.FaviconAttachmentID)
 		_ = k.Set("chatHistoryPersistentDays", config.ChatHistoryPersistentDays)
 		_ = k.Set("messageSortBasis", string(config.MessageSortBasis))
@@ -876,6 +1066,19 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("logUpload.uniformId", config.LogUpload.UniformID)
 		_ = k.Set("logUpload.version", config.LogUpload.Version)
 		_ = k.Set("logUpload.note", config.LogUpload.Note)
+		_ = k.Set("certificate.enabled", config.Certificate.Enabled)
+		_ = k.Set("certificate.subjectIp", config.Certificate.SubjectIP)
+		_ = k.Set("certificate.issuer", string(config.Certificate.Issuer))
+		_ = k.Set("certificate.challenge", string(config.Certificate.Challenge))
+		_ = k.Set("certificate.email", config.Certificate.Email)
+		_ = k.Set("certificate.storageDir", config.Certificate.StorageDir)
+		_ = k.Set("certificate.httpsServeAt", config.Certificate.HTTPSServeAt)
+		_ = k.Set("certificate.forceHTTPS", config.Certificate.ForceHTTPS)
+		_ = k.Set("certificate.redirectHTTP", config.Certificate.RedirectHTTP)
+		_ = k.Set("certificate.zeroSSLAPIKey", config.Certificate.ZeroSSLAPIKey)
+		_ = k.Set("certificate.zeroSSLEABKeyID", config.Certificate.ZeroSSLEABKeyID)
+		_ = k.Set("certificate.zeroSSLEABMACKey", config.Certificate.ZeroSSLEABMACKey)
+		_ = k.Set("certificate.staging", config.Certificate.Staging)
 		_ = k.Set("audio.storageDir", config.Audio.StorageDir)
 		_ = k.Set("audio.tempDir", config.Audio.TempDir)
 		_ = k.Set("audio.importDir", config.Audio.ImportDir)
@@ -934,12 +1137,35 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("captcha.mode", string(config.Captcha.Mode))
 		_ = k.Set("captcha.turnstile.siteKey", config.Captcha.Turnstile.SiteKey)
 		_ = k.Set("captcha.turnstile.secretKey", config.Captcha.Turnstile.SecretKey)
+		_ = k.Set("captcha.cap.challengeCount", config.Captcha.Cap.ChallengeCount)
+		_ = k.Set("captcha.cap.challengeSize", config.Captcha.Cap.ChallengeSize)
+		_ = k.Set("captcha.cap.challengeDifficulty", config.Captcha.Cap.ChallengeDifficulty)
+		_ = k.Set("captcha.cap.challengeExpiresSeconds", config.Captcha.Cap.ChallengeExpiresSeconds)
+		_ = k.Set("captcha.cap.tokenTTLSeconds", config.Captcha.Cap.TokenTTLSeconds)
 		_ = k.Set("captcha.signup.mode", string(config.Captcha.Signup.Mode))
 		_ = k.Set("captcha.signup.turnstile.siteKey", config.Captcha.Signup.Turnstile.SiteKey)
 		_ = k.Set("captcha.signup.turnstile.secretKey", config.Captcha.Signup.Turnstile.SecretKey)
+		_ = k.Set("captcha.signup.cap.challengeCount", config.Captcha.Signup.Cap.ChallengeCount)
+		_ = k.Set("captcha.signup.cap.challengeSize", config.Captcha.Signup.Cap.ChallengeSize)
+		_ = k.Set("captcha.signup.cap.challengeDifficulty", config.Captcha.Signup.Cap.ChallengeDifficulty)
+		_ = k.Set("captcha.signup.cap.challengeExpiresSeconds", config.Captcha.Signup.Cap.ChallengeExpiresSeconds)
+		_ = k.Set("captcha.signup.cap.tokenTTLSeconds", config.Captcha.Signup.Cap.TokenTTLSeconds)
 		_ = k.Set("captcha.signin.mode", string(config.Captcha.Signin.Mode))
 		_ = k.Set("captcha.signin.turnstile.siteKey", config.Captcha.Signin.Turnstile.SiteKey)
 		_ = k.Set("captcha.signin.turnstile.secretKey", config.Captcha.Signin.Turnstile.SecretKey)
+		_ = k.Set("captcha.signin.cap.challengeCount", config.Captcha.Signin.Cap.ChallengeCount)
+		_ = k.Set("captcha.signin.cap.challengeSize", config.Captcha.Signin.Cap.ChallengeSize)
+		_ = k.Set("captcha.signin.cap.challengeDifficulty", config.Captcha.Signin.Cap.ChallengeDifficulty)
+		_ = k.Set("captcha.signin.cap.challengeExpiresSeconds", config.Captcha.Signin.Cap.ChallengeExpiresSeconds)
+		_ = k.Set("captcha.signin.cap.tokenTTLSeconds", config.Captcha.Signin.Cap.TokenTTLSeconds)
+		_ = k.Set("captcha.passwordReset.mode", string(config.Captcha.PasswordReset.Mode))
+		_ = k.Set("captcha.passwordReset.turnstile.siteKey", config.Captcha.PasswordReset.Turnstile.SiteKey)
+		_ = k.Set("captcha.passwordReset.turnstile.secretKey", config.Captcha.PasswordReset.Turnstile.SecretKey)
+		_ = k.Set("captcha.passwordReset.cap.challengeCount", config.Captcha.PasswordReset.Cap.ChallengeCount)
+		_ = k.Set("captcha.passwordReset.cap.challengeSize", config.Captcha.PasswordReset.Cap.ChallengeSize)
+		_ = k.Set("captcha.passwordReset.cap.challengeDifficulty", config.Captcha.PasswordReset.Cap.ChallengeDifficulty)
+		_ = k.Set("captcha.passwordReset.cap.challengeExpiresSeconds", config.Captcha.PasswordReset.Cap.ChallengeExpiresSeconds)
+		_ = k.Set("captcha.passwordReset.cap.tokenTTLSeconds", config.Captcha.PasswordReset.Cap.TokenTTLSeconds)
 
 		// 邮件通知配置
 		_ = k.Set("emailNotification.enabled", config.EmailNotification.Enabled)

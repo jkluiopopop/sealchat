@@ -5,6 +5,7 @@ import type { FontSourceType } from '@/services/font/types'
 import { restoreCachedFontById } from '@/services/font/fontLoader'
 import {
   migrateLegacyThemeSelection,
+  resolveCustomThemeEnabledUpdate,
   resolveEffectiveThemeSelection,
 } from '@/services/theme/themeSelection'
 import type {
@@ -1461,6 +1462,9 @@ export const useDisplayStore = defineStore('display', {
       }
       if (mode === 'none') {
         this.settings.activePlatformThemeId = null
+        this.settings.customThemeEnabled = false
+        this.customThemePreviewEnabled = false
+        this.customThemePreviewColors = {}
       }
       this.persist()
       this.applyTheme()
@@ -1519,9 +1523,16 @@ export const useDisplayStore = defineStore('display', {
       this.applyTheme()
     },
     setCustomThemeEnabled(enabled: boolean) {
-      this.settings.customThemeEnabled = enabled
-      if (!enabled && this.settings.themeSelectionMode === 'personal') {
-        this.settings.themeSelectionMode = 'inherit'
+      const next = resolveCustomThemeEnabledUpdate(enabled, {
+        themeSelectionMode: this.settings.themeSelectionMode,
+        activePlatformThemeId: this.settings.activePlatformThemeId,
+      })
+      this.settings.customThemeEnabled = next.customThemeEnabled
+      this.settings.themeSelectionMode = next.themeSelectionMode
+      this.settings.activePlatformThemeId = next.activePlatformThemeId
+      if (!enabled) {
+        this.customThemePreviewEnabled = false
+        this.customThemePreviewColors = {}
       }
       this.persist()
       this.applyTheme()

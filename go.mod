@@ -3,7 +3,9 @@ module sealchat
 go 1.24.0
 
 require (
+	github.com/caddyserver/certmagic v0.25.2
 	github.com/dchest/captcha v1.1.0
+	github.com/fasthttp/websocket v1.5.6
 	github.com/gabriel-vasile/mimetype v1.4.6
 	github.com/glebarez/sqlite v1.11.0
 	github.com/gofiber/contrib/websocket v1.2.2
@@ -13,15 +15,18 @@ require (
 	github.com/knadh/koanf v1.5.0
 	github.com/knadh/koanf/v2 v2.1.1
 	github.com/matoous/go-nanoid/v2 v2.0.0
+	github.com/mholt/acmez/v3 v3.1.6
 	github.com/mikespook/gorbac v2.3.0+incompatible
 	github.com/minio/minio-go/v7 v7.0.64
 	github.com/orisano/wyhash v1.1.0
 	github.com/samber/lo v1.38.1
 	github.com/sealdice/dicescript v0.0.0-20240927083134-65269b7d051c
 	github.com/spf13/afero v1.11.0
-	golang.org/x/crypto v0.28.0
+	go.uber.org/zap v1.27.1
+	golang.org/x/crypto v0.48.0
 	golang.org/x/image v0.34.0
-	golang.org/x/net v0.30.0
+	golang.org/x/net v0.50.0
+	golang.org/x/text v0.34.0
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/driver/postgres v1.5.9
 	gorm.io/gorm v1.25.10
@@ -30,9 +35,9 @@ require (
 
 require (
 	github.com/andybalholm/brotli v1.0.6 // indirect
+	github.com/caddyserver/zerossl v0.1.5 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/fasthttp/websocket v1.5.6 // indirect
 	github.com/fatih/structs v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/glebarez/go-sqlite v1.21.2 // indirect
@@ -47,11 +52,13 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.17.9 // indirect
-	github.com/klauspost/cpuid/v2 v2.2.5 // indirect
+	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
+	github.com/libdns/libdns v1.1.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.15 // indirect
+	github.com/miekg/dns v1.1.72 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/minio/sha256-simd v1.0.1 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
@@ -69,10 +76,14 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.51.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect
+	github.com/zeebo/blake3 v0.2.4 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
+	go.uber.org/zap/exp v0.3.0 // indirect
 	golang.org/x/exp v0.0.0-20240823005443-9b4947da3948 // indirect
+	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.26.0 // indirect
-	golang.org/x/text v0.32.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/tools v0.42.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/mathutil v1.5.0 // indirect

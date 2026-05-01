@@ -1,7 +1,9 @@
 package api
 
 import (
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"html"
 	"io/fs"
@@ -132,21 +134,12 @@ func updateDomainPort(domain, newPort string) (string, bool) {
 }
 
 func buildIndexPaths(webURL string) []string {
-	webRoot := strings.TrimSpace(webURL)
-	if webRoot == "" {
+	webRoot := normalizeWebRoot(webURL)
+	if webRoot == "/" {
 		return []string{"/", "/index.html"}
 	}
-	if !strings.HasPrefix(webRoot, "/") {
-		webRoot = "/" + webRoot
-	}
-	webRoot = strings.TrimRight(webRoot, "/")
-	if webRoot == "" {
-		webRoot = "/"
-	}
 	paths := []string{webRoot}
-	if webRoot != "/" {
-		paths = append(paths, webRoot+"/")
-	}
+	paths = append(paths, webRoot+"/")
 	paths = append(paths, path.Join(webRoot, "index.html"))
 	return paths
 }
@@ -166,6 +159,30 @@ func buildObserverPrintPaths(webURL string) []string {
 	}
 	paths = append(paths, path.Join(webRoot, "ob-print", ":slug"))
 	return paths
+}
+
+func normalizeWebRoot(webURL string) string {
+	webRoot := strings.TrimSpace(webURL)
+	if webRoot == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(webRoot, "/") {
+		webRoot = "/" + webRoot
+	}
+	webRoot = strings.TrimRight(webRoot, "/")
+	if webRoot == "" {
+		return "/"
+	}
+	return webRoot
+}
+
+func joinWebPath(webURL string, elem ...string) string {
+	parts := append([]string{normalizeWebRoot(webURL)}, elem...)
+	joined := path.Join(parts...)
+	if !strings.HasPrefix(joined, "/") {
+		return "/" + joined
+	}
+	return joined
 }
 
 func applyPageTitleToIndex(htmlSource string, title string) string {
@@ -195,7 +212,90 @@ func applyFaviconToIndex(htmlSource string, attachmentID string) string {
 	return strings.ReplaceAll(htmlSource, `href="/favicon.ico"`, `href="`+html.EscapeString(iconURL)+`"`)
 }
 
-func Init(config *utils.AppConfig, uiStatic fs.FS) {
+const (
+	frontendIndexCacheControl = "no-cache"
+	frontendAssetCacheControl = "public, max-age=31536000, immutable"
+	frontendShortCacheControl = "public, max-age=300"
+)
+
+func frontendCompressMiddleware() fiber.Handler {
+	return compress.New(compress.Config{
+		Level: compress.LevelBestSpeed,
+		Next: func(c *fiber.Ctx) bool {
+			p := c.Path()
+			return strings.HasPrefix(p, "/api/v1/audio/stream") ||
+				strings.HasPrefix(p, "/api/v1/attachment/") ||
+				strings.HasPrefix(p, "/api/v1/attachments") ||
+				strings.HasPrefix(p, "/api/v1/gallery/thumbs")
+		},
+	})
+}
+
+func frontendCacheControl(value string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if err := c.Next(); err != nil {
+			return err
+		}
+		if c.Response().StatusCode() < fiber.StatusBadRequest {
+			c.Set(fiber.HeaderCacheControl, value)
+		}
+		return nil
+	}
+}
+
+func strongETag(body []byte) string {
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:]) + `"`
+}
+
+func matchETag(headerValue string, etagValue string) bool {
+	for _, item := range strings.Split(headerValue, ",") {
+		token := strings.TrimSpace(item)
+		if token == "*" || token == etagValue || strings.TrimPrefix(token, "W/") == etagValue {
+			return true
+		}
+	}
+	return false
+}
+
+func renderIndexHTML(c *fiber.Ctx, indexHTML []byte, config *utils.AppConfig) error {
+	page := string(indexHTML)
+	if config != nil {
+		page = applyPageTitleToIndex(page, config.PageTitle)
+		page = applyFaviconToIndex(page, config.FaviconAttachmentID)
+	}
+	body := []byte(page)
+	etagValue := strongETag(body)
+
+	c.Set(fiber.HeaderContentType, "text/html; charset=utf-8")
+	c.Set(fiber.HeaderCacheControl, frontendIndexCacheControl)
+	c.Set(fiber.HeaderETag, etagValue)
+	c.Set(fiber.HeaderVary, fiber.HeaderAcceptEncoding)
+	if matchETag(c.Get(fiber.HeaderIfNoneMatch), etagValue) {
+		return c.SendStatus(fiber.StatusNotModified)
+	}
+	return c.Status(http.StatusOK).Send(body)
+}
+
+func registerFrontendStaticRoutes(app *fiber.App, webURL string, uiStatic fs.FS, indexHandler fiber.Handler) {
+	if indexHandler != nil {
+		for _, routePath := range buildIndexPaths(webURL) {
+			app.Get(routePath, indexHandler)
+		}
+	}
+
+	app.Use(joinWebPath(webURL, "assets"), frontendCacheControl(frontendAssetCacheControl), filesystem.New(filesystem.Config{
+		Root:       http.FS(uiStatic),
+		PathPrefix: "ui/dist/assets",
+	}))
+
+	app.Use(normalizeWebRoot(webURL), frontendCacheControl(frontendShortCacheControl), filesystem.New(filesystem.Config{
+		Root:       http.FS(uiStatic),
+		PathPrefix: "ui/dist",
+	}))
+}
+
+func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	appConfig = config
 	corsConfig := cors.New(cors.Config{
 		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS",
@@ -224,15 +324,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	app := fiber.New(fiber.Config{
 		BodyLimit: bodyLimit,
 	})
+	app.Use(certificateHTTPRedirectMiddleware(config))
 	app.Use(corsConfig)
 	app.Use(recover.New())
 	app.Use(logger.New())
-	app.Use(compress.New(compress.Config{
-		Next: func(c *fiber.Ctx) bool {
-			path := c.Path()
-			return strings.HasPrefix(path, "/api/v1/audio/stream")
-		},
-	}))
+	app.Use(frontendCompressMiddleware())
 
 	v1 := app.Group("/api/v1")
 	v1.Post("/user-signup", UserSignup)
@@ -240,10 +336,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1.Get("/captcha/new", CaptchaNew)
 	v1.Get("/captcha/:id.png", CaptchaImage)
 	v1.Get("/captcha/:id/reload", CaptchaReload)
+	v1.Post("/captcha/cap/:scene/challenge", CaptchaCapChallenge)
+	v1.Post("/captcha/cap/:scene/redeem", CaptchaCapRedeem)
 
 	// Email auth routes (public)
 	v1.Post("/email-auth/signup-code", EmailAuthSignupCodeSend)
 	v1.Post("/email-auth/signup", EmailAuthSignupWithCode)
+	v1.Post("/register-invite/verify", RegisterInviteVerify)
 	v1.Post("/password-reset/verify", EmailAuthPasswordResetVerify)
 	v1.Post("/password-reset/request", EmailAuthPasswordResetRequest)
 	v1.Post("/password-reset/confirm", EmailAuthPasswordResetConfirm)
@@ -251,8 +350,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1.Get("/config", func(c *fiber.Ctx) error {
 		ret := sanitizeConfigForClient(appConfig)
 		u := getCurUser(c)
-		if u == nil || !pm.CanWithSystemRole(u.ID, pm.PermModAdmin) {
+		isAdmin := u != nil && pm.CanWithSystemRole(u.ID, pm.PermModAdmin)
+		if !isAdmin {
 			ret.ServeAt = ""
+		} else if appConfig != nil {
+			ret.RegisterInviteCode = appConfig.RegisterInviteCode
 		}
 		ffmpegAvailable := false
 		if svc := service.GetAudioService(); svc != nil {
@@ -604,6 +706,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	v1AuthAdmin.Get("/admin/update-status", AdminUpdateStatus)
 	v1AuthAdmin.Post("/admin/update-check", AdminUpdateCheck)
 	v1AuthAdmin.Post("/admin/update-version", AdminUpdateVersion)
+	v1AuthAdmin.Get("/admin/certificates/config", AdminCertificateConfigGet)
+	v1AuthAdmin.Put("/admin/certificates/config", AdminCertificateConfigUpdate)
+	v1AuthAdmin.Get("/admin/certificates/status", AdminCertificateStatus)
+	v1AuthAdmin.Get("/admin/certificates/logs", AdminCertificateLogs)
+	v1AuthAdmin.Post("/admin/certificates/obtain", AdminCertificateObtain)
 	v1AuthAdmin.Get("/admin/backup/list", AdminBackupList)
 	v1AuthAdmin.Post("/admin/backup/execute", AdminBackupExecute)
 	v1AuthAdmin.Post("/admin/backup/delete", AdminBackupDelete)
@@ -695,116 +802,21 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) {
 	oneBotHTTPWorks(app)
 
 	indexHTML, indexErr := fs.ReadFile(uiStatic, "ui/dist/index.html")
+	var renderIndex fiber.Handler
 	if indexErr != nil {
 		log.Printf("读取内置 index.html 失败: %v", indexErr)
 	} else {
-		renderIndex := func(c *fiber.Ctx) error {
-			page := applyPageTitleToIndex(string(indexHTML), appConfig.PageTitle)
-			page = applyFaviconToIndex(page, appConfig.FaviconAttachmentID)
-			c.Set(fiber.HeaderContentType, "text/html; charset=utf-8")
-			return c.Status(http.StatusOK).SendString(page)
-		}
-		for _, routePath := range buildIndexPaths(config.WebUrl) {
-			pathCopy := routePath
-			app.Get(pathCopy, renderIndex)
+		indexHTMLCopy := append([]byte(nil), indexHTML...)
+		renderIndex = func(c *fiber.Ctx) error {
+			return renderIndexHTML(c, indexHTMLCopy, appConfig)
 		}
 	}
 
-	// Default /test
-	app.Use(config.WebUrl, filesystem.New(filesystem.Config{
-		Root:       http.FS(uiStatic),
-		PathPrefix: "ui/dist",
-		MaxAge:     5 * 60,
-	}))
+	registerFrontendStaticRoutes(app, config.WebUrl, uiStatic, renderIndex)
 
 	websocketWorks(app)
 	oneBotWSWorks(app)
 	startOneBotReverseRuntime()
 
-	// Check port availability and find fallback if needed
-	listenAddr := config.ServeAt
-	if normalized, changed := utils.NormalizeServeAt(listenAddr); changed {
-		listenAddr = normalized
-		config.ServeAt = normalized
-	}
-	host, port, err := net.SplitHostPort(listenAddr)
-	if err != nil {
-		host = ""
-		port = "3212"
-	}
-	if port == "" {
-		port = "3212"
-	}
-	mode := classifyListenMode(host)
-	applyFallback := func(originalAddr, actualAddr string) {
-		log.Printf("警告: 端口 %s 被占用，已切换到 %s", originalAddr, actualAddr)
-		config.ServeAt = actualAddr
-		newPort := extractPort(actualAddr)
-		if newDomain, ok := updateDomainPort(config.Domain, newPort); ok {
-			config.Domain = newDomain
-		}
-		utils.WriteConfig(config)
-		log.Printf("配置文件已更新: serveAt=%s, domain=%s", config.ServeAt, config.Domain)
-	}
-
-	switch mode {
-	case listenIPv6:
-		actualAddr, usedFallback := utils.FindAvailablePortWithNetwork("tcp6", listenAddr)
-		if usedFallback {
-			applyFallback(listenAddr, actualAddr)
-		}
-		ln6, err := net.Listen("tcp6", actualAddr)
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("IPv6 listening at %s", actualAddr)
-		log.Fatal(app.Listener(ln6))
-	case listenDual:
-		listenAddr4 := utils.FormatListenHostPort(host, port)
-		actualAddr4, usedFallback := utils.FindAvailablePortWithNetwork("tcp4", listenAddr4)
-		if usedFallback {
-			applyFallback(listenAddr4, actualAddr4)
-		}
-		port = extractPort(actualAddr4)
-		if port == "" {
-			port = "3212"
-		}
-		listenAddr6 := utils.FormatListenHostPort("::", port)
-		ln4, err4 := net.Listen("tcp4", actualAddr4)
-		if err4 != nil {
-			log.Printf("IPv4 listen failed: %v", err4)
-		}
-		ln6, err6 := net.Listen("tcp6", listenAddr6)
-		if err6 != nil {
-			log.Printf("IPv6 listen unavailable: %v", err6)
-		} else {
-			log.Printf("IPv6 listening at %s", listenAddr6)
-		}
-		if ln4 != nil {
-			if ln6 != nil {
-				go func() {
-					if err := app.Listener(ln6); err != nil {
-						log.Printf("IPv6 listener stopped: %v", err)
-					}
-				}()
-			}
-			log.Printf("IPv4 listening at %s", actualAddr4)
-			log.Fatal(app.Listener(ln4))
-		}
-		if ln6 != nil {
-			log.Fatal(app.Listener(ln6))
-		}
-		log.Fatal(err4)
-	default:
-		actualAddr, usedFallback := utils.FindAvailablePortWithNetwork("tcp4", listenAddr)
-		if usedFallback {
-			applyFallback(listenAddr, actualAddr)
-		}
-		ln4, err := net.Listen("tcp4", actualAddr)
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Printf("IPv4 listening at %s", actualAddr)
-		log.Fatal(app.Listener(ln4))
-	}
+	return serveAppWithOptionalCertificate(app, config)
 }

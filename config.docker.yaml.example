@@ -8,6 +8,23 @@ webUrl: /                                    # 前端路径
 pageTitle: "海豹尬聊 SealChat"
 faviconAttachmentId: ""                      # 可选：平台管理-基本设置上传网页图标后会写入此处
 
+# 公网 IP 证书配置（第一版仅支持公网 IP；启用后需要重启）
+# Docker 部署若使用 HTTP-01，请映射宿主机 80:80；若使用 TLS-ALPN-01，请映射 443:443。
+certificate:
+  enabled: false
+  subjectIp: ""
+  issuer: letsencrypt_shortlived              # letsencrypt_shortlived / zerossl_90d
+  challenge: http-01                          # http-01 / tls-alpn-01
+  email: ""
+  storageDir: ./data/certmagic
+  httpsServeAt: ""                            # 留空复用 serveAt，同端口同时支持 HTTP/HTTPS；也可填 :443 或 :8443 使用独立 HTTPS 端口
+  forceHTTPS: true
+  redirectHTTP: true
+  zeroSSLAPIKey: ""
+  zeroSSLEABKeyID: ""
+  zeroSSLEABMACKey: ""
+  staging: false
+
 # 数据库配置
 # SQLite (默认)
 dbUrl: ./data/chat.db
@@ -18,6 +35,7 @@ dbUrl: ./data/chat.db
 
 # 功能开关
 registerOpen: true                           # 是否开放注册
+registerInviteCode: ""                       # 注册邀请码，留空则不需要
 builtInSealBotEnable: true                   # 启用内置小海豹
 chatHistoryPersistentDays: -1                # 聊天记录保留天数 (-1 永久)
 
@@ -42,21 +60,45 @@ logUpload:
 
 # 验证码配置
 captcha:
+  cap:
+    challengeCount: 50
+    challengeSize: 32
+    challengeDifficulty: 4
+    challengeExpiresSeconds: 600
+    tokenTTLSeconds: 1200
   signup:
-    mode: local                              # off / local / turnstile
+    mode: cap                                # off / local / turnstile / cap
     turnstile:
       siteKey: ""
       secretKey: ""
+    cap:
+      challengeCount: 50
+      challengeSize: 32
+      challengeDifficulty: 4
+      challengeExpiresSeconds: 600
+      tokenTTLSeconds: 1200
   signin:
     mode: off
     turnstile:
       siteKey: ""
       secretKey: ""
+    cap:
+      challengeCount: 50
+      challengeSize: 32
+      challengeDifficulty: 4
+      challengeExpiresSeconds: 600
+      tokenTTLSeconds: 1200
   passwordReset:
-    mode: local                              # 密码重置验证码
+    mode: cap                                # 密码重置验证码
     turnstile:
       siteKey: ""
       secretKey: ""
+    cap:
+      challengeCount: 50
+      challengeSize: 32
+      challengeDifficulty: 4
+      challengeExpiresSeconds: 600
+      tokenTTLSeconds: 1200
 
 # SQLite 优化配置 (使用 SQLite 时生效)
 sqlite:

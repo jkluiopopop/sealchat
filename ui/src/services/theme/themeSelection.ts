@@ -26,6 +26,17 @@ export interface ResolveEffectiveThemeSelectionInput {
   personalThemes: CustomTheme[]
 }
 
+export interface CustomThemeEnabledUpdateInput {
+  themeSelectionMode: ThemeSelectionMode
+  activePlatformThemeId?: string | null
+}
+
+export interface CustomThemeEnabledUpdateResult {
+  customThemeEnabled: boolean
+  themeSelectionMode: ThemeSelectionMode
+  activePlatformThemeId: string | null
+}
+
 const normalizeId = (value: string | null | undefined): string => {
   if (typeof value !== 'string') return ''
   return value.trim()
@@ -43,6 +54,24 @@ export const migrateLegacyThemeSelection = (
   return {
     themeSelectionMode: 'inherit',
     activePlatformThemeId: null,
+  }
+}
+
+export const resolveCustomThemeEnabledUpdate = (
+  enabled: boolean,
+  snapshot: CustomThemeEnabledUpdateInput,
+): CustomThemeEnabledUpdateResult => {
+  if (!enabled) {
+    return {
+      customThemeEnabled: false,
+      themeSelectionMode: 'none',
+      activePlatformThemeId: null,
+    }
+  }
+  return {
+    customThemeEnabled: true,
+    themeSelectionMode: snapshot.themeSelectionMode,
+    activePlatformThemeId: snapshot.activePlatformThemeId ?? null,
   }
 }
 

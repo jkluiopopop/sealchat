@@ -57,3 +57,5 @@ backup_settings.patch
 /openspec
 /build
 /.superpowers
+/cap
+.codex

@@ -1,6 +1,7 @@
 <script setup lang="tsx">
 import AdminSettingsBase from './admin-settings-base.vue'
 import AdminSettingsBot from './admin-settings-bot.vue'
+import AdminSettingsCertificate from './admin-settings-certificate.vue'
 import AdminSettingsAudio from './admin-settings-audio.vue'
 import AdminSettingsExternalGlossary from './admin-settings-external-glossary.vue'
 import AdminSettingsStorageOptimization from './admin-settings-storage-optimization.vue'
@@ -8,7 +9,7 @@ import AdminSettingsThemeStyle from './admin-settings-theme-style.vue'
 import AdminSettingsUser from './admin-settings-user.vue'
 import { computed, ref, watch } from 'vue'
 
-type AdminTab = 'basic' | 'backup-storage' | 'bot' | 'user' | 'external-glossary' | 'audio' | 'theme-style'
+type AdminTab = 'basic' | 'backup-storage' | 'bot' | 'user' | 'external-glossary' | 'audio' | 'theme-style' | 'certificate'
 
 type AdminSettingsTabExpose = {
   save: () => Promise<void>
@@ -20,6 +21,7 @@ const activeTab = ref<AdminTab>('basic');
 const basicSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const storageOptimizationSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const themeStyleSettingsRef = ref<AdminSettingsTabExpose | null>(null);
+const certificateSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const audioDrawerVisible = ref(false);
 const lastNonAudioTab = ref<Exclude<AdminTab, 'audio'>>('basic');
 
@@ -32,6 +34,9 @@ const currentSettingsRef = computed<AdminSettingsTabExpose | null>(() => {
   }
   if (activeTab.value === 'theme-style') {
     return themeStyleSettingsRef.value;
+  }
+  if (activeTab.value === 'certificate') {
+    return certificateSettingsRef.value;
   }
   return null;
 });
@@ -99,6 +104,9 @@ const saveCurrentTab = async () => {
         <admin-settings-storage-optimization ref="storageOptimizationSettingsRef" />
       </n-tab-pane>
       <n-tab-pane name="audio" tab="音频素材管理" />
+      <n-tab-pane name="certificate" tab="IP证书管理">
+        <admin-settings-certificate ref="certificateSettingsRef" />
+      </n-tab-pane>
     </n-tabs>
 
     <n-drawer
@@ -124,6 +132,7 @@ const saveCurrentTab = async () => {
 
 <style scoped>
 .sc-admin-settings-shell {
+  width: min(1180px, 94vw);
   margin-top: -5rem;
   min-height: 70vh;
   max-height: 78vh;
@@ -153,6 +162,19 @@ const saveCurrentTab = async () => {
   flex-direction: column;
 }
 
+.sc-admin-settings-tabs :deep(.n-tabs-nav-scroll-wrapper) {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.sc-admin-settings-tabs :deep(.n-tabs-nav-scroll-content) {
+  min-width: max-content;
+}
+
+.sc-admin-settings-tabs :deep(.n-tabs-tab) {
+  white-space: nowrap;
+}
+
 .sc-admin-settings-tabs :deep(.n-tabs-pane-wrapper),
 .sc-admin-settings-tabs :deep(.n-tabs-content),
 .sc-admin-settings-tabs :deep(.n-tab-pane),
@@ -165,11 +187,16 @@ const saveCurrentTab = async () => {
   flex: 1;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .sc-admin-settings-tabs :deep(.n-tab-pane) {
   height: 100%;
   overflow: hidden;
+}
+
+.sc-admin-settings-tabs :deep(.n-tab-pane > *) {
+  height: 100%;
 }
 
 .sc-admin-settings-audio-drawer__header {

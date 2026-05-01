@@ -9,6 +9,8 @@ import type { ServerConfig } from '@/types';
 import { api, urlBase } from '@/stores/_config';
 import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useLoginGlass } from '@/composables/useLoginGlass';
+import { useCapWidget } from '@/composables/useCapWidget';
+import { normalizePageDescription } from '@/utils/pageDescription';
 
 declare global {
   interface Window {
@@ -42,6 +44,15 @@ const turnstileToken = ref('');
 const turnstileWidgetId = ref<string | null>(null);
 const turnstileError = ref('');
 const turnstileLoading = ref(false);
+const {
+  container: capContainer,
+  token: capToken,
+  error: capError,
+  loading: capLoading,
+  render: renderCapWidget,
+  reset: resetCapWidget,
+  destroy: destroyCapWidget,
+} = useCapWidget(CAPTCHA_SCENE);
 
 const userStore = useUserStore();
 const utils = useUtilsStore();
@@ -50,6 +61,10 @@ const config = ref<ServerConfig | null>(null);
 const signInTitle = computed(() => {
   const title = (config.value?.pageTitle ?? utils.config?.pageTitle)?.trim();
   return title && title.length > 0 ? title : DEFAULT_PAGE_TITLE;
+});
+
+const signInDescription = computed(() => {
+  return normalizePageDescription(config.value?.pageDescription ?? utils.config?.pageDescription);
 });
 
 // Login background
@@ -247,13 +262,21 @@ watch(
   () => captchaMode.value,
   (mode) => {
     if (mode === 'local') {
+      destroyCapWidget();
       destroyTurnstile();
       fetchCaptcha();
     } else if (mode === 'turnstile') {
+      destroyCapWidget();
       captchaId.value = '';
       captchaInput.value = '';
       renderTurnstileWidget();
+    } else if (mode === 'cap') {
+      destroyTurnstile();
+      captchaId.value = '';
+      captchaInput.value = '';
+      renderCapWidget();
     } else {
+      destroyCapWidget();
       destroyTurnstile();
       captchaId.value = '';
       captchaInput.value = '';
@@ -289,6 +312,9 @@ const handleValidateButtonClick = async (e: MouseEvent) => {
     } else if (captchaMode.value === 'turnstile' && !turnstileToken.value) {
       message.error('请完成人机验证');
       return;
+    } else if (captchaMode.value === 'cap' && !capToken.value) {
+      message.error('请先完成验证码验证');
+      return;
     }
 
     try {
@@ -298,6 +324,7 @@ const handleValidateButtonClick = async (e: MouseEvent) => {
         captchaId: captchaId.value,
         captchaValue: captchaInput.value.trim(),
         turnstileToken: turnstileToken.value,
+        capToken: capToken.value,
       });
       const ret = resp.data;
       if (captchaMode.value === 'local') {
@@ -305,6 +332,8 @@ const handleValidateButtonClick = async (e: MouseEvent) => {
       } else if (captchaMode.value === 'turnstile' && turnstileWidgetId.value && window.turnstile?.reset) {
         window.turnstile.reset(turnstileWidgetId.value);
         turnstileToken.value = '';
+      } else if (captchaMode.value === 'cap') {
+        resetCapWidget();
       }
       message.success('验证成功，即将返回首页');
       if (ret.token) {
@@ -317,6 +346,8 @@ const handleValidateButtonClick = async (e: MouseEvent) => {
       } else if (captchaMode.value === 'turnstile' && turnstileWidgetId.value && window.turnstile?.reset) {
         window.turnstile.reset(turnstileWidgetId.value);
         turnstileToken.value = '';
+      } else if (captchaMode.value === 'cap') {
+        resetCapWidget();
       }
     }
   });
@@ -333,6 +364,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   destroyTurnstile();
+  destroyCapWidget();
 });
 </script>
 
@@ -347,7 +379,10 @@ onBeforeUnmount(() => {
       :class="{ 'sc-glass-panel': hasLoginBg }"
       :style="hasLoginBg ? loginGlassStyle : undefined"
     >
-      <h2 class="font-bold text-xl mb-8">{{ signInTitle }}</h2>
+      <div class="sign-in-header">
+        <h2 class="font-bold text-xl sign-in-title">{{ signInTitle }}</h2>
+        <p v-if="signInDescription" class="sign-in-description">{{ signInDescription }}</p>
+      </div>
 
       <n-form ref="formRef" :model="model" :rules="rules" class="w-full px-8 max-w-md">
       <n-form-item path="account" label="用户名/昵称/邮箱">
@@ -381,6 +416,16 @@ onBeforeUnmount(() => {
             <n-button text size="tiny" :loading="turnstileLoading" @click.prevent="renderTurnstileWidget">刷新</n-button>
           </div>
           <div v-if="turnstileError" class="text-xs text-red-500 mt-1">{{ turnstileError }}</div>
+        </n-form-item>
+
+        <n-form-item v-else-if="captchaMode === 'cap'" label="验证码验证">
+          <div class="w-full">
+            <div ref="capContainer" class="w-full"></div>
+          </div>
+          <div class="flex justify-end mt-1">
+            <n-button text size="tiny" :loading="capLoading" @click.prevent="resetCapWidget">刷新</n-button>
+          </div>
+          <div v-if="capError" class="text-xs text-red-500 mt-1">{{ capError }}</div>
         </n-form-item>
 
         <n-row :gutter="[0, 24]">
@@ -448,5 +493,22 @@ onBeforeUnmount(() => {
 
 .sign-in-content.sc-glass-panel {
   border-radius: 12px;
+}
+
+.sign-in-header {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.sign-in-title {
+  margin: 0;
+}
+
+.sign-in-description {
+  max-width: 28rem;
+  margin: 0.35rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  opacity: 0.68;
 }
 </style>
