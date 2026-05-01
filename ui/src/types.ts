@@ -236,6 +236,48 @@ export interface ThemeManagementConfig {
   defaultPlatformThemeId?: string;
 }
 
+export type CertificateIssuer = 'letsencrypt_shortlived' | 'zerossl_90d';
+export type CertificateChallenge = 'http-01' | 'tls-alpn-01';
+
+export interface CertificateConfig {
+  enabled: boolean;
+  subjectIp: string;
+  issuer: CertificateIssuer;
+  challenge: CertificateChallenge;
+  email: string;
+  storageDir: string;
+  httpsServeAt?: string;
+  forceHTTPS: boolean;
+  redirectHTTP: boolean;
+  zeroSSLAPIKey?: string;
+  zeroSSLEABKeyID?: string;
+  zeroSSLEABMACKey?: string;
+  staging?: boolean;
+}
+
+export interface CertificateStatus {
+  enabled: boolean;
+  runtimeActive: boolean;
+  subjectIp: string;
+  issuer: string;
+  challenge: string;
+  certificatePresent: boolean;
+  notBefore?: string;
+  notAfter?: string;
+  remainingDays: number;
+  lastError?: string;
+}
+
+export interface CertificateLogEntry {
+  time: string;
+  level: string;
+  event: string;
+  message: string;
+  subjectIp?: string;
+  issuer?: string;
+  challenge?: string;
+}
+
 export interface ServerConfig {
   serveAt: string;
   domain: string;
@@ -267,6 +309,7 @@ export interface ServerConfig {
   audioImportEnabled?: boolean;
   loginBackground?: LoginBackgroundConfig;
   themeManagement?: ThemeManagementConfig;
+  certificate?: CertificateConfig;
 }
 
 export interface UserInfo {

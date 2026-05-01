@@ -1,5 +1,5 @@
 import { defineStore } from "pinia"
-import type { BotOneBotConfig, ServerConfig, UserInfo } from "@/types";
+import type { BotOneBotConfig, CertificateConfig, ServerConfig, UserInfo } from "@/types";
 import { Howl, Howler } from 'howler';
 
 import axiosFactory from "axios"
@@ -252,6 +252,47 @@ export const useUtilsStore = defineStore({
       const resp = await api.post('api/v1/admin/update-version', {
         currentVersion: currentVersion,
       }, {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
+    async adminCertificateConfigGet() {
+      const user = useUserStore();
+      const resp = await api.get('api/v1/admin/certificates/config', {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
+    async adminCertificateConfigUpdate(config: CertificateConfig) {
+      const user = useUserStore();
+      const resp = await api.put('api/v1/admin/certificates/config', { config }, {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
+    async adminCertificateStatus() {
+      const user = useUserStore();
+      const resp = await api.get('api/v1/admin/certificates/status', {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
+    async adminCertificateLogs(limit = 100) {
+      const user = useUserStore();
+      const resp = await api.get('api/v1/admin/certificates/logs', {
+        headers: { 'Authorization': user.token },
+        params: { limit },
+      });
+      return resp;
+    },
+
+    async adminCertificateObtain() {
+      const user = useUserStore();
+      const resp = await api.post('api/v1/admin/certificates/obtain', {}, {
         headers: { 'Authorization': user.token },
       });
       return resp;

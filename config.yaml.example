@@ -22,6 +22,20 @@
     note: "默认上传到海豹染色器获取BBcode/Docx"
   registerOpen: true
   serveAt: :3212
+  certificate:
+    enabled: false                # 第一版仅支持公网 IP 证书；启用后保存配置并重启生效
+    subjectIp: ""                 # 服务器公网 IPv4/IPv6，不能填写内网、回环或保留地址
+    issuer: letsencrypt_shortlived # letsencrypt_shortlived / zerossl_90d
+    challenge: http-01            # http-01 需要公网 80 端口；tls-alpn-01 需要公网 443 端口
+    email: ""
+    storageDir: ./data/certmagic
+    httpsServeAt: ""              # 留空复用 serveAt，同端口同时支持 HTTP/HTTPS；也可填 :443 或 :8443 使用独立 HTTPS 端口
+    forceHTTPS: true
+    redirectHTTP: true
+    zeroSSLAPIKey: ""             # ZeroSSL API Key；也可使用 EAB 凭据
+    zeroSSLEABKeyID: ""
+    zeroSSLEABMACKey: ""
+    staging: false
   version: 1
   webUrl: /
   pageTitle: "海豹尬聊 SealChat"

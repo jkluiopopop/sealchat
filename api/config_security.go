@@ -26,6 +26,8 @@ func sanitizeConfigForClient(cfg *utils.AppConfig) utils.AppConfig {
 	ret.Captcha.Signin.Turnstile.SecretKey = ""
 	ret.Captcha.PasswordReset.Turnstile.SecretKey = ""
 	ret.Audio.ImportDir = ""
+	ret.Certificate.ZeroSSLAPIKey = ""
+	ret.Certificate.ZeroSSLEABMACKey = ""
 
 	return ret
 }
@@ -78,6 +80,12 @@ func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *u
 	}
 	if strings.TrimSpace(out.Audio.ImportDir) == "" {
 		out.Audio.ImportDir = current.Audio.ImportDir
+	}
+	if strings.TrimSpace(out.Certificate.ZeroSSLAPIKey) == "" {
+		out.Certificate.ZeroSSLAPIKey = current.Certificate.ZeroSSLAPIKey
+	}
+	if strings.TrimSpace(out.Certificate.ZeroSSLEABMACKey) == "" {
+		out.Certificate.ZeroSSLEABMACKey = current.Certificate.ZeroSSLEABMACKey
 	}
 
 	return &out

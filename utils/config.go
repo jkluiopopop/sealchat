@@ -74,6 +74,7 @@ const (
 	defaultBackupRetentionCount     = 5
 	defaultAuthTokenMaxAgeDays      = 15
 	defaultAuthRefreshThresholdDays = 7
+	defaultCertificateStorageDir    = "./data/certmagic"
 )
 
 type CaptchaMode string
@@ -229,6 +230,36 @@ type LoginBackgroundConfig struct {
 	PanelShadowStrength int    `json:"panelShadowStrength" yaml:"panelShadowStrength"`
 }
 
+type CertificateIssuer string
+
+const (
+	CertificateIssuerLetsEncryptShortLived CertificateIssuer = "letsencrypt_shortlived"
+	CertificateIssuerZeroSSL90Days         CertificateIssuer = "zerossl_90d"
+)
+
+type CertificateChallenge string
+
+const (
+	CertificateChallengeHTTP01    CertificateChallenge = "http-01"
+	CertificateChallengeTLSALPN01 CertificateChallenge = "tls-alpn-01"
+)
+
+type CertificateConfig struct {
+	Enabled          bool                 `json:"enabled" yaml:"enabled"`
+	SubjectIP        string               `json:"subjectIp" yaml:"subjectIp"`
+	Issuer           CertificateIssuer    `json:"issuer" yaml:"issuer"`
+	Challenge        CertificateChallenge `json:"challenge" yaml:"challenge"`
+	Email            string               `json:"email" yaml:"email"`
+	StorageDir       string               `json:"storageDir" yaml:"storageDir"`
+	HTTPSServeAt     string               `json:"httpsServeAt" yaml:"httpsServeAt"`
+	ForceHTTPS       bool                 `json:"forceHTTPS" yaml:"forceHTTPS"`
+	RedirectHTTP     bool                 `json:"redirectHTTP" yaml:"redirectHTTP"`
+	ZeroSSLAPIKey    string               `json:"zeroSSLAPIKey,omitempty" yaml:"zeroSSLAPIKey"`
+	ZeroSSLEABKeyID  string               `json:"zeroSSLEABKeyID,omitempty" yaml:"zeroSSLEABKeyID"`
+	ZeroSSLEABMACKey string               `json:"zeroSSLEABMACKey,omitempty" yaml:"zeroSSLEABMACKey"`
+	Staging          bool                 `json:"staging" yaml:"staging"`
+}
+
 type AppConfig struct {
 	ServeAt                   string                  `json:"serveAt" yaml:"serveAt"`
 	Domain                    string                  `json:"domain" yaml:"domain"`
@@ -261,6 +292,7 @@ type AppConfig struct {
 	AuthSession               AuthSessionConfig       `json:"authSession" yaml:"authSession"`
 	LoginBackground           LoginBackgroundConfig   `json:"loginBackground" yaml:"loginBackground"`
 	ThemeManagement           ThemeManagementConfig   `json:"themeManagement" yaml:"themeManagement"`
+	Certificate               CertificateConfig       `json:"certificate" yaml:"certificate"`
 }
 
 type ExportConfig struct {
@@ -437,6 +469,7 @@ func ReadConfig() *AppConfig {
 			PlatformThemes:         []PlatformThemeConfig{},
 			DefaultPlatformThemeID: "",
 		},
+		Certificate: defaultCertificateConfig(),
 	}
 
 	lo.Must0(k.Load(structs.Provider(&config, "yaml"), nil))
@@ -510,10 +543,101 @@ func ReadConfig() *AppConfig {
 	applyBackupDefaults(&config.Backup)
 	applyAuthSessionDefaults(&config.AuthSession)
 	config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
+	config.Certificate = NormalizeCertificateConfig(config.Certificate)
 
 	k.Print()
 	currentConfig = &config
 	return currentConfig
+}
+
+func NormalizeCertificateConfig(cfg CertificateConfig) CertificateConfig {
+	cfg.SubjectIP = strings.TrimSpace(cfg.SubjectIP)
+	cfg.Email = strings.TrimSpace(cfg.Email)
+	cfg.StorageDir = strings.TrimSpace(cfg.StorageDir)
+	cfg.HTTPSServeAt = strings.TrimSpace(cfg.HTTPSServeAt)
+	cfg.ZeroSSLAPIKey = strings.TrimSpace(cfg.ZeroSSLAPIKey)
+	cfg.ZeroSSLEABKeyID = strings.TrimSpace(cfg.ZeroSSLEABKeyID)
+	cfg.ZeroSSLEABMACKey = strings.TrimSpace(cfg.ZeroSSLEABMACKey)
+
+	if cfg.Issuer == "" {
+		cfg.Issuer = CertificateIssuerLetsEncryptShortLived
+	}
+	if cfg.Challenge == "" {
+		cfg.Challenge = CertificateChallengeHTTP01
+	}
+	if cfg.StorageDir == "" {
+		cfg.StorageDir = defaultCertificateStorageDir
+	}
+	return cfg
+}
+
+func defaultCertificateConfig() CertificateConfig {
+	return NormalizeCertificateConfig(CertificateConfig{
+		Issuer:       CertificateIssuerLetsEncryptShortLived,
+		Challenge:    CertificateChallengeHTTP01,
+		StorageDir:   defaultCertificateStorageDir,
+		ForceHTTPS:   true,
+		RedirectHTTP: true,
+	})
+}
+
+func ValidateCertificateConfig(cfg CertificateConfig) error {
+	cfg = NormalizeCertificateConfig(cfg)
+	if !cfg.Enabled {
+		return nil
+	}
+	if cfg.Issuer != CertificateIssuerLetsEncryptShortLived && cfg.Issuer != CertificateIssuerZeroSSL90Days {
+		return fmt.Errorf("证书签发方无效: %s", cfg.Issuer)
+	}
+	if cfg.Challenge != CertificateChallengeHTTP01 && cfg.Challenge != CertificateChallengeTLSALPN01 {
+		return fmt.Errorf("证书验证方式无效: %s", cfg.Challenge)
+	}
+	if !isPublicCertificateIP(cfg.SubjectIP) {
+		return fmt.Errorf("证书 IP 必须是公网 IP")
+	}
+	if cfg.Email == "" {
+		return fmt.Errorf("证书签发邮箱不能为空")
+	}
+	if cfg.Issuer == CertificateIssuerZeroSSL90Days &&
+		cfg.ZeroSSLAPIKey == "" &&
+		(cfg.ZeroSSLEABKeyID == "" || cfg.ZeroSSLEABMACKey == "") {
+		return fmt.Errorf("ZeroSSL 证书需要 API Key 或 EAB 凭据")
+	}
+	if cfg.Issuer == CertificateIssuerZeroSSL90Days &&
+		cfg.Challenge == CertificateChallengeTLSALPN01 &&
+		(cfg.ZeroSSLEABKeyID == "" || cfg.ZeroSSLEABMACKey == "") {
+		return fmt.Errorf("ZeroSSL TLS-ALPN-01 证书需要 EAB 凭据")
+	}
+	return nil
+}
+
+func isPublicCertificateIP(value string) bool {
+	ip := net.ParseIP(strings.TrimSpace(value))
+	if ip == nil {
+		return false
+	}
+	if ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
+		return false
+	}
+	for _, cidr := range []string{
+		"0.0.0.0/8",
+		"100.64.0.0/10",
+		"192.0.0.0/24",
+		"192.0.2.0/24",
+		"198.18.0.0/15",
+		"198.51.100.0/24",
+		"203.0.113.0/24",
+		"240.0.0.0/4",
+		"2001:db8::/32",
+		"fc00::/7",
+		"fe80::/10",
+	} {
+		_, network, err := net.ParseCIDR(cidr)
+		if err == nil && network.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }
 
 func applySQLiteDefaults(cfg *SQLiteConfig) {
@@ -884,6 +1008,7 @@ func WriteConfig(config *AppConfig) {
 	if config != nil {
 		config.Captcha.normalize()
 		config.Storage.normalize()
+		config.Certificate = NormalizeCertificateConfig(config.Certificate)
 		config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
 		config.MessageSortBasis = NormalizeMessageSortBasis(config.MessageSortBasis)
 		if strings.TrimSpace(config.PageTitle) == "" {
@@ -925,6 +1050,19 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("logUpload.uniformId", config.LogUpload.UniformID)
 		_ = k.Set("logUpload.version", config.LogUpload.Version)
 		_ = k.Set("logUpload.note", config.LogUpload.Note)
+		_ = k.Set("certificate.enabled", config.Certificate.Enabled)
+		_ = k.Set("certificate.subjectIp", config.Certificate.SubjectIP)
+		_ = k.Set("certificate.issuer", string(config.Certificate.Issuer))
+		_ = k.Set("certificate.challenge", string(config.Certificate.Challenge))
+		_ = k.Set("certificate.email", config.Certificate.Email)
+		_ = k.Set("certificate.storageDir", config.Certificate.StorageDir)
+		_ = k.Set("certificate.httpsServeAt", config.Certificate.HTTPSServeAt)
+		_ = k.Set("certificate.forceHTTPS", config.Certificate.ForceHTTPS)
+		_ = k.Set("certificate.redirectHTTP", config.Certificate.RedirectHTTP)
+		_ = k.Set("certificate.zeroSSLAPIKey", config.Certificate.ZeroSSLAPIKey)
+		_ = k.Set("certificate.zeroSSLEABKeyID", config.Certificate.ZeroSSLEABKeyID)
+		_ = k.Set("certificate.zeroSSLEABMACKey", config.Certificate.ZeroSSLEABMACKey)
+		_ = k.Set("certificate.staging", config.Certificate.Staging)
 		_ = k.Set("audio.storageDir", config.Audio.StorageDir)
 		_ = k.Set("audio.tempDir", config.Audio.TempDir)
 		_ = k.Set("audio.importDir", config.Audio.ImportDir)

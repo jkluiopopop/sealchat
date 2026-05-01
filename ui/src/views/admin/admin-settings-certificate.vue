@@ -1,0 +1,356 @@
+<script setup lang="ts">
+import { useUtilsStore } from '@/stores/utils'
+import type { CertificateChallenge, CertificateConfig, CertificateIssuer, CertificateLogEntry, CertificateStatus } from '@/types'
+import { cloneDeep } from 'lodash-es'
+import { useMessage } from 'naive-ui'
+import { computed, onMounted, ref } from 'vue'
+
+type CertificateConfigResponse = {
+  config: CertificateConfig
+  restartRequired?: boolean
+}
+
+const utils = useUtilsStore()
+const message = useMessage()
+
+const defaultConfig = (): CertificateConfig => ({
+  enabled: false,
+  subjectIp: '',
+  issuer: 'letsencrypt_shortlived',
+  challenge: 'http-01',
+  email: '',
+  storageDir: './data/certmagic',
+  httpsServeAt: '',
+  forceHTTPS: true,
+  redirectHTTP: true,
+  zeroSSLAPIKey: '',
+  zeroSSLEABKeyID: '',
+  zeroSSLEABMACKey: '',
+  staging: false,
+})
+
+const model = ref<CertificateConfig>(defaultConfig())
+const status = ref<CertificateStatus | null>(null)
+const logs = ref<CertificateLogEntry[]>([])
+const loading = ref(false)
+const saving = ref(false)
+const obtaining = ref(false)
+const originalSnapshot = ref('')
+
+const issuerOptions: { label: string; value: CertificateIssuer }[] = [
+  { label: 'Let’s Encrypt 短期证书', value: 'letsencrypt_shortlived' },
+  { label: 'ZeroSSL 90 天证书', value: 'zerossl_90d' },
+]
+
+const challengeOptions: { label: string; value: CertificateChallenge }[] = [
+  { label: 'HTTP-01（使用 80 端口）', value: 'http-01' },
+  { label: 'TLS-ALPN-01（使用 443 端口）', value: 'tls-alpn-01' },
+]
+
+const normalizeConfig = (value?: Partial<CertificateConfig> | null): CertificateConfig => ({
+  ...defaultConfig(),
+  ...(value || {}),
+  issuer: (value?.issuer === 'zerossl_90d' ? 'zerossl_90d' : 'letsencrypt_shortlived'),
+  challenge: (value?.challenge === 'tls-alpn-01' ? 'tls-alpn-01' : 'http-01'),
+})
+
+const snapshotOf = (value: CertificateConfig) => JSON.stringify(value)
+const isModified = computed(() => snapshotOf(model.value) !== originalSnapshot.value)
+
+const formatCertificateTime = (value?: string | null) => {
+  if (!value || value.startsWith('0001-01-01')) return '未知'
+  return new Date(value).toLocaleString()
+}
+
+const statusRows = computed(() => {
+  const item = status.value
+  if (!item) return []
+  return [
+    ['运行状态', item.runtimeActive ? '已启用' : (item.enabled ? '等待重启生效' : '未启用')],
+    ['公网 IP', item.subjectIp || '未配置'],
+    ['签发方', item.issuer || '未配置'],
+    ['验证方式', item.challenge || '未配置'],
+    ['证书缓存', item.certificatePresent ? '已找到' : '未找到'],
+    ['剩余天数', item.certificatePresent ? `${item.remainingDays} 天` : '未知'],
+    ['生效时间', formatCertificateTime(item.notBefore)],
+    ['过期时间', formatCertificateTime(item.notAfter)],
+  ]
+})
+
+const load = async () => {
+  loading.value = true
+  try {
+    const [configResp, statusResp, logsResp] = await Promise.all([
+      utils.adminCertificateConfigGet(),
+      utils.adminCertificateStatus(),
+      utils.adminCertificateLogs(100),
+    ])
+    model.value = normalizeConfig((configResp.data as CertificateConfigResponse).config)
+    originalSnapshot.value = snapshotOf(model.value)
+    status.value = statusResp.data?.status || null
+    logs.value = logsResp.data?.items || []
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || error?.message || '加载证书配置失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+const save = async () => {
+  saving.value = true
+  try {
+    const payload = cloneDeep(model.value)
+    const resp = await utils.adminCertificateConfigUpdate(payload)
+    model.value = normalizeConfig((resp.data as CertificateConfigResponse).config)
+    originalSnapshot.value = snapshotOf(model.value)
+    message.success(resp.data?.restartRequired ? '已保存，重启服务后生效' : '已保存')
+    await refreshStatus()
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || error?.message || '保存证书配置失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+const refreshStatus = async () => {
+  try {
+    const [statusResp, logsResp] = await Promise.all([
+      utils.adminCertificateStatus(),
+      utils.adminCertificateLogs(100),
+    ])
+    status.value = statusResp.data?.status || null
+    logs.value = logsResp.data?.items || []
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || error?.message || '刷新证书状态失败')
+  }
+}
+
+const obtainNow = async () => {
+  obtaining.value = true
+  try {
+    const resp = await utils.adminCertificateObtain()
+    status.value = resp.data?.status || status.value
+    message.success('已触发证书检查')
+    await refreshStatus()
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || error?.message || '触发证书检查失败')
+  } finally {
+    obtaining.value = false
+  }
+}
+
+onMounted(load)
+
+defineExpose({
+  save,
+  isModified: () => isModified.value,
+})
+</script>
+
+<template>
+  <div class="admin-certificate">
+    <n-alert type="warning" title="公网 IP 证书签发限制" class="admin-certificate__notice">
+      仅支持单个公网 IP。HTTPS 监听地址留空时会在原服务端口上同时支持 HTTPS；本地 HTTP 访问仍保留，保存后需要重启服务。
+    </n-alert>
+
+    <div class="admin-certificate__grid">
+      <n-card title="证书配置" :bordered="false" class="admin-certificate__card admin-certificate__config-card">
+        <n-spin :show="loading || saving">
+          <n-form label-placement="left" label-width="112">
+            <n-form-item label="启用 IP 证书">
+              <n-switch v-model:value="model.enabled" />
+            </n-form-item>
+            <n-form-item label="公网 IP" feedback="必须是公网 IPv4 或 IPv6，不能是内网、回环或保留地址。">
+              <n-input v-model:value="model.subjectIp" placeholder="例如 8.8.8.8" />
+            </n-form-item>
+            <n-form-item label="签发方">
+              <n-select v-model:value="model.issuer" :options="issuerOptions" />
+            </n-form-item>
+            <n-form-item label="验证方式">
+              <n-select v-model:value="model.challenge" :options="challengeOptions" />
+            </n-form-item>
+            <n-form-item label="联系邮箱">
+              <n-input v-model:value="model.email" placeholder="admin@example.com" />
+            </n-form-item>
+            <n-form-item label="证书缓存目录">
+              <n-input v-model:value="model.storageDir" placeholder="./data/certmagic" />
+            </n-form-item>
+            <n-form-item label="HTTPS 监听地址" feedback="留空复用服务地址端口，例如 https://公网IP:3212；也可填 :443 或 :8443 使用独立 HTTPS 端口。">
+              <n-input v-model:value="model.httpsServeAt" placeholder="留空复用服务地址，或填 :443 / :8443" />
+            </n-form-item>
+            <n-form-item label="强制 HTTPS">
+              <n-switch v-model:value="model.forceHTTPS" />
+            </n-form-item>
+            <n-form-item label="HTTP 重定向">
+              <n-switch v-model:value="model.redirectHTTP" />
+            </n-form-item>
+
+            <n-divider>ZeroSSL 凭据</n-divider>
+            <n-form-item label="API Key" feedback="已保存的密钥不会回显；留空表示保留旧值。">
+              <n-input v-model:value="model.zeroSSLAPIKey" type="password" show-password-on="click" placeholder="ZeroSSL API Key" />
+            </n-form-item>
+            <n-form-item label="EAB Key ID">
+              <n-input v-model:value="model.zeroSSLEABKeyID" placeholder="ZeroSSL EAB Key ID" />
+            </n-form-item>
+            <n-form-item label="EAB MAC Key" feedback="TLS-ALPN-01 使用 ZeroSSL 时需要 EAB 凭据。">
+              <n-input v-model:value="model.zeroSSLEABMACKey" type="password" show-password-on="click" placeholder="ZeroSSL EAB MAC Key" />
+            </n-form-item>
+            <n-form-item label="测试环境">
+              <n-switch v-model:value="model.staging" />
+            </n-form-item>
+          </n-form>
+        </n-spin>
+      </n-card>
+
+      <div class="admin-certificate__side">
+        <n-card title="当前状态" :bordered="false" class="admin-certificate__card">
+          <div class="admin-certificate__actions">
+            <n-button size="small" @click="refreshStatus">刷新</n-button>
+            <n-button size="small" type="primary" :loading="obtaining" @click="obtainNow">触发检查</n-button>
+          </div>
+          <div v-if="status?.lastError" class="admin-certificate__error">{{ status.lastError }}</div>
+          <div v-for="row in statusRows" :key="row[0]" class="admin-certificate__status-row">
+            <span>{{ row[0] }}</span>
+            <strong>{{ row[1] }}</strong>
+          </div>
+        </n-card>
+
+        <n-card title="最近日志" :bordered="false" class="admin-certificate__card admin-certificate__logs">
+          <n-empty v-if="!logs.length" description="暂无证书日志" />
+          <div v-for="item in logs" :key="`${item.time}-${item.event}-${item.message}`" class="admin-certificate__log">
+            <div class="admin-certificate__log-meta">
+              <n-tag size="small" :type="item.level === 'error' ? 'error' : 'info'">{{ item.level }}</n-tag>
+              <span>{{ item.event }}</span>
+              <time>{{ new Date(item.time).toLocaleString() }}</time>
+            </div>
+            <p>{{ item.message }}</p>
+          </div>
+        </n-card>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.admin-certificate {
+  height: auto;
+  min-height: 0;
+  max-height: 61vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 4px 8px 18px 4px;
+  scrollbar-gutter: stable;
+}
+
+.admin-certificate__notice {
+  margin-bottom: 12px;
+}
+
+.admin-certificate__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: 14px;
+  min-height: 0;
+  align-items: start;
+}
+
+.admin-certificate__card {
+  background: var(--n-color);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+}
+
+.admin-certificate__config-card :deep(.n-card__content) {
+  padding-bottom: 10px;
+}
+
+.admin-certificate__config-card :deep(.n-form-item) {
+  margin-bottom: 14px;
+}
+
+.admin-certificate__config-card :deep(.n-form-item-feedback-wrapper) {
+  min-height: 18px;
+}
+
+.admin-certificate__side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.admin-certificate__actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.admin-certificate__error {
+  margin-bottom: 12px;
+  color: #dc2626;
+  font-size: 13px;
+}
+
+.admin-certificate__status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.admin-certificate__status-row span {
+  color: var(--n-text-color-3);
+}
+
+.admin-certificate__logs {
+  max-height: min(360px, 34vh);
+  overflow: hidden;
+}
+
+.admin-certificate__logs :deep(.n-card__content) {
+  max-height: min(300px, 28vh);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.admin-certificate__log {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.admin-certificate__log-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--n-text-color-3);
+  font-size: 12px;
+}
+
+.admin-certificate__log p {
+  margin: 6px 0 0;
+  word-break: break-word;
+}
+
+@media (max-width: 960px) {
+  .admin-certificate__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .admin-certificate {
+    padding-right: 4px;
+  }
+
+  .admin-certificate__actions {
+    flex-wrap: wrap;
+  }
+
+  .admin-certificate__status-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+}
+</style>

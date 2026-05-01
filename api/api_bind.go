@@ -224,6 +224,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	app := fiber.New(fiber.Config{
 		BodyLimit: bodyLimit,
 	})
+	app.Use(certificateHTTPRedirectMiddleware(config))
 	app.Use(corsConfig)
 	app.Use(recover.New())
 	app.Use(logger.New())
@@ -606,6 +607,11 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Get("/admin/update-status", AdminUpdateStatus)
 	v1AuthAdmin.Post("/admin/update-check", AdminUpdateCheck)
 	v1AuthAdmin.Post("/admin/update-version", AdminUpdateVersion)
+	v1AuthAdmin.Get("/admin/certificates/config", AdminCertificateConfigGet)
+	v1AuthAdmin.Put("/admin/certificates/config", AdminCertificateConfigUpdate)
+	v1AuthAdmin.Get("/admin/certificates/status", AdminCertificateStatus)
+	v1AuthAdmin.Get("/admin/certificates/logs", AdminCertificateLogs)
+	v1AuthAdmin.Post("/admin/certificates/obtain", AdminCertificateObtain)
 	v1AuthAdmin.Get("/admin/backup/list", AdminBackupList)
 	v1AuthAdmin.Post("/admin/backup/execute", AdminBackupExecute)
 	v1AuthAdmin.Post("/admin/backup/delete", AdminBackupDelete)
@@ -723,90 +729,5 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	oneBotWSWorks(app)
 	startOneBotReverseRuntime()
 
-	// Check port availability and find fallback if needed
-	listenAddr := config.ServeAt
-	if normalized, changed := utils.NormalizeServeAt(listenAddr); changed {
-		listenAddr = normalized
-		config.ServeAt = normalized
-	}
-	host, port, err := net.SplitHostPort(listenAddr)
-	if err != nil {
-		host = ""
-		port = "3212"
-	}
-	if port == "" {
-		port = "3212"
-	}
-	mode := classifyListenMode(host)
-	applyFallback := func(originalAddr, actualAddr string) {
-		log.Printf("警告: 端口 %s 被占用，已切换到 %s", originalAddr, actualAddr)
-		config.ServeAt = actualAddr
-		newPort := extractPort(actualAddr)
-		if newDomain, ok := updateDomainPort(config.Domain, newPort); ok {
-			config.Domain = newDomain
-		}
-		utils.WriteConfig(config)
-		log.Printf("配置文件已更新: serveAt=%s, domain=%s", config.ServeAt, config.Domain)
-	}
-
-	switch mode {
-	case listenIPv6:
-		actualAddr, usedFallback := utils.FindAvailablePortWithNetwork("tcp6", listenAddr)
-		if usedFallback {
-			applyFallback(listenAddr, actualAddr)
-		}
-		ln6, err := net.Listen("tcp6", actualAddr)
-		if err != nil {
-			return err
-		}
-		log.Printf("IPv6 listening at %s", actualAddr)
-		return app.Listener(ln6)
-	case listenDual:
-		listenAddr4 := utils.FormatListenHostPort(host, port)
-		actualAddr4, usedFallback := utils.FindAvailablePortWithNetwork("tcp4", listenAddr4)
-		if usedFallback {
-			applyFallback(listenAddr4, actualAddr4)
-		}
-		port = extractPort(actualAddr4)
-		if port == "" {
-			port = "3212"
-		}
-		listenAddr6 := utils.FormatListenHostPort("::", port)
-		ln4, err4 := net.Listen("tcp4", actualAddr4)
-		if err4 != nil {
-			log.Printf("IPv4 listen failed: %v", err4)
-		}
-		ln6, err6 := net.Listen("tcp6", listenAddr6)
-		if err6 != nil {
-			log.Printf("IPv6 listen unavailable: %v", err6)
-		} else {
-			log.Printf("IPv6 listening at %s", listenAddr6)
-		}
-		if ln4 != nil {
-			if ln6 != nil {
-				go func() {
-					if err := app.Listener(ln6); err != nil {
-						log.Printf("IPv6 listener stopped: %v", err)
-					}
-				}()
-			}
-			log.Printf("IPv4 listening at %s", actualAddr4)
-			return app.Listener(ln4)
-		}
-		if ln6 != nil {
-			return app.Listener(ln6)
-		}
-		return err4
-	default:
-		actualAddr, usedFallback := utils.FindAvailablePortWithNetwork("tcp4", listenAddr)
-		if usedFallback {
-			applyFallback(listenAddr, actualAddr)
-		}
-		ln4, err := net.Listen("tcp4", actualAddr)
-		if err != nil {
-			return err
-		}
-		log.Printf("IPv4 listening at %s", actualAddr)
-		return app.Listener(ln4)
-	}
+	return serveAppWithOptionalCertificate(app, config)
 }
