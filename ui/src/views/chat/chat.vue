@@ -73,6 +73,7 @@ import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
 import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
 import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
+import { buildOptimisticMessageIcModeFields } from '@/utils/optimisticMessageIcMode';
 import { buildGeneratedAvatarFile } from '@/utils/generatedAvatarImage';
 import { extractPushNotificationPreviewText } from '@/utils/pushNotificationPreview';
 import { useIFormStore } from '@/stores/iform';
@@ -11506,6 +11507,7 @@ const send = throttle(async () => {
     member: chat.curMember || undefined,
     quote: replyTo,
   };
+  Object.assign(tmpMsg as any, buildOptimisticMessageIcModeFields(chat.icMode === 'ooc' ? 'ooc' : 'ic'));
   const activeIdentity = identityIdOverride
     ? findIdentityMeta(chat.curChannel?.id, identityIdOverride)
     : chat.getActiveIdentity(chat.curChannel?.id);
