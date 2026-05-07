@@ -115,6 +115,7 @@ import MessageImageEditor from '@/components/chat/MessageImageEditor.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 import { resolveDeletedChannelFallbackId } from '@/stores/chatChannelSelection';
+import { shouldMergeNeighborMessages } from './messageMerge';
 
 const EmojiPickerModal = defineAsyncComponent(() => import('./components/EmojiPickerModal.vue'));
 
@@ -5542,9 +5543,6 @@ const isMergeCandidate = (message?: Message | null) => {
   if ((message as any).is_revoked || (message as any).is_deleted) {
     return false;
   }
-  if (message.isWhisper || (message as any).is_whisper) {
-    return false;
-  }
   return true;
 };
 
@@ -5668,12 +5666,20 @@ const getMessageSceneKey = (message: any): string => {
 };
 
 const shouldMergeMessages = (prev?: Message, current?: Message) => {
-  if (!prev || !current) return false;
-  if (prev.isWhisper !== current.isWhisper) return false;
-  const roleSame = getMessageRoleKey(prev) && getMessageRoleKey(prev) === getMessageRoleKey(current);
-  if (!roleSame) return false;
-  if (getMessageSceneKey(prev) !== getMessageSceneKey(current)) return false;
-  return getMessageAvatarMergeKey(prev) === getMessageAvatarMergeKey(current);
+  return shouldMergeNeighborMessages(
+    prev ? {
+      ...prev,
+      roleKey: getMessageRoleKey(prev),
+      sceneKey: getMessageSceneKey(prev),
+      avatarMergeKey: getMessageAvatarMergeKey(prev),
+    } : null,
+    current ? {
+      ...current,
+      roleKey: getMessageRoleKey(current),
+      sceneKey: getMessageSceneKey(current),
+      avatarMergeKey: getMessageAvatarMergeKey(current),
+    } : null,
+  );
 };
 
 
