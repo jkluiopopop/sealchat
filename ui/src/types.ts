@@ -204,6 +204,7 @@ export interface ServerAudioConfig {
   storageDir?: string;
   tempDir?: string;
   maxUploadSizeMB?: number;
+  userQuotaMB?: number;
   allowedMimeTypes?: string[];
   enableTranscode?: boolean;
   defaultBitrateKbps?: number;

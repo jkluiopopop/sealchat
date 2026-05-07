@@ -28,7 +28,7 @@ const model = ref<ServerConfig>({
   imageCompressQuality: 85,
   builtInSealBotEnable: true,
   emailNotification: { enabled: false },
-  audio: { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true },
+  audio: { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true, userQuotaMB: 150 },
 })
 
 const utils = useUtilsStore();
@@ -167,17 +167,25 @@ watch([serveAtHost, serveAtPort], ([host, port]) => {
   }
 });
 
-onMounted(async () => {
-  const resp = await utils.configGet();
-  model.value = cloneDeep(resp.data);
+const ensureAudioConfigDefaults = () => {
   if (!model.value.audio) {
-    model.value.audio = { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true };
-  }
-  if (model.value.messageSortBasis !== 'send_time' && model.value.messageSortBasis !== 'typing_start') {
-    model.value.messageSortBasis = 'typing_start';
+    model.value.audio = { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true, userQuotaMB: 150 };
+    return;
   }
   if (model.value.audio.allowNonAdminCreateWorld === undefined) {
     model.value.audio.allowNonAdminCreateWorld = true;
+  }
+  if (!model.value.audio.userQuotaMB || model.value.audio.userQuotaMB <= 0) {
+    model.value.audio.userQuotaMB = 150;
+  }
+};
+
+onMounted(async () => {
+  const resp = await utils.configGet();
+  model.value = cloneDeep(resp.data);
+  ensureAudioConfigDefaults();
+  if (model.value.messageSortBasis !== 'send_time' && model.value.messageSortBasis !== 'typing_start') {
+    model.value.messageSortBasis = 'typing_start';
   }
   nextTick(() => {
     modified.value = false;
@@ -215,6 +223,7 @@ const applyBasicSettingsToPayload = (payload: ServerConfig) => {
     ...(model.value.audio || {}),
     allowWorldAudioWorkbench: model.value.audio?.allowWorldAudioWorkbench ?? false,
     allowNonAdminCreateWorld: model.value.audio?.allowNonAdminCreateWorld ?? true,
+    userQuotaMB: Math.max(1, Math.trunc(model.value.audio?.userQuotaMB ?? 150)),
   };
 }
 
@@ -228,12 +237,7 @@ const save = async () => {
     if (model.value.messageSortBasis !== 'send_time' && model.value.messageSortBasis !== 'typing_start') {
       model.value.messageSortBasis = 'typing_start';
     }
-    if (!model.value.audio) {
-      model.value.audio = { allowWorldAudioWorkbench: false, allowNonAdminCreateWorld: true };
-    }
-    if (model.value.audio.allowNonAdminCreateWorld === undefined) {
-      model.value.audio.allowNonAdminCreateWorld = true;
-    }
+    ensureAudioConfigDefaults();
     modified.value = false;
     message.success('保存成功');
   } catch (error) {
@@ -559,6 +563,13 @@ const sendSmtpTestEmail = async () => {
       </n-form-item>
       <n-form-item v-if="model.audio" label="允许世界管理员使用音频工作台" feedback="开启后世界主/管理员可上传和管理世界级音频">
         <n-switch v-model:value="model.audio.allowWorldAudioWorkbench" />
+      </n-form-item>
+      <n-form-item
+        v-if="model.audio"
+        label="默认每用户音频容量上限 (MB)"
+        feedback="仅对普通用户生效；平台管理员默认无上限，除非在音频素材管理中单独设置覆盖值"
+      >
+        <n-input-number v-model:value="model.audio.userQuotaMB" :min="1" :precision="0" />
       </n-form-item>
       <n-form-item v-if="model.audio" label="允许非平台管理员创建新世界" feedback="关闭后仅平台管理员可创建世界">
         <n-switch v-model:value="model.audio.allowNonAdminCreateWorld" />

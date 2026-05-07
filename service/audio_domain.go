@@ -328,11 +328,32 @@ func AudioCreateAssetFromUpload(file *multipart.FileHeader, opts AudioUploadOpti
 		}
 		opts.FolderID = &trimmed
 	}
+	if _, err := EnsureAudioQuotaForIncoming(opts.CreatedBy, file.Size); err != nil {
+		return nil, err
+	}
 	asset, err := AudioProcessUpload(file, opts)
 	if err != nil {
 		return nil, err
 	}
-	if err := model.GetDB().Create(asset).Error; err != nil {
+	if err := withAudioQuotaUserLock(opts.CreatedBy, func() error {
+		usedBytes, err := GetAudioUsedBytes(opts.CreatedBy)
+		if err != nil {
+			return err
+		}
+		summary, err := buildAudioQuotaSummary(opts.CreatedBy, usedBytes)
+		if err != nil {
+			return err
+		}
+		if summary.Limited && summary.QuotaBytes != nil && usedBytes+asset.Size > *summary.QuotaBytes {
+			return &AudioQuotaExceededError{
+				UsedBytes:     usedBytes,
+				QuotaBytes:    *summary.QuotaBytes,
+				IncomingBytes: asset.Size,
+			}
+		}
+		return model.GetDB().Create(asset).Error
+	}); err != nil {
+		audioCleanupPersistedAsset(asset)
 		return nil, err
 	}
 	if asset.TranscodeStatus == model.AudioTranscodePending {
@@ -362,17 +383,54 @@ func AudioCreateAssetFromImport(filePath string, opts AudioUploadOptions) (*mode
 	if svc == nil {
 		return nil, errors.New("音频服务未初始化")
 	}
+	if info, err := os.Stat(filePath); err == nil {
+		if _, checkErr := EnsureAudioQuotaForIncoming(opts.CreatedBy, info.Size()); checkErr != nil {
+			return nil, checkErr
+		}
+	}
 	asset, err := svc.importFromPath(filePath, opts)
 	if err != nil {
 		return nil, err
 	}
-	if err := model.GetDB().Create(asset).Error; err != nil {
+	if err := withAudioQuotaUserLock(opts.CreatedBy, func() error {
+		usedBytes, err := GetAudioUsedBytes(opts.CreatedBy)
+		if err != nil {
+			return err
+		}
+		summary, err := buildAudioQuotaSummary(opts.CreatedBy, usedBytes)
+		if err != nil {
+			return err
+		}
+		if summary.Limited && summary.QuotaBytes != nil && usedBytes+asset.Size > *summary.QuotaBytes {
+			return &AudioQuotaExceededError{
+				UsedBytes:     usedBytes,
+				QuotaBytes:    *summary.QuotaBytes,
+				IncomingBytes: asset.Size,
+			}
+		}
+		return model.GetDB().Create(asset).Error
+	}); err != nil {
+		audioCleanupPersistedAsset(asset)
 		return nil, err
 	}
 	if asset.TranscodeStatus == model.AudioTranscodePending {
 		svc.scheduleTranscode(asset.ID, asset.ObjectKey)
 	}
 	return asset, nil
+}
+
+func audioCleanupPersistedAsset(asset *model.AudioAsset) {
+	if asset == nil {
+		return
+	}
+	svc := GetAudioService()
+	if svc == nil {
+		return
+	}
+	svc.removeAssetObject(asset.StorageType, asset.ObjectKey)
+	for _, variant := range asset.Variants {
+		svc.removeAssetObject(variant.StorageType, variant.ObjectKey)
+	}
 }
 
 func AudioGetAsset(id string) (*model.AudioAsset, error) {

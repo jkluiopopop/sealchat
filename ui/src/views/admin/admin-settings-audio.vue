@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { api } from '@/stores/_config';
+import AdminAudioQuotaModal from './components/AdminAudioQuotaModal.vue';
 import type {
   AdminAudioAssetItem,
   AdminAudioAssetListResult,
@@ -40,6 +41,7 @@ const creatorOptions = ref<AdminAudioFilterOption[]>([]);
 const checkedRowKeys = ref<string[]>([]);
 const selectedAssetId = ref<string | null>(null);
 const detailModalVisible = ref(false);
+const quotaModalVisible = ref(false);
 
 const cleanupModalVisible = ref(false);
 const cleanupLoading = ref(false);
@@ -634,6 +636,7 @@ async function executeCleanup() {
           </template>
           刷新
         </n-button>
+        <n-button @click="quotaModalVisible = true">用户配额</n-button>
         <n-button @click="resetFilters">重置筛选</n-button>
         <n-button :disabled="!hasSelection" type="error" @click="confirmBulkDelete">
           <template #icon>
@@ -801,6 +804,8 @@ async function executeCleanup() {
         </n-space>
       </template>
     </n-modal>
+
+    <AdminAudioQuotaModal v-model:show="quotaModalVisible" />
   </div>
 </template>
 

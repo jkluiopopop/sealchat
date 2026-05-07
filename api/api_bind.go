@@ -716,6 +716,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/audio-assets/bulk-delete", AdminAudioAssetBulkDeleteSafe)
 	v1AuthAdmin.Get("/admin/audio-assets/cleanup-preview", AdminAudioAssetCleanupPreview)
 	v1AuthAdmin.Post("/admin/audio-assets/cleanup", AdminAudioAssetCleanupExecute)
+	v1AuthAdmin.Get("/admin/audio-quotas", AdminAudioQuotaList)
+	v1AuthAdmin.Get("/admin/audio-quotas/:userId", AdminAudioQuotaGet)
+	v1AuthAdmin.Put("/admin/audio-quotas/:userId", AdminAudioQuotaUpsert)
+	v1AuthAdmin.Delete("/admin/audio-quotas/:userId", AdminAudioQuotaDelete)
 
 	// Image migration routes
 	v1AuthAdmin.Get("/admin/image-migration/preview", ImageMigrationPreview)

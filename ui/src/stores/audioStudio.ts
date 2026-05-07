@@ -11,7 +11,9 @@ import { hasAnyActivePlayback, isTrackPlaybackActive, normalizeTrackStatus } fro
 import { upsertAudioAssetCollections } from './audioStudioAssetCollections';
 import type {
   AudioAsset,
+  AudioAssetListResult,
   AudioAssetMutationPayload,
+  AudioQuotaSummary,
   AudioAssetQueryParams,
   AudioAssetScope,
   AudioFolder,
@@ -68,6 +70,7 @@ interface AudioStudioState {
   filteredAssets: AudioAsset[];
   trackSelectableAssets: AudioAsset[];
   assetsLoading: boolean;
+  quotaSummary: AudioQuotaSummary | null;
   assetPagination: PaginationState;
   selectedAssetId: string | null;
   assetMutationLoading: boolean;
@@ -425,6 +428,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     filteredAssets: [],
     trackSelectableAssets: [],
     assetsLoading: false,
+    quotaSummary: null,
     assetPagination: { page: 1, pageSize: 20, total: 0 },
     selectedAssetId: null,
     assetMutationLoading: false,
@@ -1593,7 +1597,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         };
         const params = buildAssetQueryParams(mergedFilters, pagination);
         const resp = await api.get('/api/v1/audio/assets', { params });
-        const raw = resp.data as PaginatedResult<AudioAsset> | AudioAsset[] | undefined;
+        const raw = resp.data as AudioAssetListResult | PaginatedResult<AudioAsset> | AudioAsset[] | undefined;
         const items = normalizeAudioAssets(Array.isArray(raw) ? raw : raw?.items || []);
         const page = !Array.isArray(raw) && raw?.page ? raw.page : pagination.page;
         const pageSize = !Array.isArray(raw) && raw?.pageSize ? raw.pageSize : pagination.pageSize;
@@ -1603,6 +1607,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           pageSize,
           total,
         };
+        this.quotaSummary = !Array.isArray(raw) && raw && 'quota' in raw ? raw.quota || null : null;
         this.assets = items;
         this.filteredAssets = items;
         if (!this.selectedAssetId && items.length) {
@@ -1643,6 +1648,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           page: 1,
           total: fallback.length,
         };
+        this.quotaSummary = null;
         if (!fallback.some((asset) => asset.id === this.selectedAssetId)) {
           this.selectedAssetId = fallback[0]?.id ?? null;
         }

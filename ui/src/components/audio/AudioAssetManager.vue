@@ -423,7 +423,7 @@ import {
   type TreeOption,
 } from 'naive-ui';
 import { useWindowSize } from '@vueuse/core';
-import type { AudioAsset, AudioAssetMutationPayload, AudioAssetScope, AudioFolder } from '@/types/audio';
+import type { AudioAsset, AudioAssetMutationPayload, AudioAssetScope, AudioFolder, AudioFolderPayload } from '@/types/audio';
 import { api } from '@/stores/_config';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { useChatStore } from '@/stores/chat';
@@ -1443,5 +1443,11 @@ onMounted(() => {
 
 :deep(.is-selected-row td) {
   background-color: rgba(99, 179, 237, 0.08);
+}
+
+@media (max-width: 960px) {
+  .audio-library__content {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
