@@ -122,6 +122,7 @@ import {
   restoreWhisperSnapshot,
   type WhisperSnapshot,
 } from './inputHistoryWhisperState';
+import { buildEditMessageUpdateOptions } from './editMessageUpdate';
 import { shouldMergeNeighborMessages } from './messageMerge';
 
 const EmojiPickerModal = defineAsyncComponent(() => import('./components/EmojiPickerModal.vue'));
@@ -10565,27 +10566,16 @@ const saveEdit = async () => {
       message.error('消息内容不能为空');
       return;
     }
-    const updateOptions: { icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null; whisperTargetIds?: string[] } = {};
-    updateOptions.icMode = snapshot.icMode;
-    if (snapshot.isWhisper) {
-      if (snapshot.whisperTargetIds.length === 0) {
-        message.error('悄悄话至少需要一个可见对象');
-        return;
-      }
-      updateOptions.whisperTargetIds = snapshot.whisperTargetIds;
+    if (snapshot.isWhisper && snapshot.whisperTargetIds.length === 0) {
+      message.error('悄悄话至少需要一个可见对象');
+      return;
     }
-    if (snapshot.identityId !== snapshot.initialIdentityId) {
-      updateOptions.identityId = snapshot.identityId;
-    }
-    if (snapshot.identityVariantId !== snapshot.initialIdentityVariantId) {
-      updateOptions.identityVariantId = snapshot.identityVariantId;
-    }
-    const hasOptions = Object.keys(updateOptions).length > 0;
+    const updateOptions = buildEditMessageUpdateOptions(snapshot);
     const updated = await chat.messageUpdate(
       snapshot.channelId,
       snapshot.messageId,
       finalContent,
-      hasOptions ? updateOptions : undefined,
+      updateOptions,
     );
     if (!isEditSaveSnapshotAlive(snapshot)) {
       return;
