@@ -193,6 +193,10 @@ const stripExtension = (fileName?: string) => {
 };
 
 const resolveDownloadFileName = (item: ExportTaskItem) => {
+  const storedFileName = item.file_name?.trim();
+  if (storedFileName) {
+    return storedFileName;
+  }
   const rawName = stripExtension(item.display_name) || DEFAULT_EXPORT_FILE_BASE_NAME;
   const formatExt = DOWNLOAD_EXT_MAP[item.format?.toLowerCase() || ''];
   const timestamp = formatDownloadTimestamp(item.finished_at || item.requested_at);

@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -391,7 +393,7 @@ func ChatExportGet(c *fiber.Ctx) error {
 	resp := chatExportStatusResponse{
 		TaskID:      job.ID,
 		Status:      job.Status,
-		FileName:    job.FileName,
+		FileName:    resolveDownloadFileName(job),
 		DisplayName: job.DisplayName,
 		Message:     job.ErrorMsg,
 	}
@@ -542,7 +544,7 @@ func buildChatExportListItem(job *model.MessageExportJobModel) chatExportListIte
 		Format:      job.Format,
 		Status:      job.Status,
 		DisplayName: job.DisplayName,
-		FileName:    job.FileName,
+		FileName:    resolveDownloadFileName(job),
 		FileSize:    job.FileSize,
 		Message:     job.ErrorMsg,
 		RequestedAt: job.CreatedAt.UnixMilli(),
@@ -623,31 +625,42 @@ func streamExportFile(c *fiber.Ctx, job *model.MessageExportJobModel, fileName s
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "导出文件异常，请重新导出"})
 	}
 
-	c.Set("Content-Type", "application/octet-stream")
-	c.Set("Content-Length", strconv.FormatInt(stat.Size(), 10))
 	c.Attachment(fileName)
-
-	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-		defer file.Close()
-		buf := make([]byte, 64*1024)
-		for {
-			n, readErr := file.Read(buf)
-			if n > 0 {
-				service.WaitExportBandwidth(n)
-				if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-					log.Printf("export: 任务 %s 写入失败: %v", job.ID, writeErr)
+	contentType := mime.TypeByExtension(strings.ToLower(filepath.Ext(fileName)))
+	if strings.TrimSpace(contentType) == "" {
+		contentType = "application/octet-stream"
+	}
+	if c.Get("Range") == "" {
+		c.Set("Accept-Ranges", "bytes")
+		c.Set("Content-Type", contentType)
+		c.Set("Content-Length", strconv.FormatInt(stat.Size(), 10))
+		c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+			defer file.Close()
+			buf := make([]byte, 64*1024)
+			for {
+				n, readErr := file.Read(buf)
+				if n > 0 {
+					service.WaitExportBandwidth(n)
+					if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+						log.Printf("export: 任务 %s 写入失败: %v", job.ID, writeErr)
+						return
+					}
+				}
+				if readErr != nil {
+					if readErr != io.EOF {
+						log.Printf("export: 任务 %s 读取失败: %v", job.ID, readErr)
+						recordExportDownloadError(job.ID, fmt.Sprintf("下载过程中断: %v", readErr))
+					}
 					return
 				}
 			}
-			if readErr != nil {
-				if readErr != io.EOF {
-					log.Printf("export: 任务 %s 读取失败: %v", job.ID, readErr)
-					recordExportDownloadError(job.ID, fmt.Sprintf("下载过程中断: %v", readErr))
-				}
-				return
-			}
-		}
-	})
+		})
+		return nil
+	}
+	if err := streamFileWithRange(c, file, stat.Size(), contentType); err != nil {
+		_ = file.Close()
+		return err
+	}
 	return nil
 }
 

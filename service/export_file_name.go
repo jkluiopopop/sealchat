@@ -31,7 +31,37 @@ func ResolveExportDownloadFileName(job *model.MessageExportJobModel) string {
 	if job == nil {
 		return BuildExportResultFileName("", "", "txt", time.Now())
 	}
+	if stored := strings.TrimSpace(job.FileName); stored != "" {
+		if corrected := normalizeStoredExportFileName(job, stored); corrected != "" {
+			return corrected
+		}
+		return stored
+	}
+	if corrected := normalizeStoredExportFileName(job, ""); corrected != "" {
+		return corrected
+	}
 	return BuildExportResultFileName(job.DisplayName, job.ID, job.Format, resolveExportFileTimestamp(job))
+}
+
+func normalizeStoredExportFileName(job *model.MessageExportJobModel, stored string) string {
+	if job == nil {
+		return ""
+	}
+	filePath := strings.TrimSpace(job.FilePath)
+	fileExt := strings.ToLower(strings.TrimPrefix(filepath.Ext(filePath), "."))
+	if fileExt == "" {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(job.Format), "html") && fileExt == "zip" {
+		if filePath != "" {
+			if base := strings.TrimSpace(filepath.Base(filePath)); base != "" {
+				return base
+			}
+		}
+		ts := resolveExportFileTimestamp(job)
+		return BuildExportResultFileName(job.DisplayName, job.ID, "zip", ts)
+	}
+	return ""
 }
 
 func resolveExportFileBaseName(displayName string) string {
