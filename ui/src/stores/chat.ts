@@ -3771,7 +3771,7 @@ export const useChatStore = defineStore({
       this.patchChannelDefaultDice(channelId, nextExpr);
     },
 
-    async updateChannelFeatures(channelId: string, updates: { builtInDiceEnabled?: boolean; botFeatureEnabled?: boolean }) {
+    async updateChannelFeatures(channelId: string, updates: { builtInDiceEnabled?: boolean; botFeatureEnabled?: boolean; primaryBotId?: string | null; eventBotIds?: string[] | null }) {
       if (!channelId) {
         return null;
       }
@@ -3782,8 +3782,22 @@ export const useChatStore = defineStore({
       if (typeof updates.botFeatureEnabled === 'boolean') {
         body.bot_feature_enabled = updates.botFeatureEnabled;
       }
+      if (updates.primaryBotId !== undefined) {
+        body.primary_bot_id = String(updates.primaryBotId || '').trim();
+      }
+      if (updates.eventBotIds !== undefined) {
+        body.event_bot_ids = Array.from(new Set((updates.eventBotIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
+      }
       const resp = await this.sendAPI('channel.feature.update', body) as {
-        data?: { channel_id?: string; built_in_dice_enabled?: boolean; bot_feature_enabled?: boolean };
+        data?: {
+          channel_id?: string;
+          built_in_dice_enabled?: boolean;
+          bot_feature_enabled?: boolean;
+          primary_bot_id?: string;
+          event_bot_ids?: string[];
+          character_api_enabled?: boolean;
+          character_api_reason?: string;
+        };
       };
       const payload = resp?.data;
       const targetId = payload?.channel_id || channelId;
@@ -3797,6 +3811,22 @@ export const useChatStore = defineStore({
         patch.botFeatureEnabled = payload.bot_feature_enabled;
       } else if (typeof updates.botFeatureEnabled === 'boolean') {
         patch.botFeatureEnabled = updates.botFeatureEnabled;
+      }
+      if (typeof payload?.primary_bot_id === 'string') {
+        patch.primaryBotId = payload.primary_bot_id;
+      } else if (updates.primaryBotId !== undefined) {
+        patch.primaryBotId = String(updates.primaryBotId || '').trim();
+      }
+      if (Array.isArray(payload?.event_bot_ids)) {
+        patch.eventBotIds = Array.from(new Set((payload?.event_bot_ids || []).map((id) => String(id || '').trim()).filter(Boolean)));
+      } else if (updates.eventBotIds !== undefined) {
+        patch.eventBotIds = Array.from(new Set((updates.eventBotIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
+      }
+      if (typeof payload?.character_api_enabled === 'boolean') {
+        patch.characterApiEnabled = payload.character_api_enabled;
+        patch.characterApiReason = payload.character_api_enabled
+          ? ''
+          : String(payload?.character_api_reason || '').trim();
       }
       this.patchChannelAttributes(targetId, patch);
       return payload;
@@ -6120,6 +6150,12 @@ chatEvent.on('channel-updated', (event) => {
   }
   if (typeof event.channel?.botFeatureEnabled === 'boolean') {
     patch.botFeatureEnabled = event.channel.botFeatureEnabled;
+  }
+  if (typeof (event.channel as any)?.primaryBotId === 'string') {
+    patch.primaryBotId = (event.channel as any).primaryBotId;
+  }
+  if (Array.isArray((event.channel as any)?.eventBotIds)) {
+    patch.eventBotIds = Array.from(new Set(((event.channel as any)?.eventBotIds || []).map((id: any) => String(id || '').trim()).filter(Boolean)));
   }
   if (typeof (event.channel as any)?.characterApiEnabled === 'boolean') {
     patch.characterApiEnabled = (event.channel as any).characterApiEnabled;

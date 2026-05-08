@@ -145,42 +145,43 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 		return
 	}
 	data = normalizeEventForBot(data)
-	// 只向频道选中的 BOT 推送事件，避免多 BOT 实例导致数据不同步
 	data.Timestamp = time.Now().Unix()
-	botID, err := service.SelectedBotIdByChannelId(channelId)
+	botIDs, err := service.EventBotIDsByChannelId(channelId)
 	if err != nil {
 		return
 	}
-	if x, ok := ctx.UserId2ConnInfo.Load(botID); ok {
-		var active *ConnInfo
-		var activeAt int64 = -1
-		x.Range(func(_ *WsSyncConn, value *ConnInfo) bool {
-			if value == nil {
+	for _, botID := range botIDs {
+		if x, ok := ctx.UserId2ConnInfo.Load(botID); ok {
+			var active *ConnInfo
+			var activeAt int64 = -1
+			x.Range(func(_ *WsSyncConn, value *ConnInfo) bool {
+				if value == nil {
+					return true
+				}
+				lastAlive := value.LastAliveTime
+				if lastAlive == 0 {
+					lastAlive = value.LastPingTime
+				}
+				if lastAlive > activeAt {
+					activeAt = lastAlive
+					active = value
+				}
 				return true
-			}
-			lastAlive := value.LastAliveTime
-			if lastAlive == 0 {
-				lastAlive = value.LastPingTime
-			}
-			if lastAlive > activeAt {
-				activeAt = lastAlive
-				active = value
-			}
-			return true
-		})
-		if active != nil {
-			cacheBotEventContext(active, channelId, data)
-			_ = active.Conn.WriteJSON(struct {
-				protocol.Event
-				Op protocol.Opcode `json:"op"`
-			}{
-				// 协议规定: 事件中必须含有 channel，message，user
-				Event: *data,
-				Op:    protocol.OpEvent,
 			})
+			if active != nil {
+				cacheBotEventContext(active, channelId, data)
+				_ = active.Conn.WriteJSON(struct {
+					protocol.Event
+					Op protocol.Opcode `json:"op"`
+				}{
+					// 协议规定: 事件中必须含有 channel，message，user
+					Event: *data,
+					Op:    protocol.OpEvent,
+				})
+			}
 		}
+		getOneBotRuntime().publishProtocolEvent(botID, data, ctx.OneBotSessionID)
 	}
-	getOneBotRuntime().publishProtocolEvent(botID, data, ctx.OneBotSessionID)
 }
 
 func cacheBotEventContext(info *ConnInfo, channelId string, data *protocol.Event) {

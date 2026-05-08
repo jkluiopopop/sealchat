@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -30,6 +31,8 @@ type ChannelModel struct {
 	DefaultDiceExpr         string `json:"defaultDiceExpr" gorm:"size:32;not null;default:d20"`
 	BuiltInDiceEnabled      bool   `json:"builtInDiceEnabled" gorm:"default:true"`
 	BotFeatureEnabled       bool   `json:"botFeatureEnabled" gorm:"default:false"`
+	PrimaryBotID            string `json:"primaryBotId" gorm:"size:100;index"`
+	EventBotIDsJSON         string `json:"-" gorm:"type:text"`
 	BotWhisperForwardConfig string `json:"botWhisperForwardConfig" gorm:"type:text"`
 	Status                  string `json:"status" gorm:"size:24;default:active;index"`
 
@@ -192,6 +195,41 @@ func (c *ChannelModel) GetPrivateUserIDs() []string {
 	return strings.SplitN(c.ID, ":", 2)
 }
 
+func (c *ChannelModel) GetEventBotIDs() []string {
+	if c == nil || strings.TrimSpace(c.EventBotIDsJSON) == "" {
+		return nil
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(c.EventBotIDsJSON), &ids); err != nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func (c *ChannelModel) MarshalJSON() ([]byte, error) {
+	type channelModelAlias ChannelModel
+	return json.Marshal(&struct {
+		*channelModelAlias
+		EventBotIDs []string `json:"eventBotIds,omitempty"`
+	}{
+		channelModelAlias: (*channelModelAlias)(c),
+		EventBotIDs:       c.GetEventBotIDs(),
+	})
+}
+
 func (c *ChannelModel) ToProtocolType() *protocol.Channel {
 	channelType := protocol.TextChannelType
 	if c.IsPrivate {
@@ -206,6 +244,8 @@ func (c *ChannelModel) ToProtocolType() *protocol.Channel {
 		BotCommandPrefixes:      utils.GetConfiguredBotCommandPrefixes(),
 		BuiltInDiceEnabled:      c.BuiltInDiceEnabled,
 		BotFeatureEnabled:       c.BotFeatureEnabled,
+		PrimaryBotID:            c.PrimaryBotID,
+		EventBotIDs:             c.GetEventBotIDs(),
 		BotWhisperForwardConfig: c.BotWhisperForwardConfig,
 		BackgroundAttachmentId:  c.BackgroundAttachmentId,
 		BackgroundSettings:      c.BackgroundSettings,

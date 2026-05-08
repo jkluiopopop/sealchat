@@ -16,6 +16,10 @@ type Channel struct {
 	BotCommandPrefixes      []string    `json:"botCommandPrefixes,omitempty"`
 	BuiltInDiceEnabled      bool        `json:"builtInDiceEnabled"`
 	BotFeatureEnabled       bool        `json:"botFeatureEnabled"`
+	PrimaryBotID            string      `json:"primaryBotId,omitempty"`
+	EventBotIDs             []string    `json:"eventBotIds,omitempty"`
+	CharacterAPIEnabled     bool        `json:"characterApiEnabled"`
+	CharacterAPIReason      string      `json:"characterApiReason,omitempty"`
 	BotWhisperForwardConfig string      `json:"botWhisperForwardConfig"`
 	BackgroundAttachmentId  string      `json:"backgroundAttachmentId"`
 	BackgroundSettings      string      `json:"backgroundSettings"`

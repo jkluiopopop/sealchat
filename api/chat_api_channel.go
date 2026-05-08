@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -451,6 +452,11 @@ func apiChannelDefaultDiceUpdate(ctx *ChatContext, data *struct {
 	}
 	channel.DefaultDiceExpr = normalized
 	channelData := channel.ToProtocolType()
+	characterEnabled, characterReason := GetChannelCharacterAPICapability(channel.ID, channel)
+	channelData.CharacterAPIEnabled = characterEnabled
+	if !characterEnabled {
+		channelData.CharacterAPIReason = characterReason
+	}
 	ev := &protocol.Event{
 		Type:    protocol.EventChannelUpdated,
 		Channel: channelData,
@@ -466,14 +472,16 @@ func apiChannelDefaultDiceUpdate(ctx *ChatContext, data *struct {
 }
 
 func apiChannelFeatureUpdate(ctx *ChatContext, data *struct {
-	ChannelID          string `json:"channel_id"`
-	BuiltInDiceEnabled *bool  `json:"built_in_dice_enabled"`
-	BotFeatureEnabled  *bool  `json:"bot_feature_enabled"`
+	ChannelID          string    `json:"channel_id"`
+	BuiltInDiceEnabled *bool     `json:"built_in_dice_enabled"`
+	BotFeatureEnabled  *bool     `json:"bot_feature_enabled"`
+	PrimaryBotID       *string   `json:"primary_bot_id"`
+	EventBotIDs        *[]string `json:"event_bot_ids"`
 }) (any, error) {
 	if data.ChannelID == "" {
 		return nil, fmt.Errorf("频道ID不能为空")
 	}
-	if data.BuiltInDiceEnabled == nil && data.BotFeatureEnabled == nil {
+	if data.BuiltInDiceEnabled == nil && data.BotFeatureEnabled == nil && data.PrimaryBotID == nil && data.EventBotIDs == nil {
 		return nil, fmt.Errorf("没有可更新的字段")
 	}
 	if !pm.CanWithChannelRole(ctx.User.ID, data.ChannelID, pm.PermFuncChannelManageInfo, pm.PermFuncChannelRoleLink) {
@@ -497,8 +505,17 @@ func apiChannelFeatureUpdate(ctx *ChatContext, data *struct {
 		channel.BotFeatureEnabled = *data.BotFeatureEnabled
 		updates["bot_feature_enabled"] = channel.BotFeatureEnabled
 	}
+	if data.PrimaryBotID != nil {
+		channel.PrimaryBotID = strings.TrimSpace(*data.PrimaryBotID)
+		updates["primary_bot_id"] = channel.PrimaryBotID
+	}
+	if data.EventBotIDs != nil {
+		channel.EventBotIDsJSON = ""
+	}
 	if len(updates) == 0 {
-		return nil, fmt.Errorf("没有可更新的字段")
+		if data.EventBotIDs == nil {
+			return nil, fmt.Errorf("没有可更新的字段")
+		}
 	}
 
 	if data.BotFeatureEnabled != nil && *data.BotFeatureEnabled {
@@ -509,6 +526,79 @@ func apiChannelFeatureUpdate(ctx *ChatContext, data *struct {
 		}
 		if len(userIds) == 0 {
 			return nil, fmt.Errorf("启用机器人骰点前，请先在成员管理中将机器人加入“机器人”角色")
+		}
+	}
+	var boundIDs []string
+	boundSet := map[string]struct{}{}
+	loadBoundBots := func() error {
+		if boundIDs != nil {
+			return nil
+		}
+		ids, err := service.BoundBotIDsByChannelId(channel.ID)
+		if err != nil {
+			return err
+		}
+		boundIDs = ids
+		for _, id := range boundIDs {
+			boundSet[id] = struct{}{}
+		}
+		return nil
+	}
+	if channel.PrimaryBotID != "" {
+		if err := loadBoundBots(); err != nil {
+			return nil, err
+		}
+		if _, ok := boundSet[channel.PrimaryBotID]; !ok {
+			return nil, fmt.Errorf("主控BOT必须已绑定到当前频道")
+		}
+	}
+	if data.EventBotIDs != nil {
+		if err := loadBoundBots(); err != nil {
+			return nil, err
+		}
+		eventBotIDs := service.NormalizeBotIDList(*data.EventBotIDs)
+		for _, id := range eventBotIDs {
+			if _, ok := boundSet[id]; !ok {
+				return nil, fmt.Errorf("事件接收BOT必须已绑定到当前频道")
+			}
+		}
+		if len(eventBotIDs) > 0 && channel.PrimaryBotID != "" {
+			foundPrimary := false
+			for _, id := range eventBotIDs {
+				if id == channel.PrimaryBotID {
+					foundPrimary = true
+					break
+				}
+			}
+			if !foundPrimary {
+				eventBotIDs = append(eventBotIDs, channel.PrimaryBotID)
+			}
+		}
+		encoded, err := service.EncodeBotIDListJSON(eventBotIDs)
+		if err != nil {
+			return nil, err
+		}
+		channel.EventBotIDsJSON = encoded
+		updates["event_bot_ids_json"] = encoded
+	} else if channel.PrimaryBotID != "" {
+		existingEventBotIDs := service.ParseBotIDListJSON(channel.EventBotIDsJSON)
+		if len(existingEventBotIDs) > 0 {
+			foundPrimary := false
+			for _, id := range existingEventBotIDs {
+				if id == channel.PrimaryBotID {
+					foundPrimary = true
+					break
+				}
+			}
+			if !foundPrimary {
+				existingEventBotIDs = append(existingEventBotIDs, channel.PrimaryBotID)
+				encoded, err := service.EncodeBotIDListJSON(existingEventBotIDs)
+				if err != nil {
+					return nil, err
+				}
+				channel.EventBotIDsJSON = encoded
+				updates["event_bot_ids_json"] = encoded
+			}
 		}
 	}
 
@@ -522,8 +612,22 @@ func apiChannelFeatureUpdate(ctx *ChatContext, data *struct {
 		Updates(updates).Error; err != nil {
 		return nil, err
 	}
+	if updates["event_bot_ids_json"] != nil {
+		var eventBotIDs []string
+		if raw := strings.TrimSpace(channel.EventBotIDsJSON); raw != "" {
+			if err := json.Unmarshal([]byte(raw), &eventBotIDs); err != nil {
+				return nil, err
+			}
+		}
+		channel.EventBotIDsJSON, _ = service.EncodeBotIDListJSON(eventBotIDs)
+	}
 
+	characterEnabled, characterReason := GetChannelCharacterAPICapability(channel.ID, channel)
 	channelData := channel.ToProtocolType()
+	channelData.CharacterAPIEnabled = characterEnabled
+	if !characterEnabled {
+		channelData.CharacterAPIReason = characterReason
+	}
 	ev := &protocol.Event{
 		Type:    protocol.EventChannelUpdated,
 		Channel: channelData,
@@ -533,13 +637,21 @@ func apiChannelFeatureUpdate(ctx *ChatContext, data *struct {
 	ctx.BroadcastEventInChannelForBot(channel.ID, ev)
 
 	return &struct {
-		ChannelID          string `json:"channel_id"`
-		BuiltInDiceEnabled bool   `json:"built_in_dice_enabled"`
-		BotFeatureEnabled  bool   `json:"bot_feature_enabled"`
+		ChannelID           string   `json:"channel_id"`
+		BuiltInDiceEnabled  bool     `json:"built_in_dice_enabled"`
+		BotFeatureEnabled   bool     `json:"bot_feature_enabled"`
+		PrimaryBotID        string   `json:"primary_bot_id"`
+		EventBotIDs         []string `json:"event_bot_ids"`
+		CharacterAPIEnabled bool     `json:"character_api_enabled"`
+		CharacterAPIReason  string   `json:"character_api_reason,omitempty"`
 	}{
-		ChannelID:          channel.ID,
-		BuiltInDiceEnabled: channel.BuiltInDiceEnabled,
-		BotFeatureEnabled:  channel.BotFeatureEnabled,
+		ChannelID:           channel.ID,
+		BuiltInDiceEnabled:  channel.BuiltInDiceEnabled,
+		BotFeatureEnabled:   channel.BotFeatureEnabled,
+		PrimaryBotID:        channel.PrimaryBotID,
+		EventBotIDs:         channel.GetEventBotIDs(),
+		CharacterAPIEnabled: characterEnabled,
+		CharacterAPIReason:  characterReason,
 	}, nil
 }
 

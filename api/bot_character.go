@@ -59,7 +59,7 @@ func apiCharacterGet(ctx *ChatContext, msg []byte) {
 		return
 	}
 
-	// Find selected BOT for this channel
+	// Find primary BOT for this channel
 	botConn, botInfo, err := findBotConnectionForChannel(ctx, data.Data.GroupID)
 	if err != nil {
 		sendCharacterError(ctx, data.Echo, err.Error())
@@ -225,7 +225,7 @@ func findBotConnectionForChannel(ctx *ChatContext, channelID string) (*WsSyncCon
 	if channelID == "" {
 		return nil, nil, errors.New(botCharacterUnsupportedText)
 	}
-	botID, err := service.SelectedBotIdByChannelId(channelID)
+	botID, err := service.PrimaryBotIdByChannelId(channelID)
 	if err != nil {
 		return nil, nil, errors.New(botCharacterUnsupportedText)
 	}
@@ -275,7 +275,7 @@ func GetChannelCharacterAPICapability(channelID string, channel *model.ChannelMo
 		return false, botCharacterUnsupportedText
 	}
 
-	botID, err := service.SelectedBotIdByChannelId(channelID)
+	botID, err := service.PrimaryBotIdByChannelId(channelID)
 	if err != nil || strings.TrimSpace(botID) == "" {
 		return false, botCharacterUnsupportedText
 	}

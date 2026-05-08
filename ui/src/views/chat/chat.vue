@@ -912,8 +912,14 @@ const refreshChannelBotSelection = async () => {
   try {
     const resp = await chat.channelMemberListAll(channelId, 200);
     const items = resp?.data?.items || [];
-    const current = items.find((item: any) => item.roleId === roleId && item.user?.id);
-    channelBotSelection.value = current?.user?.id || '';
+    const existingIds = items
+      .filter((item: any) => item.roleId === roleId && item.user?.id)
+      .map((item: any) => item.user?.id as string)
+      .filter(Boolean);
+    const primaryBotId = String(chat.curChannel?.primaryBotId || '').trim();
+    channelBotSelection.value = primaryBotId && existingIds.includes(primaryBotId)
+      ? primaryBotId
+      : (existingIds[0] || '');
   } catch (error: any) {
     message.error(error?.response?.data?.error || '加载频道机器人失败');
   } finally {
@@ -947,9 +953,12 @@ const syncChannelBotSelection = async (nextBotId: string) => {
     if (nextBotId && !existingIds.includes(nextBotId)) {
       await chat.userRoleLink(roleId, [nextBotId]);
     }
-    const toRemove = nextBotId ? existingIds.filter(id => id !== nextBotId) : existingIds;
-    if (toRemove.length) {
-      await chat.userRoleUnlink(roleId, toRemove);
+    if (!nextBotId && existingIds.length) {
+      await chat.userRoleUnlink(roleId, existingIds);
+    }
+    await chat.updateChannelFeatures(channelId, { primaryBotId: nextBotId || '' });
+    if (nextBotId) {
+      void characterCardStore.revalidateCharacterApi(channelId);
     }
     channelBotSelection.value = nextBotId;
   } catch (error: any) {
@@ -999,6 +1008,9 @@ const updateChannelFeatureFlags = async (updates: { builtInDiceEnabled?: boolean
       channelFeatures.botFeatureEnabled = payload.bot_feature_enabled;
     } else if (typeof updates.botFeatureEnabled === 'boolean') {
       channelFeatures.botFeatureEnabled = updates.botFeatureEnabled;
+    }
+    if (typeof payload?.primary_bot_id === 'string') {
+      chat.patchChannelAttributes(chat.curChannel.id, { primaryBotId: payload.primary_bot_id });
     }
   } catch (error: any) {
     message.error(error?.response?.data?.error || '更新频道特性失败');
@@ -15701,12 +15713,15 @@ onBeforeUnmount(() => {
                                     :options="botSelectOptions"
                                     :loading="botOptionsLoading || channelBotsLoading || syncingChannelBot"
                                     :disabled="syncingChannelBot || !hasBotOptions"
-                                    placeholder="选择要启用的机器人"
+                                    placeholder="选择主控 BOT（不会移除其他已绑定 BOT）"
                                     clearable
                                     @update:value="handleBotSelectionChange"
                                   />
                                   <div class="dice-settings-panel__hint" v-if="!botOptionsLoading && !hasBotOptions">
                                     暂无可用机器人，请先在后台创建令牌。
+                                  </div>
+                                  <div class="dice-settings-panel__hint" v-else>
+                                    这里只切换主控 BOT；如需绑定多个 BOT，请前往频道设置。
                                   </div>
                                 </div>
                                 <div class="dice-settings-panel__footer">
@@ -15763,12 +15778,15 @@ onBeforeUnmount(() => {
                                     :options="botSelectOptions"
                                     :loading="botOptionsLoading || channelBotsLoading || syncingChannelBot"
                                     :disabled="syncingChannelBot || !hasBotOptions"
-                                    placeholder="选择要启用的机器人"
+                                    placeholder="选择主控 BOT（不会移除其他已绑定 BOT）"
                                     clearable
                                     @update:value="handleBotSelectionChange"
                                   />
                                   <div class="dice-settings-panel__hint" v-if="!botOptionsLoading && !hasBotOptions">
                                     暂无可用机器人，请先在后台创建令牌。
+                                  </div>
+                                  <div class="dice-settings-panel__hint" v-else>
+                                    这里只切换主控 BOT；如需绑定多个 BOT，请前往频道设置。
                                   </div>
                                 </div>
                                 <div class="dice-settings-panel__footer">
@@ -15873,12 +15891,15 @@ onBeforeUnmount(() => {
                                     :options="botSelectOptions"
                                     :loading="botOptionsLoading || channelBotsLoading || syncingChannelBot"
                                     :disabled="syncingChannelBot || !hasBotOptions"
-                                    placeholder="选择要启用的机器人"
+                                    placeholder="选择主控 BOT（不会移除其他已绑定 BOT）"
                                     clearable
                                     @update:value="handleBotSelectionChange"
                                   />
                                   <div class="dice-settings-panel__hint" v-if="!botOptionsLoading && !hasBotOptions">
                                     暂无可用机器人，请先在后台创建令牌。
+                                  </div>
+                                  <div class="dice-settings-panel__hint" v-else>
+                                    这里只切换主控 BOT；如需绑定多个 BOT，请前往频道设置。
                                   </div>
                                 </div>
                                 <div class="dice-settings-panel__footer">
@@ -15935,12 +15956,15 @@ onBeforeUnmount(() => {
                                     :options="botSelectOptions"
                                     :loading="botOptionsLoading || channelBotsLoading || syncingChannelBot"
                                     :disabled="syncingChannelBot || !hasBotOptions"
-                                    placeholder="选择要启用的机器人"
+                                    placeholder="选择主控 BOT（不会移除其他已绑定 BOT）"
                                     clearable
                                     @update:value="handleBotSelectionChange"
                                   />
                                   <div class="dice-settings-panel__hint" v-if="!botOptionsLoading && !hasBotOptions">
                                     暂无可用机器人，请先在后台创建令牌。
+                                  </div>
+                                  <div class="dice-settings-panel__hint" v-else>
+                                    这里只切换主控 BOT；如需绑定多个 BOT，请前往频道设置。
                                   </div>
                                 </div>
                                 <div class="dice-settings-panel__footer">

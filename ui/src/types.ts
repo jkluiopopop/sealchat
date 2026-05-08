@@ -36,6 +36,8 @@ declare module '@satorijs/protocol' {
     botCommandPrefixes?: string[];
     builtInDiceEnabled?: boolean;
     botFeatureEnabled?: boolean;
+    primaryBotId?: string;
+    eventBotIds?: string[];
     botWhisperForwardConfig?: string;
     characterApiEnabled?: boolean;
     characterApiReason?: string;
@@ -433,6 +435,8 @@ export interface SChannel extends Channel {
   defaultDiceExpr?: string;
   builtInDiceEnabled?: boolean;
   botFeatureEnabled?: boolean;
+  primaryBotId?: string;
+  eventBotIds?: string[];
   botWhisperForwardConfig?: string;
   characterApiEnabled?: boolean;
   characterApiReason?: string;
