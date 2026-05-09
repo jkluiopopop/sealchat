@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, shallowRef } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api } from '@/stores/_config'
 import { useUserStore } from '@/stores/user'
 import { useDisplayStore } from '@/stores/display'
+import { useECharts } from '@/composables/useECharts'
 import * as echarts from 'echarts/core'
 import { LineChart, BarChart, ScatterChart } from 'echarts/charts'
 import {
@@ -104,14 +105,14 @@ const expandedWorldId = ref<string | null>(null)
 
 // Chart
 const chartRef = ref<HTMLDivElement | null>(null)
-let chartInstance: echarts.ECharts | null = null
-
 // Session chart
 const sessionChartRef = ref<HTMLDivElement | null>(null)
-let sessionChartInstance: echarts.ECharts | null = null
 let fetchAllRequestSeq = 0
 let sessionDataRequestSeq = 0
 let channelRequestSeq = 0
+
+const timelineChart = useECharts(chartRef, isDark, echarts)
+const sessionChart = useECharts(sessionChartRef, isDark, echarts)
 
 // Only show session analysis when a world is filtered
 const isWorldFiltered = computed(() =>
@@ -372,18 +373,8 @@ function getChartColors() {
 }
 
 // === Chart ===
-function ensureChartInstance() {
-  if (!chartRef.value) return
-  if (chartInstance) {
-    chartInstance.dispose()
-    chartInstance = null
-  }
-  chartInstance = echarts.init(chartRef.value, isDark.value ? 'dark' : undefined)
-}
-
 function renderChart() {
-  if (!chartRef.value) return
-  ensureChartInstance()
+  const chartInstance = timelineChart.ensureInstance()
   if (!chartInstance) return
 
   const colors = getChartColors()
@@ -488,18 +479,9 @@ function renderChart() {
 }
 
 // === Session chart ===
-function ensureSessionChartInstance() {
-  if (!sessionChartRef.value) return
-  if (sessionChartInstance) {
-    sessionChartInstance.dispose()
-    sessionChartInstance = null
-  }
-  sessionChartInstance = echarts.init(sessionChartRef.value, isDark.value ? 'dark' : undefined)
-}
-
 function renderSessionChart() {
   if (!sessionChartRef.value || !isWorldFiltered.value) return
-  ensureSessionChartInstance()
+  const sessionChartInstance = sessionChart.ensureInstance()
   if (!sessionChartInstance) return
 
   const colors = getChartColors()
@@ -751,19 +733,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
-  if (chartInstance) {
-    chartInstance.dispose()
-    chartInstance = null
-  }
-  if (sessionChartInstance) {
-    sessionChartInstance.dispose()
-    sessionChartInstance = null
-  }
 })
 
 function handleResize() {
-  chartInstance?.resize()
-  sessionChartInstance?.resize()
+  timelineChart.resize()
+  sessionChart.resize()
 }
 
 watch([activeTab, timeRange, customStart, customEnd], () => {

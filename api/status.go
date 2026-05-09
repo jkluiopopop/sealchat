@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -100,12 +101,40 @@ func StatusHistory(c *fiber.Ctx) error {
 	if intervalParam != "1m" && intervalParam != "" {
 		return fiber.NewError(http.StatusBadRequest, "interval only supports 1m")
 	}
-	rangeDuration, ok := parseStatusRange(rangeParam)
-	if !ok {
-		return fiber.NewError(http.StatusBadRequest, "unsupported range")
+
+	startParam := strings.TrimSpace(c.Query("start"))
+	endParam := strings.TrimSpace(c.Query("end"))
+	var (
+		start int64
+		end   int64
+	)
+
+	if startParam != "" || endParam != "" {
+		if startParam == "" || endParam == "" {
+			return fiber.NewError(http.StatusBadRequest, "start and end must both be provided")
+		}
+		parsedStart, err := strconv.ParseInt(startParam, 10, 64)
+		if err != nil {
+			return fiber.NewError(http.StatusBadRequest, "invalid start")
+		}
+		parsedEnd, err := strconv.ParseInt(endParam, 10, 64)
+		if err != nil {
+			return fiber.NewError(http.StatusBadRequest, "invalid end")
+		}
+		if parsedStart <= 0 || parsedEnd <= 0 || parsedStart >= parsedEnd {
+			return fiber.NewError(http.StatusBadRequest, "invalid custom range")
+		}
+		start = parsedStart
+		end = parsedEnd
+		rangeParam = "custom"
+	} else {
+		rangeDuration, ok := parseStatusRange(rangeParam)
+		if !ok {
+			return fiber.NewError(http.StatusBadRequest, "unsupported range")
+		}
+		end = time.Now().UnixMilli()
+		start = end - rangeDuration.Milliseconds()
 	}
-	end := time.Now().UnixMilli()
-	start := end - rangeDuration.Milliseconds()
 	samples, err := model.QueryServiceMetricSamples(start, end)
 	if err != nil {
 		return fiber.NewError(http.StatusInternalServerError, err.Error())
