@@ -239,6 +239,7 @@ func main() {
 
 	// 未读提醒取代旧未读邮件提醒主链路；旧代码保留但不再默认启动。
 	service.StartDigestPushWorker()
+	service.StartDatabaseCleanupWorker()
 
 	// 启动更新检测 Worker
 	if config.UpdateCheck.Enabled {

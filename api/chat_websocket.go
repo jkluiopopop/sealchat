@@ -472,9 +472,6 @@ func websocketWorks(app *fiber.App, webUrl string) {
 						"user": curUser,
 					},
 				})
-				if user.IsBot {
-					startBotCharacterCapabilityProbe(curConnInfo)
-				}
 				return
 			}
 		}

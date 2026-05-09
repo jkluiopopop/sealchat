@@ -48,6 +48,21 @@ export interface CharacterCardBadgeEntry {
   updatedAt: number;
 }
 
+const normalizeCharacterApiDisabledReason = (reason?: string, channel?: any) => {
+  const msg = String(reason || '').trim();
+  if (!msg) {
+    return characterApiUnsupportedText;
+  }
+  if (msg === '请求超时' || msg.includes('请求超时')) {
+    const primaryBotId = String(channel?.primaryBotId || '').trim();
+    if (primaryBotId) {
+      return '当前主控 BOT 请求超时，请切换主控 BOT 或重新验证。';
+    }
+    return '当前主控 BOT 请求超时，请重新验证。';
+  }
+  return msg;
+};
+
 interface SyncCardForIdentityOptions {
   preserveWhenUnbound?: boolean;
   reloadAfterSwitch?: boolean;
@@ -164,7 +179,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
     const channel = chatStore.findChannelById(channelId) as any;
     if (typeof channel?.characterApiReason === 'string' && channel.characterApiReason.trim()) {
-      return channel.characterApiReason.trim();
+      return normalizeCharacterApiDisabledReason(channel.characterApiReason, channel);
     }
     return characterApiUnsupportedText;
   };

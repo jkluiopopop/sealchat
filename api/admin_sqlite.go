@@ -8,6 +8,7 @@ import (
 
 	"sealchat/model"
 	"sealchat/pm"
+	"sealchat/service"
 	"sealchat/utils"
 )
 
@@ -54,7 +55,7 @@ func AdminSQLiteVacuumExecute(c *fiber.Ctx) error {
 	}
 
 	beforeSize, beforeErr := model.SQLiteFileSizeBytes()
-	if err := model.VacuumSQLite(); err != nil {
+	if _, err := service.VacuumSQLiteWithMaintenance(time.Now()); err != nil {
 		return wrapErrorStatus(c, http.StatusInternalServerError, err, "执行 SQLite 空间整理失败")
 	}
 

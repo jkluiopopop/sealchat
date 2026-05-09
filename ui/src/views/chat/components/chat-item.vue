@@ -38,6 +38,7 @@ import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } fr
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
 import { normalizeAvatarDecorations } from '@/utils/avatarDecorations'
+import { shouldRenderWhisperLabel } from '../messageMerge'
 import IdentityMetaInlineRow from './IdentityMetaInlineRow.vue'
 import MessageReactions from './MessageReactions.vue'
 import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
@@ -1222,7 +1223,9 @@ const buildWhisperLabel = (item?: any) => {
   return t('whisper.generic');
 };
 
-const whisperLabel = computed(() => buildWhisperLabel(props.item));
+const whisperLabel = computed(() => (
+  shouldRenderWhisperLabel(props.item, props.isMerged) ? buildWhisperLabel(props.item) : ''
+));
 const quoteItem = computed(() => props.item?.quote ?? null);
 const quoteDisplayName = computed(() => (quoteItem.value ? getMemberDisplayName(quoteItem.value) : ''));
 const quoteNameColor = computed(() => quoteItem.value?.identity?.color
@@ -1289,6 +1292,7 @@ const canShowEditAction = computed(() => canEdit.value && hasEditAction.value);
 const contentClassList = computed(() => {
   const classes: Record<string, boolean> = {
     'whisper-content': Boolean(props.item?.isWhisper),
+    'whisper-content--merged': Boolean(props.item?.isWhisper && props.isMerged && props.layout === 'bubble'),
     'content--editing-preview': Boolean(otherEditingPreview.value),
     'content--has-edit-action': hasEditAction.value,
     'content--image-resize-mode': imageResizeMode.value,
@@ -3309,6 +3313,7 @@ const handleRetrySend = () => {
             :identity-id="senderIdentityId"
             :identity-color="nameColor"
             :channel-id="chat.curChannel?.id || ''"
+            :message-tone="props.tone"
           />
         </template>
 
@@ -3337,6 +3342,7 @@ const handleRetrySend = () => {
             :identity-id="senderIdentityId"
             :identity-color="nameColor"
             :channel-id="chat.curChannel?.id || ''"
+            :message-tone="props.tone"
           />
         </template>
         <n-popover trigger="hover" placement="bottom" v-if="!props.isRtl && timestampShouldRender">
@@ -3838,6 +3844,16 @@ const handleRetrySend = () => {
   color: var(--chat-text-primary, #1f2937);
   padding-left: calc(var(--chat-message-padding-x, 1.1rem) + 0.34rem);
   box-shadow: inset 4px 0 0 color-mix(in srgb, var(--chat-whisper-accent, #6366f1) 72%, transparent), var(--chat-message-shadow, none);
+}
+
+.chat-item--layout-bubble > .right > .content.whisper-content--merged {
+  margin-top: -0.5rem;
+  border-top-left-radius: 0.3rem;
+}
+
+.chat-item--layout-bubble.chat-item--self > .right > .content.whisper-content--merged {
+  border-top-left-radius: 0.85rem;
+  border-top-right-radius: 0.3rem;
 }
 
 .chat-item--layout-bubble > .right {

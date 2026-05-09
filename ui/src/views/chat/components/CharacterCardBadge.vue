@@ -3,12 +3,14 @@ import { computed } from 'vue';
 import { useCharacterCardStore } from '@/stores/characterCard';
 import { useDisplayStore } from '@/stores/display';
 import { useChatStore } from '@/stores/chat';
+import { messageVisibilityScopeMatches } from '@/stores/displayAvatarVisibility';
 import { renderCardTemplate, getWorldCardTemplate } from '@/utils/characterCardTemplate';
 import { resolveIdentityMetaStyle } from '@/utils/identityMetaContrast';
 
 const props = defineProps<{
   identityId?: string;
   identityColor?: string;
+  messageTone?: 'ic' | 'ooc' | 'archived';
   hostBackgroundColor?: string;
 }>();
 
@@ -80,7 +82,12 @@ const renderedContent = computed(() => {
 });
 
 const isVisible = computed(() => {
-  return displayStore.settings.characterCardBadgeEnabled && !!renderedContent.value;
+  return displayStore.settings.characterCardBadgeEnabled
+    && messageVisibilityScopeMatches(
+      displayStore.settings.characterCardBadgeVisibilityScope,
+      props.messageTone,
+    )
+    && !!renderedContent.value;
 });
 
 const badgeStyle = computed(() => resolveIdentityMetaStyle({

@@ -254,6 +254,55 @@ func AttachmentMeta(c *fiber.Ctx) error {
 	})
 }
 
+func AttachmentImportFromURL(c *fiber.Ctx) error {
+	var body struct {
+		URL         string `json:"url"`
+		Filename    string `json:"filename"`
+		ContentType string `json:"contentType"`
+		ChannelID   string `json:"channelId"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return wrapError(c, err, "请求参数错误")
+	}
+	user := getCurUser(c)
+	if user == nil {
+		return wrapErrorStatus(c, fiber.StatusUnauthorized, nil, "未登录")
+	}
+
+	maxSize := int64(20 * 1024 * 1024)
+	if appConfig != nil && appConfig.ImageSizeLimit > 0 {
+		maxSize = appConfig.ImageSizeLimit * 1024
+	}
+	item, err := service.ImportAttachmentFromURL(service.RemoteAttachmentImportInput{
+		URL:          body.URL,
+		Filename:     body.Filename,
+		ContentType:  body.ContentType,
+		UserID:       user.ID,
+		ChannelID:    body.ChannelID,
+		MaxSizeBytes: maxSize,
+	})
+	if err != nil {
+		status := fiber.StatusBadRequest
+		if errors.Is(err, service.ErrRemoteAttachmentTooLarge) {
+			status = fiber.StatusRequestEntityTooLarge
+		}
+		return wrapErrorStatus(c, status, err, err.Error())
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "导入成功",
+		"file": fiber.Map{
+			"id":          item.ID,
+			"filename":    item.Filename,
+			"size":        item.Size,
+			"mimeType":    item.MimeType,
+			"storageType": item.StorageType,
+			"objectKey":   item.ObjectKey,
+			"externalUrl": item.ExternalURL,
+		},
+	})
+}
+
 func wrapErrorStatus(c *fiber.Ctx, status int, err error, s string) error {
 	m := fiber.Map{
 		"message": s,

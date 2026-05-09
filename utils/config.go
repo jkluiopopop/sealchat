@@ -33,6 +33,7 @@ type AudioConfig struct {
 	TempDir                  string   `json:"tempDir" yaml:"tempDir"`
 	ImportDir                string   `json:"importDir" yaml:"importDir"`
 	MaxUploadSizeMB          int64    `json:"maxUploadSizeMB" yaml:"maxUploadSizeMB"`
+	UserQuotaMB              int64    `json:"userQuotaMB" yaml:"userQuotaMB"`
 	AllowedMimeTypes         []string `json:"allowedMimeTypes" yaml:"allowedMimeTypes"`
 	EnableTranscode          bool     `json:"enableTranscode" yaml:"enableTranscode"`
 	DefaultBitrateKbps       int      `json:"defaultBitrateKbps" yaml:"defaultBitrateKbps"`
@@ -373,6 +374,7 @@ func ReadConfig() *AppConfig {
 			TempDir:                  "./data/audio-temp",
 			ImportDir:                "./static/audio/import",
 			MaxUploadSizeMB:          80,
+			UserQuotaMB:              150,
 			AllowedMimeTypes:         []string{"audio/mpeg", "audio/ogg", "audio/wav", "audio/x-wav", "audio/webm", "audio/aac", "audio/flac"},
 			EnableTranscode:          true,
 			DefaultBitrateKbps:       96,
@@ -1083,6 +1085,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("audio.tempDir", config.Audio.TempDir)
 		_ = k.Set("audio.importDir", config.Audio.ImportDir)
 		_ = k.Set("audio.maxUploadSizeMB", config.Audio.MaxUploadSizeMB)
+		_ = k.Set("audio.userQuotaMB", config.Audio.UserQuotaMB)
 		_ = k.Set("audio.allowedMimeTypes", config.Audio.AllowedMimeTypes)
 		_ = k.Set("audio.enableTranscode", config.Audio.EnableTranscode)
 		_ = k.Set("audio.defaultBitrateKbps", config.Audio.DefaultBitrateKbps)

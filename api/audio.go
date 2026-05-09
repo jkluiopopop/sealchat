@@ -84,11 +84,16 @@ func AudioAssetList(c *fiber.Ctx) error {
 	if err != nil {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "加载音频素材失败")
 	}
+	quotaSummary, err := service.GetAudioQuotaSummary(user.ID)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "加载音频配额失败")
+	}
 	return c.JSON(fiber.Map{
 		"items":    items,
 		"total":    total,
 		"page":     filters.Page,
 		"pageSize": filters.PageSize,
+		"quota":    quotaSummary,
 	})
 }
 
@@ -177,11 +182,14 @@ func AudioAssetUpload(c *fiber.Ctx) error {
 		WorldID:     worldID,
 	})
 	if err != nil {
+		var quotaErr *service.AudioQuotaExceededError
 		switch {
 		case errors.Is(err, service.ErrAudioTooLarge):
 			return wrapErrorStatus(c, fiber.StatusRequestEntityTooLarge, err, err.Error())
 		case errors.Is(err, service.ErrAudioUnsupportedMime):
 			return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
+		case errors.As(err, &quotaErr):
+			return wrapErrorStatus(c, fiber.StatusRequestEntityTooLarge, err, quotaErr.Error())
 		default:
 			return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "上传音频失败")
 		}
@@ -281,6 +289,72 @@ func AudioAssetImport(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "导入音频失败")
 	}
 	return c.JSON(result)
+}
+
+func AdminAudioQuotaList(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return c.SendStatus(fiber.StatusForbidden)
+	}
+	result, err := service.ListAdminAudioQuotaOverrides(
+		c.QueryInt("page", 1),
+		c.QueryInt("pageSize", 20),
+		c.Query("query"),
+	)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取音频配额失败")
+	}
+	return c.JSON(result)
+}
+
+func AdminAudioQuotaGet(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return c.SendStatus(fiber.StatusForbidden)
+	}
+	item, err := service.GetAdminAudioQuotaDetail(c.Params("userId"))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "用户不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取音频配额失败")
+	}
+	return c.JSON(item)
+}
+
+func AdminAudioQuotaUpsert(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return c.SendStatus(fiber.StatusForbidden)
+	}
+	var req struct {
+		QuotaMB int64 `json:"quotaMB"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "配额请求解析失败")
+	}
+	user := getCurUser(c)
+	record, err := service.UpsertAudioUserQuotaOverride(c.Params("userId"), user.ID, req.QuotaMB)
+	if err != nil {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "用户不存在")
+		default:
+			return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
+		}
+	}
+	item, err := service.GetAdminAudioQuotaDetail(record.UserID)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取音频配额失败")
+	}
+	return c.JSON(item)
+}
+
+func AdminAudioQuotaDelete(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return c.SendStatus(fiber.StatusForbidden)
+	}
+	if err := service.DeleteAudioUserQuotaOverride(c.Params("userId")); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
+	}
+	return c.JSON(fiber.Map{"message": "音频配额覆盖已删除"})
 }
 
 func AudioAssetUpdate(c *fiber.Ctx) error {

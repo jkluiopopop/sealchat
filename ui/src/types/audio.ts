@@ -32,6 +32,23 @@ export interface AudioAssetUsageSummary {
   referenced: boolean;
 }
 
+export interface AudioQuotaSummary {
+  limited: boolean;
+  quotaBytes: number | null;
+  usedBytes: number;
+  remainingBytes: number | null;
+  usagePercent: number | null;
+  source: 'default' | 'override' | 'admin-unlimited';
+}
+
+export interface AudioAssetListResult {
+  items: AudioAsset[];
+  page: number;
+  pageSize: number;
+  total: number;
+  quota?: AudioQuotaSummary | null;
+}
+
 export interface AdminAudioFilterOption {
   label: string;
   value: string;
@@ -52,6 +69,28 @@ export interface AdminAudioAssetListResult {
   total: number;
   worldOptions: AdminAudioFilterOption[];
   creatorOptions: AdminAudioFilterOption[];
+}
+
+export interface AdminAudioQuotaItem {
+  userId: string;
+  username: string;
+  nickname: string;
+  hasOverride: boolean;
+  quotaMB: number;
+  usedBytes: number;
+  limited: boolean;
+  quotaBytes: number | null;
+  remainingBytes: number | null;
+  usagePercent: number | null;
+  source: 'default' | 'override' | 'admin-unlimited';
+  updatedBy?: string;
+}
+
+export interface AdminAudioQuotaListResult {
+  items: AdminAudioQuotaItem[];
+  page: number;
+  pageSize: number;
+  total: number;
 }
 
 export interface AdminAudioCleanupPreview {

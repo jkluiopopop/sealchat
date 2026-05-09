@@ -207,3 +207,9 @@ func ChannelGetFirstUnreadInfo(channelId, userId string, options *FirstUnreadFil
 	}
 	return "", 0, nil
 }
+
+func ChannelLatestReadCleanupOrphans() (int64, error) {
+	tx := db.Where("NOT EXISTS (SELECT 1 FROM channels c WHERE c.id = channel_latest_read.channel_id) OR NOT EXISTS (SELECT 1 FROM users u WHERE u.id = channel_latest_read.user_id)").
+		Delete(&ChannelLatestReadModel{})
+	return tx.RowsAffected, tx.Error
+}

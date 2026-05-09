@@ -34,7 +34,6 @@ import IFormDrawer from '@/components/iform/IFormDrawer.vue';
 import IFormEmbedInstances from '@/components/iform/IFormEmbedInstances.vue';
 import StickyNoteManager from './components/StickyNoteManager.vue';
 import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
-import EmojiPickerModal from './components/EmojiPickerModal.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
@@ -51,6 +50,7 @@ import AvatarClickMenu from './components/AvatarClickMenu.vue'
 import { nanoid } from 'nanoid';
 import { DEFAULT_PAGE_TITLE, useUtilsStore } from '@/stores/utils';
 import { useDisplayStore } from '@/stores/display';
+import { normalizeMessageIcMode, resolveAvatarRenderState } from '@/stores/displayAvatarVisibility';
 import { useCharacterRemarkStore } from '@/stores/characterRemark';
 import { contentEscape, contentUnescape, arrayBufferToBase64, base64ToUint8Array } from '@/utils/tools'
 import { triggerBlobDownload } from '@/utils/download';
@@ -72,8 +72,10 @@ import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
 import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
 import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
+import { buildOptimisticMessageIcModeFields } from '@/utils/optimisticMessageIcMode';
 import { buildGeneratedAvatarFile } from '@/utils/generatedAvatarImage';
 import { extractPushNotificationPreviewText } from '@/utils/pushNotificationPreview';
+import { shouldPlayMessageSound } from '@/utils/messageSoundMode';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
@@ -92,6 +94,8 @@ import {
   remapDecorationsForImport,
   resolveIdentityMatchByName,
   resolveIdentityAssetFetchUrl,
+  resolveIdentityAssetTransferUrl,
+  shouldUseIdentityAssetRemoteImport,
   shouldIgnoreIdentityAssetFetchStatus,
   type IdentityAssetPayload,
   type IdentityAvatarPayload,
@@ -110,9 +114,21 @@ import CharacterCardPanel from './components/CharacterCardPanel.vue';
 import { characterApiUnsupportedText, useCharacterCardStore } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
+import MessageImageEditor from '@/components/chat/MessageImageEditor.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 import { resolveDeletedChannelFallbackId } from '@/stores/chatChannelSelection';
+import {
+  buildInputHistorySignature,
+  captureWhisperSnapshot,
+  normalizeWhisperSnapshot,
+  restoreWhisperSnapshot,
+  type WhisperSnapshot,
+} from './inputHistoryWhisperState';
+import { buildEditMessageUpdateOptions } from './editMessageUpdate';
+import { shouldMergeNeighborMessages } from './messageMerge';
+
+const EmojiPickerModal = defineAsyncComponent(() => import('./components/EmojiPickerModal.vue'));
 
 // const uploadImages = useObservable<Thumb[]>(
 //   liveQuery(() => db.thumbs.toArray()) as any
@@ -899,8 +915,14 @@ const refreshChannelBotSelection = async () => {
   try {
     const resp = await chat.channelMemberListAll(channelId, 200);
     const items = resp?.data?.items || [];
-    const current = items.find((item: any) => item.roleId === roleId && item.user?.id);
-    channelBotSelection.value = current?.user?.id || '';
+    const existingIds = items
+      .filter((item: any) => item.roleId === roleId && item.user?.id)
+      .map((item: any) => item.user?.id as string)
+      .filter(Boolean);
+    const primaryBotId = String(chat.curChannel?.primaryBotId || '').trim();
+    channelBotSelection.value = primaryBotId && existingIds.includes(primaryBotId)
+      ? primaryBotId
+      : (existingIds[0] || '');
   } catch (error: any) {
     message.error(error?.response?.data?.error || '加载频道机器人失败');
   } finally {
@@ -934,9 +956,12 @@ const syncChannelBotSelection = async (nextBotId: string) => {
     if (nextBotId && !existingIds.includes(nextBotId)) {
       await chat.userRoleLink(roleId, [nextBotId]);
     }
-    const toRemove = nextBotId ? existingIds.filter(id => id !== nextBotId) : existingIds;
-    if (toRemove.length) {
-      await chat.userRoleUnlink(roleId, toRemove);
+    if (!nextBotId && existingIds.length) {
+      await chat.userRoleUnlink(roleId, existingIds);
+    }
+    await chat.updateChannelFeatures(channelId, { primaryBotId: nextBotId || '' });
+    if (nextBotId) {
+      void characterCardStore.revalidateCharacterApi(channelId);
     }
     channelBotSelection.value = nextBotId;
   } catch (error: any) {
@@ -986,6 +1011,9 @@ const updateChannelFeatureFlags = async (updates: { builtInDiceEnabled?: boolean
       channelFeatures.botFeatureEnabled = payload.bot_feature_enabled;
     } else if (typeof updates.botFeatureEnabled === 'boolean') {
       channelFeatures.botFeatureEnabled = updates.botFeatureEnabled;
+    }
+    if (typeof payload?.primary_bot_id === 'string') {
+      chat.patchChannelAttributes(chat.curChannel.id, { primaryBotId: payload.primary_bot_id });
     }
   } catch (error: any) {
     message.error(error?.response?.data?.error || '更新频道特性失败');
@@ -2033,6 +2061,7 @@ const icHotkeyEnabled = computed(() => {
 });
 
 type SelectionRange = { start: number; end: number };
+type InlineUploadSource = 'default' | 'rich-toolbar' | 'rich-editor';
 
 interface InlineImageDraft {
   id: string;
@@ -2238,6 +2267,9 @@ const hasFailedInlineImages = computed(() => {
 });
 
 let pendingInlineSelection: SelectionRange | null = null;
+let pendingInlineUploadSource: InlineUploadSource = 'default';
+let activeInlineEditorSelection: SelectionRange | null = null;
+let activeInlineEditorSource: InlineUploadSource = 'default';
 const inlineImagePreviewMap = computed<Record<string, { status: 'uploading' | 'uploaded' | 'failed'; previewUrl?: string; error?: string }>>(() => {
   const result: Record<string, { status: 'uploading' | 'uploaded' | 'failed'; previewUrl?: string; error?: string }> = {};
   inlineImages.forEach((draft, key) => {
@@ -2253,6 +2285,46 @@ const inlineImagePreviewMap = computed<Record<string, { status: 'uploading' | 'u
   });
   return result;
 });
+
+const richInlineImageEditorVisible = ref(false);
+const richInlineImageEditorFile = ref<File | null>(null);
+
+const closeRichInlineImageEditor = () => {
+  richInlineImageEditorVisible.value = false;
+  richInlineImageEditorFile.value = null;
+  activeInlineEditorSelection = null;
+  activeInlineEditorSource = 'default';
+};
+
+const openRichInlineImageEditor = (
+  files: File[],
+  source: InlineUploadSource = pendingInlineUploadSource,
+  selection: SelectionRange | null = pendingInlineSelection,
+) => {
+  const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+  if (!imageFiles.length) {
+    message.warning('当前仅支持插入图片文件');
+    return;
+  }
+  if (imageFiles.length > 1) {
+    message.info('富文本插图编辑首版仅支持单张图片，已载入第一张');
+  }
+  activeInlineEditorSource = source;
+  activeInlineEditorSelection = selection ? { ...selection } : null;
+  richInlineImageEditorFile.value = imageFiles[0] || null;
+  richInlineImageEditorVisible.value = !!richInlineImageEditorFile.value;
+};
+
+const handleRichInlineImageEditorConfirm = async (file: File) => {
+  const shouldInsertIntoRichEditor = activeInlineEditorSource === 'rich-editor' || inputMode.value === 'rich';
+  const targetSelection = activeInlineEditorSelection ? { ...activeInlineEditorSelection } : undefined;
+  closeRichInlineImageEditor();
+  if (shouldInsertIntoRichEditor) {
+    await handleRichImageInsert([file], { skipCompression: true });
+    return;
+  }
+  insertInlineImages([file], targetSelection, { skipCompression: true });
+};
 
 const identityDialogVisible = ref(false);
 
@@ -3364,11 +3436,12 @@ const maybePromptIdentitySync = async () => {
   await openIdentitySyncDialog();
 };
 
-const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v3';
+const IDENTITY_EXPORT_VERSION = 'sealchat.channel-identity/v4';
 const IDENTITY_EXPORT_COMPATIBLE_VERSIONS = [
   'sealchat.channel-identity/v1',
   'sealchat.channel-identity/v2',
   'sealchat.channel-identity/v3',
+  'sealchat.channel-identity/v4',
 ];
 
 interface IdentityAssetExportIssueState {
@@ -3389,6 +3462,26 @@ const downloadAttachmentAsPayload = async (
   const meta = await fetchAttachmentMetaById(normalizedId);
   if (!meta) {
     return null;
+  }
+  if (meta.storageType === 's3') {
+    const sourceUrl = normalizedId
+      ? `${String(urlBase || '').replace(/\/$/, '')}/api/v1/attachment/${normalizedId}`
+      : '';
+    if (!sourceUrl) {
+      issueState && (issueState.missingAssets += 1);
+      console.warn('导出角色素材时无法生成平台附件链接，已跳过', {
+        attachmentId: normalizedId,
+      });
+      return null;
+    }
+    return {
+      attachmentId: normalizedId,
+      hash: meta.hash || '',
+      size: meta.size ?? 0,
+      filename: meta.filename || fallbackFilename,
+      mimeType: meta.mimeType || 'application/octet-stream',
+      sourceUrl,
+    };
   }
   const downloadUrl = resolveIdentityAssetFetchUrl({
     normalizedId,
@@ -3489,6 +3582,23 @@ const normalizeExportItemDecorations = (item: IdentityExportItem) => {
   return [] as IdentityExportDecorationItem[];
 };
 
+const importAttachmentFromRemoteUrl = async (
+  avatar: IdentityAvatarPayload,
+  options?: { channelId?: string },
+): Promise<string> => {
+  const transferUrl = resolveIdentityAssetTransferUrl(avatar);
+  if (!transferUrl) {
+    return '';
+  }
+  const resp = await api.post('api/v1/attachment-import-from-url', {
+    url: transferUrl,
+    filename: avatar.filename,
+    contentType: avatar.mimeType,
+    channelId: options?.channelId || chat.curChannel?.id,
+  });
+  return normalizeAttachmentId(resp.data?.file?.id || '');
+};
+
 const ensureImportAttachment = async (
   avatar?: IdentityAvatarPayload | null,
   options?: { channelId?: string },
@@ -3496,24 +3606,41 @@ const ensureImportAttachment = async (
   if (!avatar) {
     return '';
   }
+  if (avatar.hash && avatar.size) {
+    try {
+      const quickResp = await api.post('api/v1/attachment-upload-quick', {
+        hash: avatar.hash,
+        size: avatar.size,
+        extra: 'channel-identity-avatar',
+      });
+      const quickId = quickResp.data?.file?.id;
+      if (quickId) {
+        return quickId;
+      }
+    } catch (error: any) {
+      const msg = error?.response?.data?.message;
+      if (!msg || msg !== '此项数据无法进行快速上传') {
+        throw error;
+      }
+    }
+  }
+
+  if (shouldUseIdentityAssetRemoteImport(avatar)) {
+    try {
+      const importedId = await importAttachmentFromRemoteUrl(avatar, options);
+      if (importedId) {
+        return importedId;
+      }
+    } catch (error) {
+      console.warn('远端 URL 导入身份素材失败，准备回退', error);
+      if (!avatar.data) {
+        throw error;
+      }
+    }
+  }
+
   if (!avatar.hash || !avatar.data || !avatar.size) {
     return normalizeAttachmentId(avatar.attachmentId || '');
-  }
-  try {
-    const quickResp = await api.post('api/v1/attachment-upload-quick', {
-      hash: avatar.hash,
-      size: avatar.size,
-      extra: 'channel-identity-avatar',
-    });
-    const quickId = quickResp.data?.file?.id;
-    if (quickId) {
-      return quickId;
-    }
-  } catch (error: any) {
-    const msg = error?.response?.data?.message;
-    if (!msg || msg !== '此项数据无法进行快速上传') {
-      throw error;
-    }
   }
 
   try {
@@ -3545,6 +3672,9 @@ const ensureImportAssets = async (
       filename: asset.filename,
       mimeType: asset.mimeType,
       data: asset.data,
+      sourceUrl: asset.sourceUrl,
+      externalUrl: asset.externalUrl,
+      publicUrl: asset.publicUrl,
     }, options);
     if (attachmentId) {
       result.set(asset.assetKey, attachmentId);
@@ -3699,7 +3829,7 @@ const handleIdentityExport = async () => {
   }
   const membershipMap = identityFolderMembership.value;
   const folderList = identityFolders.value;
-  const favoriteSet = new Set(identityFavoriteFolderIds.value);
+  const favoriteSet = new Set<string>(identityFavoriteFolderIds.value);
   const scopedIcOocConfig = chat.getChannelIcOocRoleConfig(chat.curChannel.id, currentIdentityTargetUserId.value);
   identityExporting.value = true;
   try {
@@ -3832,7 +3962,7 @@ const importIdentityMigrationSnapshot = async (
       if (matchedIdentity && options.mode === 'overwrite') {
         const updated = await chat.channelIdentityUpdate(matchedIdentity.id, {
           channelId: targetChannelId,
-          targetUserId,
+          targetUserId: targetUserId || undefined,
           displayName,
           color: item.color || '',
           avatarAttachmentId: avatarId,
@@ -3852,7 +3982,7 @@ const importIdentityMigrationSnapshot = async (
 
       const created = await chat.channelIdentityCreate({
         channelId: targetChannelId,
-        targetUserId,
+        targetUserId: targetUserId || undefined,
         displayName,
         color: item.color || '',
         avatarAttachmentId: avatarId,
@@ -3901,7 +4031,7 @@ const importIdentityMigrationSnapshot = async (
       try {
         await chat.channelIdentityVariantCreate({
           channelId: targetChannelId,
-          targetUserId,
+          targetUserId: targetUserId || undefined,
           identityId: targetIdentityId,
           selectorEmoji: variant.selectorEmoji,
           keyword: variant.keyword,
@@ -3953,7 +4083,7 @@ const importIdentityMigrationSnapshot = async (
   };
 };
 
-const handleIdentityImportChange = async (event: Event) => {
+const handleIdentityImportChange = async (event: globalThis.Event) => {
   const input = event.target as HTMLInputElement | null;
   const file = input?.files?.[0];
   if (input) {
@@ -4815,24 +4945,37 @@ const getMessageIdentityColor = (message: any) => {
   return normalizeHexColor(message?.identity?.color || message?.sender_identity_color || '') || '';
 };
 
+const getMessageIcMode = (message: any): 'ic' | 'ooc' => {
+  if (chat.editing && chat.editing.messageId === message?.id) {
+    return normalizeMessageIcMode(chat.editing.icMode);
+  }
+  const editingPreview = editingPreviewMap.value[message?.id];
+  if (editingPreview && !editingPreview.isSelf) {
+    return normalizeMessageIcMode(editingPreview.tone);
+  }
+  return normalizeMessageIcMode(message?.icMode ?? message?.ic_mode);
+};
+
 const getMessageTone = (message: any): 'ic' | 'ooc' | 'archived' => {
   if (message?.isArchived || message?.is_archived) {
     return 'archived';
   }
-  // 如果正在编辑此消息（自己），使用编辑状态的 icMode
-  if (chat.editing && chat.editing.messageId === message?.id) {
-    return chat.editing.icMode === 'ooc' ? 'ooc' : 'ic';
-  }
-  // 如果他人正在编辑此消息，使用编辑预览中的 tone
-  const editingPreview = editingPreviewMap.value[message?.id];
-  if (editingPreview && !editingPreview.isSelf) {
-    return editingPreview.tone === 'ooc' ? 'ooc' : 'ic';
-  }
-  if (message?.icMode === 'ooc' || message?.ic_mode === 'ooc') {
-    return 'ooc';
-  }
-  return 'ic';
+  return getMessageIcMode(message);
 };
+
+const getMessageAvatarRenderState = (message: any, mergedWithPrev = false) => resolveAvatarRenderState({
+  avatarsEnabled: display.showAvatar,
+  avatarVisibilityScope: display.settings.avatarVisibilityScope,
+  icMode: getMessageIcMode(message),
+  mergedWithPrev,
+});
+
+const getTypingPreviewAvatarRenderState = (preview: TypingPreviewItem) => resolveAvatarRenderState({
+  avatarsEnabled: display.showAvatar,
+  avatarVisibilityScope: display.settings.avatarVisibilityScope,
+  icMode: preview.tone,
+  mergedWithPrev: false,
+});
 
 const getMessageAuthorId = (message: any): string => {
   return (
@@ -5481,9 +5624,6 @@ const isMergeCandidate = (message?: Message | null) => {
   if ((message as any).is_revoked || (message as any).is_deleted) {
     return false;
   }
-  if (message.isWhisper || (message as any).is_whisper) {
-    return false;
-  }
   return true;
 };
 
@@ -5607,12 +5747,20 @@ const getMessageSceneKey = (message: any): string => {
 };
 
 const shouldMergeMessages = (prev?: Message, current?: Message) => {
-  if (!prev || !current) return false;
-  if (prev.isWhisper !== current.isWhisper) return false;
-  const roleSame = getMessageRoleKey(prev) && getMessageRoleKey(prev) === getMessageRoleKey(current);
-  if (!roleSame) return false;
-  if (getMessageSceneKey(prev) !== getMessageSceneKey(current)) return false;
-  return getMessageAvatarMergeKey(prev) === getMessageAvatarMergeKey(current);
+  return shouldMergeNeighborMessages(
+    prev ? {
+      ...prev,
+      roleKey: getMessageRoleKey(prev),
+      sceneKey: getMessageSceneKey(prev),
+      avatarMergeKey: getMessageAvatarMergeKey(prev),
+    } : null,
+    current ? {
+      ...current,
+      roleKey: getMessageRoleKey(current),
+      sceneKey: getMessageSceneKey(current),
+      avatarMergeKey: getMessageAvatarMergeKey(current),
+    } : null,
+  );
 };
 
 
@@ -8857,6 +9005,7 @@ interface SessionDraftEntry {
   content: string;
   updatedAt: number;
   images?: HistoryImageInfo[];
+  whisperSnapshot?: WhisperSnapshot;
 }
 
 interface InputHistoryEntry {
@@ -8866,6 +9015,7 @@ interface InputHistoryEntry {
   content: string;
   createdAt: number;
   images?: HistoryImageInfo[];
+  whisperSnapshot?: WhisperSnapshot;
 }
 
 type HistoryStore = Record<string, InputHistoryEntry[]>;
@@ -8884,8 +9034,6 @@ const hasHistoryEntries = computed(() => historyEntries.value.length > 0);
 const currentChannelKey = computed(() => chat.curChannel?.id ? String(chat.curChannel.id) : HISTORY_CHANNEL_FALLBACK);
 const draftOwnerChannelKey = ref(HISTORY_CHANNEL_FALLBACK);
 const lastHistorySignature = ref<string | null>(null);
-
-const buildHistorySignature = (mode: 'plain' | 'rich', content: string) => `${mode}:${content}`;
 
 const resolveSessionDraftStorageKey = () => {
   if (typeof window === 'undefined') {
@@ -8993,7 +9141,13 @@ const readSessionDraftForChannel = (channelKey: string): SessionDraftEntry | nul
   if (!entry || typeof entry.content !== 'string') {
     return null;
   }
-  return entry;
+  return {
+    mode: entry.mode === 'rich' ? 'rich' : 'plain',
+    content: entry.content,
+    updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : Date.now(),
+    images: Array.isArray(entry.images) ? entry.images : undefined,
+    whisperSnapshot: normalizeWhisperSnapshot((entry as any).whisperSnapshot),
+  };
 };
 
 const readHistoryStore = (): HistoryStore => {
@@ -9055,7 +9209,16 @@ const normalizeHistoryEntries = (entries: any[]): InputHistoryEntry[] => {
           images = undefined;
         }
       }
-      return { id, channelKey, mode, content, createdAt, images } as InputHistoryEntry;
+      const whisperSnapshot = normalizeWhisperSnapshot(entry.whisperSnapshot);
+      return {
+        id,
+        channelKey,
+        mode,
+        content,
+        createdAt,
+        images,
+        whisperSnapshot,
+      } as InputHistoryEntry;
     })
     .filter((entry): entry is InputHistoryEntry => !!entry);
 };
@@ -9068,7 +9231,7 @@ const refreshHistoryEntries = () => {
     .slice(0, MAX_HISTORY_PER_CHANNEL);
   historyEntries.value = entries;
   lastHistorySignature.value = entries.length
-    ? buildHistorySignature(entries[0].mode, entries[0].content)
+    ? buildInputHistorySignature(entries[0].mode, entries[0].content, entries[0].whisperSnapshot)
     : null;
 };
 
@@ -9079,7 +9242,11 @@ const pruneAndPersist = (channelKey: string, entries: InputHistoryEntry[]) => {
   if (channelKey === currentChannelKey.value) {
     historyEntries.value = store[channelKey].slice();
     lastHistorySignature.value = historyEntries.value.length
-      ? buildHistorySignature(historyEntries.value[0].mode, historyEntries.value[0].content)
+      ? buildInputHistorySignature(
+        historyEntries.value[0].mode,
+        historyEntries.value[0].content,
+        historyEntries.value[0].whisperSnapshot,
+      )
       : null;
   }
 };
@@ -9237,14 +9404,19 @@ const appendHistoryEntry = (mode: 'plain' | 'rich', content: string, options: { 
   if (!isContentMeaningful(mode, content)) {
     return false;
   }
-  const signature = buildHistorySignature(mode, content);
+  const whisperSnapshot = captureWhisperSnapshot(chat.whisperTargets);
+  const signature = buildInputHistorySignature(mode, content, whisperSnapshot);
   if (!options.force && signature === lastHistorySignature.value) {
     return false;
   }
   const channelKey = currentChannelKey.value;
   const store = readHistoryStore();
   const existing = normalizeHistoryEntries(store[channelKey] || []);
-  const filtered = existing.filter((entry) => buildHistorySignature(entry.mode, entry.content) !== signature);
+  const filtered = existing.filter((entry) => buildInputHistorySignature(
+    entry.mode,
+    entry.content,
+    entry.whisperSnapshot,
+  ) !== signature);
   
   // 提取当前图片信息
   const images = mode === 'plain' ? collectCurrentImageInfo() : undefined;
@@ -9256,6 +9428,7 @@ const appendHistoryEntry = (mode: 'plain' | 'rich', content: string, options: { 
     content,
     createdAt: Date.now(),
     images: images?.length ? images : undefined,
+    whisperSnapshot,
   };
   filtered.unshift(newEntry);
   pruneAndPersist(channelKey, filtered);
@@ -9357,6 +9530,7 @@ const restoreImagesFromHistory = (entry: InputHistoryEntry) => {
 const applyHistoryEntry = (entry: InputHistoryEntry, options?: { silent?: boolean }) => {
   try {
     draftOwnerChannelKey.value = entry.channelKey || currentChannelKey.value;
+    restoreWhisperSnapshot(chat, entry.whisperSnapshot);
     clearInputModeCache();
     inputMode.value = entry.mode;
     suspendInlineSync = true;
@@ -9424,6 +9598,7 @@ const persistSessionDraftForChannel = (
     content: textToSend.value,
     updatedAt: Date.now(),
     images: images?.length ? images : undefined,
+    whisperSnapshot: captureWhisperSnapshot(chat.whisperTargets),
   });
 };
 
@@ -9472,6 +9647,7 @@ const tryAutoRestoreSessionDraft = () => {
     content: draft.content,
     createdAt: draft.updatedAt,
     images: draft.images,
+    whisperSnapshot: draft.whisperSnapshot,
   };
   applyHistoryEntry(entry, { silent: true });
   notifyAutoRestoreSuccess(channelKey);
@@ -10463,27 +10639,16 @@ const saveEdit = async () => {
       message.error('消息内容不能为空');
       return;
     }
-    const updateOptions: { icMode?: 'ic' | 'ooc'; identityId?: string | null; identityVariantId?: string | null; whisperTargetIds?: string[] } = {};
-    updateOptions.icMode = snapshot.icMode;
-    if (snapshot.isWhisper) {
-      if (snapshot.whisperTargetIds.length === 0) {
-        message.error('悄悄话至少需要一个可见对象');
-        return;
-      }
-      updateOptions.whisperTargetIds = snapshot.whisperTargetIds;
+    if (snapshot.isWhisper && snapshot.whisperTargetIds.length === 0) {
+      message.error('悄悄话至少需要一个可见对象');
+      return;
     }
-    if (snapshot.identityId !== snapshot.initialIdentityId) {
-      updateOptions.identityId = snapshot.identityId;
-    }
-    if (snapshot.identityVariantId !== snapshot.initialIdentityVariantId) {
-      updateOptions.identityVariantId = snapshot.identityVariantId;
-    }
-    const hasOptions = Object.keys(updateOptions).length > 0;
+    const updateOptions = buildEditMessageUpdateOptions(snapshot);
     const updated = await chat.messageUpdate(
       snapshot.channelId,
       snapshot.messageId,
       finalContent,
-      hasOptions ? updateOptions : undefined,
+      updateOptions,
     );
     if (!isEditSaveSnapshotAlive(snapshot)) {
       return;
@@ -11029,14 +11194,21 @@ const captureSelectionRange = (): SelectionRange => {
   return { start: selection.start, end: selection.end };
 };
 
-const startInlineImageUpload = async (markerId: string, draft: InlineImageDraft) => {
+const startInlineImageUpload = async (
+  markerId: string,
+  draft: InlineImageDraft,
+  options?: { skipCompression?: boolean },
+) => {
   try {
     if (!draft.file) {
       draft.status = 'failed';
       draft.error = '无效的图片文件';
       return;
     }
-    const result = await uploadImageAttachment(draft.file as File, { channelId: chat.curChannel?.id });
+    const result = await uploadImageAttachment(draft.file as File, {
+      channelId: chat.curChannel?.id,
+      skipCompression: options?.skipCompression === true,
+    });
     draft.attachmentId = result.attachmentId;
     draft.status = 'uploaded';
     draft.error = '';
@@ -11049,7 +11221,11 @@ const startInlineImageUpload = async (markerId: string, draft: InlineImageDraft)
   }
 };
 
-const insertInlineImages = (files: File[], selection?: SelectionRange) => {
+const insertInlineImages = (
+  files: File[],
+  selection?: SelectionRange,
+  options?: { skipCompression?: boolean },
+) => {
   if (!files.length) {
     return;
   }
@@ -11076,7 +11252,7 @@ const insertInlineImages = (files: File[], selection?: SelectionRange) => {
     updatedText = updatedText.slice(0, cursor) + updatedText.slice(cursor + 1);
   }
 
-  imageFiles.forEach((file, index) => {
+  imageFiles.forEach((file) => {
     const markerId = nanoid();
     const token = `[[图片:${markerId}]]`;
     const objectUrl = URL.createObjectURL(file);
@@ -11090,7 +11266,7 @@ const insertInlineImages = (files: File[], selection?: SelectionRange) => {
   inlineImages.set(markerId, draftRecord);
   updatedText = updatedText.slice(0, cursor) + token + updatedText.slice(cursor);
   cursor += token.length;
-  startInlineImageUpload(markerId, draftRecord);
+  startInlineImageUpload(markerId, draftRecord, options);
 });
 textToSend.value = updatedText;
 nextTick(() => {
@@ -11130,7 +11306,7 @@ const handleDropGalleryItem = (payload: { attachmentId: string; selectionStart: 
   insertGalleryInline(payload.attachmentId, { start: payload.selectionStart, end: payload.selectionEnd });
 };
 
-const handleRichImageInsert = async (files: File[]) => {
+const handleRichImageInsert = async (files: File[], options?: { skipCompression?: boolean }) => {
   if (!files.length) return;
 
   const imageFiles = files.filter((file) => file.type.startsWith('image/'));
@@ -11161,7 +11337,10 @@ const handleRichImageInsert = async (files: File[]) => {
 
     // 开始上传
     try {
-      const result = await uploadImageAttachment(file, { channelId: chat.curChannel?.id });
+      const result = await uploadImageAttachment(file, {
+        channelId: chat.curChannel?.id,
+        skipCompression: options?.skipCompression === true,
+      });
       draftRecord.attachmentId = result.attachmentId;
       draftRecord.status = 'uploaded';
       draftRecord.error = '';
@@ -11197,20 +11376,21 @@ const handleInlineFileChange = (event: Event) => {
   const input = event.target as HTMLInputElement | null;
   if (!input?.files?.length) {
     pendingInlineSelection = null;
+    pendingInlineUploadSource = 'default';
     return;
   }
 
   const files = Array.from(input.files);
 
-  if (inputMode.value === 'rich') {
-    // 富文本模式：调用富文本图片插入
-    handleRichImageInsert(files);
+  if (pendingInlineUploadSource !== 'default' || inputMode.value === 'rich') {
+    openRichInlineImageEditor(files, pendingInlineUploadSource, pendingInlineSelection);
   } else {
     // 纯文本模式：调用纯文本图片插入
     insertInlineImages(files, pendingInlineSelection || undefined);
   }
 
   pendingInlineSelection = null;
+  pendingInlineUploadSource = 'default';
   input.value = '';
 };
 
@@ -11492,6 +11672,7 @@ const send = throttle(async () => {
     member: chat.curMember || undefined,
     quote: replyTo,
   };
+  Object.assign(tmpMsg as any, buildOptimisticMessageIcModeFields(chat.icMode === 'ooc' ? 'ooc' : 'ic'));
   const activeIdentity = identityIdOverride
     ? findIdentityMeta(chat.curChannel?.id, identityIdOverride)
     : chat.getActiveIdentity(chat.curChannel?.id);
@@ -11783,6 +11964,7 @@ watch(() => chat.whisperTargets.map((target) => target.id).join(','), (targetIds
   if (targetIds === prevIds) {
     return;
   }
+  syncSessionDraftSnapshot();
   if (targetIds && whisperCandidateUsers.value.length === 0) {
     void loadWhisperCandidates();
   }
@@ -11859,14 +12041,19 @@ const toBottom = () => {
   updateAnchorMessage(null);
 };
 
-const doUpload = () => {
+const doUpload = (source: InlineUploadSource = 'default') => {
   pendingInlineSelection = captureSelectionRange();
+  pendingInlineUploadSource = source;
   inlineImageInputRef.value?.click?.();
+}
+
+const handleToolbarUploadClick = () => {
+  doUpload('rich-toolbar');
 }
 
 const handleRichUploadButtonClick = () => {
   // 富文本编辑器内的上传按钮点击事件
-  doUpload();
+  doUpload('rich-editor');
 }
 
 const clearInputModeCache = () => {
@@ -11997,6 +12184,14 @@ const handleChannelContextCleared = () => {
   showButton.value = false;
 };
 
+const currentWorldChannelTree = computed(() => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (!worldId) {
+    return [] as SChannel[];
+  }
+  return (chat.channelTreeByWorld?.[worldId] || []) as SChannel[];
+});
+
 onMounted(async () => {
   await chat.tryInit();
   draftOwnerChannelKey.value = currentChannelKey.value;
@@ -12084,12 +12279,28 @@ chatEvent.on('message-removed', (e?: Event) => {
 
 chatEvent.off('message-created', '*');
 chatEvent.on('message-created', (e?: Event) => {
-  if (!e?.message || e.channel?.id !== chat.curChannel?.id) {
+  if (!e?.message) {
     return;
   }
   const incoming = normalizeMessageShape(e.message);
+  const incomingChannelId = String(e.channel?.id || (incoming as any)?.channel?.id || (incoming as any)?.channel_id || '').trim();
+  const currentChannelId = String(chat.curChannel?.id || '').trim();
+  const isCurrentChannelMessage = !!incomingChannelId && incomingChannelId === currentChannelId;
+  const isSelf = incoming.user?.id === user.info.id;
+  if (!isSelf && shouldPlayMessageSound({
+    mode: display.settings.messageSoundMode,
+    isSelf,
+    isAppFocused: chat.isAppFocused,
+    messageChannelId: incomingChannelId,
+    currentChannelId,
+    currentWorldChannels: currentWorldChannelTree.value,
+  })) {
+    sound.play();
+  }
+  if (!isCurrentChannelMessage) {
+    return;
+  }
   const incomingIdentityId = resolveMessageIdentityId(incoming);
-  const incomingChannelId = String(e.channel?.id || (incoming as any)?.channel?.id || '').trim();
   if (incomingChannelId && incomingIdentityId) {
     chat.recordIdentitySpoken(
       incomingChannelId,
@@ -12100,7 +12311,6 @@ chatEvent.on('message-created', (e?: Event) => {
   if (hasCardRefreshCommand(incoming.content || '')) {
     scheduleCharacterSheetRefresh();
   }
-  const isSelf = incoming.user?.id === user.info.id;
   if (isSelf) {
     let matchedPending: Message | undefined;
     const clientId = (incoming as any).clientId;
@@ -12133,8 +12343,6 @@ chatEvent.on('message-created', (e?: Event) => {
       return;
     }
   } else {
-    sound.play();
-
     // 检测是否被 @ 了（包括 @all）
     const content = incoming.content || '';
     const currentUserId = user.info.id;
@@ -13247,7 +13455,7 @@ const toolbarHotkeyHandlers: Record<ToolbarHotkeyKey, () => boolean | void> = {
     return true;
   },
   upload: () => {
-    doUpload();
+    handleToolbarUploadClick();
     return true;
   },
   richMode: () => {
@@ -14344,7 +14552,7 @@ onBeforeUnmount(() => {
           <div class="chat-input-actions__cell">
             <n-tooltip trigger="hover">
               <template #trigger>
-                <n-button quaternary circle @click="doUpload">
+                <n-button quaternary circle @click="handleToolbarUploadClick">
                   <template #icon>
                     <n-icon :component="Upload" size="18" />
                   </template>
@@ -14560,7 +14768,7 @@ onBeforeUnmount(() => {
                 :editing-preview="editingPreviewMap[pinItem.id]"
                 :edit-saving="isSavingEdit"
                 :tone="getMessageTone(pinItem)"
-                :show-avatar="display.showAvatar"
+                :show-avatar="getMessageAvatarRenderState(pinItem).showAvatar"
                 :hide-avatar="false"
                 :show-header="true"
                 :layout="display.layout"
@@ -14728,8 +14936,8 @@ onBeforeUnmount(() => {
                 :editing-preview="editingPreviewMap[entry.message.id]"
                 :edit-saving="isSavingEdit"
                 :tone="getMessageTone(entry.message)"
-                :show-avatar="display.showAvatar"
-                :hide-avatar="display.showAvatar && entry.mergedWithPrev"
+                :show-avatar="getMessageAvatarRenderState(entry.message, entry.mergedWithPrev).showAvatar"
+                :hide-avatar="getMessageAvatarRenderState(entry.message, entry.mergedWithPrev).hideAvatar"
                 :show-header="shouldShowInlineHeader(entry)"
                 :layout="display.layout"
                 :is-self="isSelfMessage(entry.message)"
@@ -14810,7 +15018,11 @@ onBeforeUnmount(() => {
                 <span class="message-row__dot" v-for="n in 3" :key="n"></span>
               </div>
               <div class="typing-preview-content">
-                <div v-if="display.showAvatar" class="typing-preview-avatar">
+                <div
+                  v-if="getTypingPreviewAvatarRenderState(preview).showAvatar"
+                  class="typing-preview-avatar"
+                  :class="{ 'typing-preview-avatar--hidden': getTypingPreviewAvatarRenderState(preview).hideAvatar }"
+                >
                   <UserAvatarDecoration
                     :border="false"
                     :src="preview.avatar"
@@ -15396,7 +15608,7 @@ onBeforeUnmount(() => {
                 <div class="chat-input-actions__cell">
                   <n-tooltip trigger="hover">
                     <template #trigger>
-                      <n-button quaternary circle @click="doUpload">
+                      <n-button quaternary circle @click="handleToolbarUploadClick">
                         <template #icon>
                           <n-icon :component="Upload" size="18" />
                         </template>
@@ -15583,12 +15795,15 @@ onBeforeUnmount(() => {
                                     :options="botSelectOptions"
                                     :loading="botOptionsLoading || channelBotsLoading || syncingChannelBot"
                                     :disabled="syncingChannelBot || !hasBotOptions"
-                                    placeholder="选择要启用的机器人"
+                                    placeholder="选择主控 BOT（不会移除其他已绑定 BOT）"
                                     clearable
                                     @update:value="handleBotSelectionChange"
                                   />
                                   <div class="dice-settings-panel__hint" v-if="!botOptionsLoading && !hasBotOptions">
                                     暂无可用机器人，请先在后台创建令牌。
+                                  </div>
+                                  <div class="dice-settings-panel__hint" v-else>
+                                    这里只切换主控 BOT；如需绑定多个 BOT，请前往频道设置。
                                   </div>
                                 </div>
                                 <div class="dice-settings-panel__footer">
@@ -15645,12 +15860,15 @@ onBeforeUnmount(() => {
                                     :options="botSelectOptions"
                                     :loading="botOptionsLoading || channelBotsLoading || syncingChannelBot"
                                     :disabled="syncingChannelBot || !hasBotOptions"
-                                    placeholder="选择要启用的机器人"
+                                    placeholder="选择主控 BOT（不会移除其他已绑定 BOT）"
                                     clearable
                                     @update:value="handleBotSelectionChange"
                                   />
                                   <div class="dice-settings-panel__hint" v-if="!botOptionsLoading && !hasBotOptions">
                                     暂无可用机器人，请先在后台创建令牌。
+                                  </div>
+                                  <div class="dice-settings-panel__hint" v-else>
+                                    这里只切换主控 BOT；如需绑定多个 BOT，请前往频道设置。
                                   </div>
                                 </div>
                                 <div class="dice-settings-panel__footer">
@@ -15755,12 +15973,15 @@ onBeforeUnmount(() => {
                                     :options="botSelectOptions"
                                     :loading="botOptionsLoading || channelBotsLoading || syncingChannelBot"
                                     :disabled="syncingChannelBot || !hasBotOptions"
-                                    placeholder="选择要启用的机器人"
+                                    placeholder="选择主控 BOT（不会移除其他已绑定 BOT）"
                                     clearable
                                     @update:value="handleBotSelectionChange"
                                   />
                                   <div class="dice-settings-panel__hint" v-if="!botOptionsLoading && !hasBotOptions">
                                     暂无可用机器人，请先在后台创建令牌。
+                                  </div>
+                                  <div class="dice-settings-panel__hint" v-else>
+                                    这里只切换主控 BOT；如需绑定多个 BOT，请前往频道设置。
                                   </div>
                                 </div>
                                 <div class="dice-settings-panel__footer">
@@ -15817,12 +16038,15 @@ onBeforeUnmount(() => {
                                     :options="botSelectOptions"
                                     :loading="botOptionsLoading || channelBotsLoading || syncingChannelBot"
                                     :disabled="syncingChannelBot || !hasBotOptions"
-                                    placeholder="选择要启用的机器人"
+                                    placeholder="选择主控 BOT（不会移除其他已绑定 BOT）"
                                     clearable
                                     @update:value="handleBotSelectionChange"
                                   />
                                   <div class="dice-settings-panel__hint" v-if="!botOptionsLoading && !hasBotOptions">
                                     暂无可用机器人，请先在后台创建令牌。
+                                  </div>
+                                  <div class="dice-settings-panel__hint" v-else>
+                                    这里只切换主控 BOT；如需绑定多个 BOT，请前往频道设置。
                                   </div>
                                 </div>
                                 <div class="dice-settings-panel__footer">
@@ -15917,14 +16141,6 @@ onBeforeUnmount(() => {
                     @remove-image="removeInlineImage"
                   />
                 </div>
-                <input
-                  ref="inlineImageInputRef"
-                  class="hidden"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  @change="handleInlineFileChange"
-                />
               </div>
               <div
                 v-if="!isEditing && !hasMeaningfulDraft && !showMinimalStackedSideControls"
@@ -16084,14 +16300,6 @@ onBeforeUnmount(() => {
                   @upload-button-click="handleRichUploadButtonClick"
                   @remove-image="removeInlineImage"
                 />
-                <input
-                  ref="inlineImageInputRef"
-                  class="hidden"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  @change="handleInlineFileChange"
-                />
               </div>
               <div class="chat-input-actions__cell chat-input-actions__send chat-input-send-inline">
                 <template v-if="isEditing">
@@ -16122,6 +16330,14 @@ onBeforeUnmount(() => {
                 </template>
               </div>
             </div>
+            <input
+              ref="inlineImageInputRef"
+              class="hidden"
+              type="file"
+              accept="image/*"
+              multiple
+              @change="handleInlineFileChange"
+            />
         </div>
       </div>
     </div>
@@ -16130,6 +16346,13 @@ onBeforeUnmount(() => {
 
   <RightClickMenu />
   <AvatarClickMenu />
+  <MessageImageEditor
+    :show="richInlineImageEditorVisible"
+    :file="richInlineImageEditorFile"
+    @update:show="value => { if (!value) closeRichInlineImageEditor(); }"
+    @cancel="closeRichInlineImageEditor"
+    @confirm="handleRichInlineImageEditorConfirm"
+  />
   <MultiSelectFloatingBar
     @copy="handleMultiSelectCopy"
     @archive="handleMultiSelectArchive"
@@ -18023,6 +18246,10 @@ onBeforeUnmount(() => {
   height: var(--chat-avatar-size, 3rem);
   min-width: var(--chat-avatar-size, 3rem);
   overflow: visible;
+}
+
+.typing-preview-avatar--hidden {
+  visibility: hidden;
 }
 
 .message-row__handle--placeholder {

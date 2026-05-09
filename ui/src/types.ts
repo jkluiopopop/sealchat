@@ -36,6 +36,8 @@ declare module '@satorijs/protocol' {
     botCommandPrefixes?: string[];
     builtInDiceEnabled?: boolean;
     botFeatureEnabled?: boolean;
+    primaryBotId?: string;
+    eventBotIds?: string[];
     botWhisperForwardConfig?: string;
     characterApiEnabled?: boolean;
     characterApiReason?: string;
@@ -204,6 +206,7 @@ export interface ServerAudioConfig {
   storageDir?: string;
   tempDir?: string;
   maxUploadSizeMB?: number;
+  userQuotaMB?: number;
   allowedMimeTypes?: string[];
   enableTranscode?: boolean;
   defaultBitrateKbps?: number;
@@ -432,6 +435,8 @@ export interface SChannel extends Channel {
   defaultDiceExpr?: string;
   builtInDiceEnabled?: boolean;
   botFeatureEnabled?: boolean;
+  primaryBotId?: string;
+  eventBotIds?: string[];
   botWhisperForwardConfig?: string;
   characterApiEnabled?: boolean;
   characterApiReason?: string;

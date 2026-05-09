@@ -733,8 +733,8 @@ func ensureOneBotGroupChannel(botUserID, channelID string) (*model.ChannelModel,
 	if channel.IsPrivate || strings.EqualFold(strings.TrimSpace(channel.PermType), "private") {
 		return nil, oneBotNotFound("group not found")
 	}
-	selectedBotID, err := service.SelectedBotIdByChannelId(channel.ID)
-	if err != nil || selectedBotID != botUserID {
+	bound, err := service.IsBotBoundToChannel(botUserID, channel.ID)
+	if err != nil || !bound {
 		return nil, oneBotForbidden("bot not bound to group")
 	}
 	return channel, nil

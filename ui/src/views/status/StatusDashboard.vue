@@ -4,15 +4,19 @@ import dayjs from 'dayjs';
 import { useMessage } from 'naive-ui';
 import { api } from '@/stores/_config';
 import { useUserStore } from '@/stores/user';
-
-type RangeOption = '1h' | '24h' | '7d';
-
-type ChartMetricKey =
-  | 'concurrentConnections'
-  | 'onlineUsers'
-  | 'messagesPerMinute'
-  | 'attachmentCount'
-  | 'attachmentBytes';
+import StatusMetricPanel from './components/StatusMetricPanel.vue';
+import {
+  buildStatusHistoryParams,
+  createMetricHistoryStore,
+  formatStatusBytes,
+  formatStatusNumber,
+  statusFilterOptions,
+  statusMetricList,
+  toggleExpandedMetricKey,
+  type StatusFilterMode,
+  type StatusHistoryPoint,
+  type StatusHistoryQuery,
+} from './status-history';
 
 interface StatusSummary {
   timestamp: number;
@@ -41,69 +45,6 @@ interface StatusSummary {
   retentionDays: number;
 }
 
-interface StatusHistoryPoint {
-  timestamp: number;
-  concurrentConnections: number;
-  onlineUsers: number;
-  messagesPerMinute: number;
-  registeredUsers: number;
-  worldCount: number;
-  channelCount: number;
-  privateChannelCount: number;
-  messageCount: number;
-  attachmentCount: number;
-  attachmentBytes: number;
-}
-
-const user = useUserStore();
-const message = useMessage();
-
-const summary = ref<StatusSummary | null>(null);
-const historyPoints = ref<StatusHistoryPoint[]>([]);
-const loading = ref(false);
-const historyLoading = ref(false);
-const selectedRange = ref<RangeOption>('1h');
-const refreshTimer = ref<number | null>(null);
-
-const rangeOptions = [
-  { label: '近 1 小时', value: '1h' },
-  { label: '近 24 小时', value: '24h' },
-  { label: '近 7 天', value: '7d' },
-];
-
-const numberFormatter = new Intl.NumberFormat('zh-CN');
-const formatNumber = (value?: number) => numberFormatter.format(value || 0);
-const formatBytes = (value?: number) => {
-  const size = value || 0;
-  if (size <= 0) {
-    return '0 B';
-  }
-  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-  let cursor = size;
-  let unitIndex = 0;
-  while (cursor >= 1024 && unitIndex < units.length - 1) {
-    cursor /= 1024;
-    unitIndex += 1;
-  }
-  const precision = unitIndex === 0 ? 0 : cursor >= 100 ? 0 : cursor >= 10 ? 1 : 2;
-  return `${cursor.toFixed(precision)} ${units[unitIndex]}`;
-};
-
-const chartMetrics: { key: ChartMetricKey; label: string; color: string; format: (value: number) => string }[] = [
-  { key: 'concurrentConnections', label: '并发连接', color: '#2563eb', format: formatNumber },
-  { key: 'onlineUsers', label: '在线用户', color: '#059669', format: formatNumber },
-  { key: 'messagesPerMinute', label: '消息/分钟', color: '#f97316', format: formatNumber },
-  { key: 'attachmentCount', label: '附件数量', color: '#0ea5e9', format: formatNumber },
-  { key: 'attachmentBytes', label: '附件总大小', color: '#ca8a04', format: formatBytes },
-];
-
-const lastUpdatedText = computed(() => {
-  if (!summary.value?.timestamp) {
-    return '尚无数据';
-  }
-  return dayjs(summary.value.timestamp).format('YYYY-MM-DD HH:mm:ss');
-});
-
 type StatusCard = {
   label: string;
   value: string;
@@ -113,110 +54,138 @@ type StatusCard = {
   breakdowns?: { label: string; value: string }[];
 };
 
+const user = useUserStore();
+const message = useMessage();
+
+const summary = ref<StatusSummary | null>(null);
+const historyPoints = ref<StatusHistoryPoint[]>([]);
+const loading = ref(false);
+const historyLoading = ref(false);
+const refreshTimer = ref<number | null>(null);
+const historyFilterMode = ref<StatusFilterMode>('1h');
+const customRange = ref<[number, number] | null>(null);
+const expandedMetricKey = ref<string | null>(null);
+let historyRequestSeq = 0;
+
+const lastUpdatedText = computed(() => {
+  if (!summary.value?.timestamp) {
+    return '尚无数据';
+  }
+  return dayjs(summary.value.timestamp).format('YYYY-MM-DD HH:mm:ss');
+});
+
+const currentHistoryQuery = computed<StatusHistoryQuery | null>(() => {
+  if (historyFilterMode.value === 'custom') {
+    if (!customRange.value || customRange.value.length !== 2) {
+      return null;
+    }
+    const [start, end] = customRange.value;
+    if (!start || !end || start >= end) {
+      return null;
+    }
+    return {
+      mode: 'custom',
+      start,
+      end,
+    };
+  }
+
+  return { mode: historyFilterMode.value };
+});
+
+const historyStore = createMetricHistoryStore(async (query) => {
+  const resp = await api.get('api/v1/status/history', {
+    headers: { Authorization: user.token },
+    params: buildStatusHistoryParams(query),
+  });
+  const payload = resp.data as { points: StatusHistoryPoint[] };
+  return { range: query.mode, points: payload.points || [] };
+});
+
 const summaryCards = computed<StatusCard[]>(() => {
   if (!summary.value) {
     return [];
   }
   const data = summary.value;
   return [
-    { label: '并发连接', value: formatNumber(data.concurrentConnections), hint: '采样值：已鉴权 WebSocket 连接数' },
-    { label: 'WS 总连接', value: formatNumber(data.wsTotalConnections), hint: '实时值：已鉴权 + 鉴权前连接' },
-    { label: 'WS 已鉴权', value: formatNumber(data.wsAuthedConnections), hint: '实时值：已完成 IDENTIFY 的连接' },
-    { label: 'WS 鉴权前', value: formatNumber(data.wsPreAuthConnections), hint: '实时值：已升级但未 IDENTIFY 的连接' },
-    { label: 'Guest 连接', value: formatNumber(data.wsGuestConnections), hint: '实时值：空 token 访客连接数' },
-    { label: '观察者连接', value: formatNumber(data.wsObserverConnections), hint: '实时值：observer 模式连接数' },
-    { label: 'WS 鉴权用户', value: formatNumber(data.wsAuthenticatedUsers), hint: '实时值：存在鉴权连接的唯一用户数' },
-    { label: '在线用户', value: formatNumber(data.onlineUsers), hint: '120 秒内仍活跃的用户' },
-    { label: '消息 / 分钟', value: formatNumber(data.messagesPerMinute), hint: '最近一分钟的消息吞吐' },
-    { label: '注册用户', value: formatNumber(data.registeredUsers), hint: '未被禁用的账户数量' },
-    { label: '世界总数', value: formatNumber(data.worldCount), hint: '状态正常的世界' },
-    { label: '公共频道', value: formatNumber(data.channelCount), hint: '状态正常的公共频道' },
-    { label: '私聊频道', value: formatNumber(data.privateChannelCount), hint: '状态正常的私聊频道' },
+    { label: '并发连接', value: formatStatusNumber(data.concurrentConnections), hint: '采样值：已鉴权 WebSocket 连接数' },
+    { label: 'WS 总连接', value: formatStatusNumber(data.wsTotalConnections), hint: '实时值：已鉴权 + 鉴权前连接' },
+    { label: 'WS 已鉴权', value: formatStatusNumber(data.wsAuthedConnections), hint: '实时值：已完成 IDENTIFY 的连接' },
+    { label: 'WS 鉴权前', value: formatStatusNumber(data.wsPreAuthConnections), hint: '实时值：已升级但未 IDENTIFY 的连接' },
+    { label: 'Guest 连接', value: formatStatusNumber(data.wsGuestConnections), hint: '实时值：空 token 访客连接数' },
+    { label: '观察者连接', value: formatStatusNumber(data.wsObserverConnections), hint: '实时值：observer 模式连接数' },
+    { label: 'WS 鉴权用户', value: formatStatusNumber(data.wsAuthenticatedUsers), hint: '实时值：存在鉴权连接的唯一用户数' },
+    { label: '在线用户', value: formatStatusNumber(data.onlineUsers), hint: '120 秒内仍活跃的用户' },
+    { label: '消息 / 分钟', value: formatStatusNumber(data.messagesPerMinute), hint: '最近一分钟的消息吞吐' },
+    { label: '注册用户', value: formatStatusNumber(data.registeredUsers), hint: '未被禁用的账户数量' },
+    { label: '世界总数', value: formatStatusNumber(data.worldCount), hint: '状态正常的世界' },
+    { label: '公共频道', value: formatStatusNumber(data.channelCount), hint: '状态正常的公共频道' },
+    { label: '私聊频道', value: formatStatusNumber(data.privateChannelCount), hint: '状态正常的私聊频道' },
     {
       label: '消息总数',
-      value: formatNumber(data.messageCount),
+      value: formatStatusNumber(data.messageCount),
       hint: '未被删除的历史消息',
       variant: 'metric',
       breakdowns: [
-        { label: '内', value: formatNumber(data.messageCountIc) },
-        { label: '外', value: formatNumber(data.messageCountOoc) },
+        { label: '内', value: formatStatusNumber(data.messageCountIc) },
+        { label: '外', value: formatStatusNumber(data.messageCountOoc) },
       ],
     },
     {
       label: '消息总字数',
-      value: formatNumber(data.messageCharCount),
+      value: formatStatusNumber(data.messageCharCount),
       hint: '未被删除历史消息的字符总数',
       variant: 'metric',
       compactValue: true,
       breakdowns: [
-        { label: '内', value: formatNumber(data.messageCharCountIc) },
-        { label: '外', value: formatNumber(data.messageCharCountOoc) },
+        { label: '内', value: formatStatusNumber(data.messageCharCountIc) },
+        { label: '外', value: formatStatusNumber(data.messageCharCountOoc) },
       ],
     },
-    { label: '附件数量', value: formatNumber(data.attachmentCount), hint: '附件目录内文件数量' },
-    { label: '附件总大小', value: formatBytes(data.attachmentBytes), hint: '附件目录占用空间' },
+    { label: '附件数量', value: formatStatusNumber(data.attachmentCount), hint: '附件目录内文件数量' },
+    { label: '附件总大小', value: formatStatusBytes(data.attachmentBytes), hint: '附件目录占用空间' },
   ];
 });
 
-const chartWidth = 680;
-const chartHeight = 240;
+const metricPanels = computed(() => statusMetricList.map((metric) => ({
+  metric,
+  points: historyPoints.value,
+  loading: historyLoading.value,
+})));
 
-const chartSeries = computed(() => {
-  const points = historyPoints.value;
-  const count = points.length;
-  const width = chartWidth;
-  const height = chartHeight;
-  return chartMetrics.map((metric) => {
-    let maxValue = 0;
-    points.forEach((point) => {
-      maxValue = Math.max(maxValue, point[metric.key] || 0);
-    });
-    if (maxValue <= 0) {
-      maxValue = 1;
-    }
-    const coords = points.map((point, index) => {
-      const value = point[metric.key] || 0;
-      const x = count <= 1 ? width : (index / (count - 1)) * width;
-      const normalized = Math.min(value / maxValue, 1);
-      const y = height - normalized * height;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    });
-    const ticks = [
-      { value: maxValue, label: metric.format(maxValue) },
-      { value: maxValue / 2, label: metric.format(Math.round(maxValue / 2)) },
-      { value: 0, label: metric.format(0) },
-    ];
-    return {
-      ...metric,
-      path: coords.join(' '),
-      ticks,
-      maxValue,
-    };
-  });
-});
-
-const chartTicksX = computed(() => {
-  const points = historyPoints.value;
-  if (!points.length) {
-    return [];
+const expandedPanel = computed(() => {
+  if (!expandedMetricKey.value) {
+    return null;
   }
-  if (points.length === 1) {
-    return [{ x: 0, label: dayjs(points[0].timestamp).format('HH:mm') }];
+  return metricPanels.value.find((panel) => panel.metric.key === expandedMetricKey.value) || null;
+});
+
+const customRangeText = computed(() => {
+  if (!customRange.value?.length) {
+    return '未设置';
   }
-  const indexes = [0, Math.floor((points.length - 1) / 2), points.length - 1];
-  const unique = Array.from(new Set(indexes));
-  return unique.map((idx) => {
-    const x = (idx / (points.length - 1)) * chartWidth;
-    return { x, label: dayjs(points[idx].timestamp).format('HH:mm') };
-  });
+  return `${dayjs(customRange.value[0]).format('YYYY-MM-DD HH:mm')} ~ ${dayjs(customRange.value[1]).format('YYYY-MM-DD HH:mm')}`;
 });
 
-const historyTableData = computed(() => {
-  const list = historyPoints.value.slice(-10);
-  return list.reverse();
-});
+const expandedOverlayPanelStyle = {
+  position: 'fixed',
+  inset: '0',
+  width: '100vw',
+  maxWidth: '100vw',
+  height: '100vh',
+  minHeight: '100vh',
+};
 
-const isHistoryEmpty = computed(() => historyPoints.value.length === 0);
+const expandedOverlayStyle = {
+  position: 'fixed',
+  inset: '0',
+  zIndex: '5000',
+  display: 'flex',
+  alignItems: 'stretch',
+  justifyContent: 'stretch',
+  padding: '0',
+  overflowY: 'auto',
+};
 
 const fetchSummary = async () => {
   loading.value = true;
@@ -233,40 +202,80 @@ const fetchSummary = async () => {
   }
 };
 
-const fetchHistory = async () => {
+const loadHistory = async (forceRefresh = false) => {
+  const query = currentHistoryQuery.value;
+  if (!query) {
+    historyPoints.value = [];
+    return;
+  }
+  const requestId = ++historyRequestSeq;
   historyLoading.value = true;
   try {
-    const resp = await api.get('api/v1/status/history', {
-      headers: { Authorization: user.token },
-      params: { range: selectedRange.value },
-    });
-    const payload = resp.data as { points: StatusHistoryPoint[] };
+    if (forceRefresh) {
+      historyStore.clearQuery(query);
+    }
+    const payload = await historyStore.getQueryData(query);
+    if (requestId !== historyRequestSeq) {
+      return;
+    }
     historyPoints.value = payload.points || [];
   } catch (err) {
-    console.error(err);
-    message.error('获取历史数据失败');
+    if (requestId === historyRequestSeq) {
+      console.error(err);
+      message.error('获取历史数据失败');
+    }
   } finally {
-    historyLoading.value = false;
+    if (requestId === historyRequestSeq) {
+      historyLoading.value = false;
+    }
   }
 };
 
 const refreshAll = async () => {
-  await Promise.all([fetchSummary(), fetchHistory()]);
+  historyStore.clearAll();
+  await Promise.allSettled([fetchSummary(), loadHistory(true)]);
 };
 
-watch(selectedRange, () => {
-  fetchHistory();
+const closeExpandedPanel = () => {
+  expandedMetricKey.value = null;
+};
+
+const handleExpandedPanelKeydown = (event: KeyboardEvent) => {
+  if (event.key === 'Escape' && expandedMetricKey.value) {
+    closeExpandedPanel();
+  }
+};
+
+watch(expandedMetricKey, (value) => {
+  document.body.classList.toggle('status-history-overlay-open', Boolean(value));
 });
 
 onMounted(() => {
-  refreshAll();
+  void refreshAll();
   refreshTimer.value = window.setInterval(fetchSummary, 60_000);
+  window.addEventListener('keydown', handleExpandedPanelKeydown);
 });
+
+watch(currentHistoryQuery, (query, prevQuery) => {
+  if (!query) {
+    historyPoints.value = [];
+    historyLoading.value = false;
+    return;
+  }
+  const prevKey = prevQuery ? JSON.stringify(prevQuery) : '';
+  const nextKey = JSON.stringify(query);
+  if (prevKey === nextKey) {
+    return;
+  }
+  void loadHistory();
+}, { deep: true });
 
 onBeforeUnmount(() => {
   if (refreshTimer.value) {
     window.clearInterval(refreshTimer.value);
   }
+  document.body.classList.remove('status-history-overlay-open');
+  window.removeEventListener('keydown', handleExpandedPanelKeydown);
 });
 </script>
 
@@ -277,8 +286,7 @@ onBeforeUnmount(() => {
         最近刷新：{{ lastUpdatedText }}
       </template>
       <template #extra>
-        <n-space>
-          <n-select v-model:value="selectedRange" size="small" :options="rangeOptions" />
+        <n-space align="center">
           <n-button size="small" :loading="loading || historyLoading" @click="refreshAll">刷新</n-button>
         </n-space>
       </template>
@@ -328,64 +336,69 @@ onBeforeUnmount(() => {
       <div v-if="!summaryCards.length" class="status-empty" role="status">暂无数据，正在等待第一次采样 ...</div>
     </n-spin>
 
-    <n-card class="status-chart-card" title="实时曲线" size="small">
-      <n-spin :show="historyLoading">
-        <div v-if="!isHistoryEmpty" class="chart-wrapper">
-          <div v-for="series in chartSeries" :key="series.key" class="chart-wrapper__series">
-            <div class="chart-series-header">
-              <span class="chart-series-dot" :style="{ backgroundColor: series.color }"></span>
-              <span class="chart-series-title">{{ series.label }}</span>
-            </div>
-            <svg :width="chartWidth" :height="chartHeight" role="img">
-              <g class="chart-grid">
-                <line v-for="tick in series.ticks" :key="`${series.key}-grid-${tick.label}`" x1="0"
-                  :y1="chartHeight - (tick.value / series.maxValue) * chartHeight" :x2="chartWidth"
-                  :y2="chartHeight - (tick.value / series.maxValue) * chartHeight" />
-              </g>
-              <g class="chart-polylines">
-                <polyline :points="series.path" :stroke="series.color" />
-              </g>
-              <g class="chart-y-ticks">
-                <text v-for="tick in series.ticks" :key="`${series.key}-tick-${tick.label}`" x="0"
-                  :y="chartHeight - (tick.value / series.maxValue) * chartHeight - 4">
-                  {{ tick.label }}
-                </text>
-              </g>
-              <g class="chart-x-ticks">
-                <text v-for="tick in chartTicksX" :key="`${series.key}-time-${tick.label}`" :x="tick.x" :y="chartHeight + 20">
-                  {{ tick.label }}
-                </text>
-              </g>
-            </svg>
+    <section class="status-history-section">
+      <div class="status-history-section__header">
+        <div class="status-history-section__copy">
+          <h2>历史指标曲线</h2>
+          <p>点击标题右侧的 + 可放大查看。</p>
+          <p v-if="historyFilterMode === 'custom'" class="status-history-section__custom-label">当前自定义区间：{{ customRangeText }}</p>
+        </div>
+        <div class="status-history-section__controls">
+          <n-select
+            v-model:value="historyFilterMode"
+            size="small"
+            :options="statusFilterOptions"
+            class="status-history-section__select"
+          />
+          <n-date-picker
+            v-if="historyFilterMode === 'custom'"
+            v-model:value="customRange"
+            type="datetimerange"
+            clearable
+            size="small"
+            class="status-history-section__picker"
+          />
+        </div>
+      </div>
+
+      <transition-group name="status-history" tag="div" class="status-history-section__grid">
+        <div
+          v-for="panel in metricPanels"
+          :key="panel.metric.key"
+          class="status-history-card-item"
+        >
+          <StatusMetricPanel
+            :metric="panel.metric"
+            :points="panel.points"
+            :loading="panel.loading"
+            @toggle-expand="expandedMetricKey = toggleExpandedMetricKey(expandedMetricKey, panel.metric.key)"
+          />
+        </div>
+      </transition-group>
+    </section>
+
+    <teleport to="body">
+      <transition name="status-overlay">
+        <div
+          v-if="expandedPanel"
+          class="status-history-overlay"
+          :style="expandedOverlayStyle"
+          @click.self="closeExpandedPanel"
+        >
+          <div class="status-history-overlay__panel" :style="expandedOverlayPanelStyle">
+            <StatusMetricPanel
+              :key="`${expandedPanel.metric.key}-overlay`"
+              :metric="expandedPanel.metric"
+              :points="expandedPanel.points"
+              :loading="expandedPanel.loading"
+              :expanded="true"
+              :overlay="true"
+              @toggle-expand="closeExpandedPanel"
+            />
           </div>
         </div>
-        <div v-else class="status-empty" role="status">暂无历史数据</div>
-      </n-spin>
-    </n-card>
-
-    <n-card class="status-history-card" title="历史记录" size="small">
-      <n-spin :show="historyLoading">
-        <n-table size="small" v-if="historyTableData.length">
-          <thead>
-            <tr>
-              <th>采样时间</th>
-              <th>并发连接</th>
-              <th>在线用户</th>
-              <th>消息 / 分钟</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in historyTableData" :key="item.timestamp">
-              <td>{{ dayjs(item.timestamp).format('MM-DD HH:mm') }}</td>
-              <td>{{ formatNumber(item.concurrentConnections) }}</td>
-              <td>{{ formatNumber(item.onlineUsers) }}</td>
-              <td>{{ formatNumber(item.messagesPerMinute) }}</td>
-            </tr>
-          </tbody>
-        </n-table>
-        <div v-else class="status-empty" role="status">暂无历史数据</div>
-      </n-spin>
-    </n-card>
+      </transition>
+    </teleport>
   </div>
 </template>
 
@@ -403,6 +416,11 @@ onBeforeUnmount(() => {
   height: 100vh;
   box-sizing: border-box;
   overflow-y: auto;
+}
+
+.status-page__hint {
+  color: var(--sc-text-secondary);
+  font-size: 0.8rem;
 }
 
 .status-card {
@@ -522,64 +540,102 @@ onBeforeUnmount(() => {
   color: color-mix(in srgb, var(--sc-text-primary) 84%, var(--sc-text-secondary) 16%);
 }
 
-.status-chart-card {
-  border-radius: 1rem;
-  border: 1px solid var(--sc-border-mute);
-  background: var(--sc-bg-elevated);
+.status-history-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
 }
 
-.chart-wrapper {
-  overflow-x: auto;
-  padding: 0.5rem 0.25rem 0.25rem 0;
+.status-history-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
-.chart-wrapper__series {
-  margin-bottom: 1.5rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--sc-border-mute);
+.status-history-section__copy {
+  min-width: 0;
 }
 
-.chart-wrapper__series:last-child {
-  border-bottom: none;
-  margin-bottom: 0;
-  padding-bottom: 0;
+.status-history-section__header h2 {
+  margin: 0;
+  font-size: 1.02rem;
 }
 
-.chart-series-header {
+.status-history-section__header p {
+  margin: 0.2rem 0 0;
+  color: var(--sc-text-secondary);
+  font-size: 0.82rem;
+}
+
+.status-history-section__custom-label {
+  font-variant-numeric: tabular-nums;
+}
+
+.status-history-section__controls {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  margin-bottom: 0.35rem;
-  font-weight: 600;
-  color: var(--sc-text-primary);
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
-.chart-series-dot {
-  width: 0.65rem;
-  height: 0.65rem;
-  border-radius: 999px;
-  display: inline-block;
+.status-history-section__select {
+  width: 132px;
 }
 
-svg {
-  width: 100%;
+.status-history-section__picker {
+  width: 360px;
   max-width: 100%;
 }
 
-.chart-grid line {
-  stroke: color-mix(in srgb, var(--sc-border-mute) 65%, transparent);
-  stroke-dasharray: 4 6;
+.status-history-section__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+  width: 100%;
 }
 
-.chart-polylines polyline {
-  fill: none;
-  stroke-width: 2;
+.status-history-card-item {
+  min-width: 0;
 }
 
-.chart-y-ticks text,
-.chart-x-ticks text {
-  font-size: 0.75rem;
-  fill: var(--sc-text-secondary);
+.status-history-move,
+.status-history-enter-active,
+.status-history-leave-active {
+  transition:
+    transform 0.38s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.28s ease;
+}
+
+.status-history-enter-from,
+.status-history-leave-to {
+  opacity: 0;
+}
+
+.status-overlay-enter-active,
+.status-overlay-leave-active {
+  transition:
+    opacity 0.24s ease,
+    transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.status-overlay-enter-from,
+.status-overlay-leave-to {
+  opacity: 0;
+}
+
+.status-overlay-enter-active .status-history-overlay__panel,
+.status-overlay-leave-active .status-history-overlay__panel {
+  transition:
+    transform 0.34s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.24s ease;
+}
+
+.status-overlay-enter-from .status-history-overlay__panel,
+.status-overlay-leave-to .status-history-overlay__panel {
+  opacity: 0;
+  transform: translateY(18px) scale(0.972);
 }
 
 .status-empty {
@@ -588,26 +644,27 @@ svg {
   color: var(--sc-text-secondary);
 }
 
-.status-history-card {
-  border-radius: 1rem;
-  border: 1px solid var(--sc-border-mute);
-  background: var(--sc-bg-elevated);
+.status-history-overlay {
+  background: color-mix(in srgb, var(--sc-bg-surface) 52%, rgba(2, 6, 23, 0.78));
+  backdrop-filter: blur(10px);
 }
 
-.status-history-card table {
-  width: 100%;
-  border-collapse: collapse;
+.status-history-overlay__panel {
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  min-width: 0;
+  min-height: 100vh;
 }
 
-.status-history-card th,
-.status-history-card td {
-  padding: 0.35rem 0.5rem;
-  text-align: left;
-  border-bottom: 1px solid var(--sc-border-mute);
+:global(body.status-history-overlay-open) {
+  overflow: hidden;
 }
 
-.status-history-card thead {
-  background-color: color-mix(in srgb, var(--sc-bg-elevated) 75%, var(--sc-border-mute) 25%);
+@media (max-width: 1320px) {
+  .status-history-section__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
@@ -622,6 +679,24 @@ svg {
 
   .status-card__mini-stats {
     justify-content: flex-start;
+  }
+
+  .status-history-section__header {
+    flex-direction: column;
+  }
+
+  .status-history-section__controls {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .status-history-section__select,
+  .status-history-section__picker {
+    width: 100%;
+  }
+
+  .status-history-section__grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

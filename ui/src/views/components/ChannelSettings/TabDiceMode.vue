@@ -4,6 +4,7 @@ import { useMessage } from 'naive-ui';
 import type { SChannel, UserInfo, UserRoleModel } from '@/types';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
+import { useCharacterCardStore } from '@/stores/characterCard';
 
 const props = defineProps({
   channel: {
@@ -17,6 +18,7 @@ const emit = defineEmits<{
 
 const chat = useChatStore();
 const userStore = useUserStore();
+const characterCardStore = useCharacterCardStore();
 const message = useMessage();
 
 const diceModeOptions = [
@@ -25,7 +27,9 @@ const diceModeOptions = [
 ];
 
 const currentMode = ref<'builtin' | 'bot'>('builtin');
-const currentBotId = ref('');
+const currentBotIds = ref<string[]>([]);
+const currentPrimaryBotId = ref('');
+const currentEventBotIds = ref<string[]>([]);
 const worldMode = ref<'builtin' | 'bot'>('builtin');
 const worldBotId = ref('');
 
@@ -55,6 +59,14 @@ const botSelectOptions = computed(() => botList.value.map((item) => ({
   label: item.nick || item.username || 'Bot',
   value: item.id,
 })));
+const primaryBotSelectOptions = computed(() => {
+  const selected = new Set(currentBotIds.value);
+  return botSelectOptions.value.filter((item) => selected.has(String(item.value || '')));
+});
+const eventBotSelectOptions = computed(() => {
+  const selected = new Set(currentBotIds.value);
+  return botSelectOptions.value.filter((item) => selected.has(String(item.value || '')));
+});
 
 const hasBotOptions = computed(() => botList.value.length > 0);
 
@@ -103,15 +115,34 @@ const loadBotOptions = async (force = false) => {
 
 const refreshChannelBotSelection = async () => {
   if (!channelId.value || !botRoleId.value) {
-    currentBotId.value = '';
+    currentBotIds.value = [];
+    currentPrimaryBotId.value = '';
+    currentEventBotIds.value = [];
     return;
   }
   channelBotsLoading.value = true;
   try {
     const resp = await chat.channelMemberListAll(channelId.value, 200);
     const items = resp?.data?.items || [];
-    const current = items.find((item: UserRoleModel) => item.roleId === botRoleId.value && item.user?.id);
-    currentBotId.value = current?.user?.id || '';
+    const existingIds = items
+      .filter((item: UserRoleModel) => item.roleId === botRoleId.value && item.user?.id)
+      .map((item: UserRoleModel) => item.user?.id || '')
+      .filter(Boolean);
+    currentBotIds.value = Array.from(new Set(existingIds));
+    const primary = String(props.channel?.primaryBotId || '').trim();
+    currentPrimaryBotId.value = primary && currentBotIds.value.includes(primary)
+      ? primary
+      : (currentBotIds.value[0] || '');
+    const configuredEventBotIds = Array.isArray(props.channel?.eventBotIds)
+      ? Array.from(new Set((props.channel?.eventBotIds || []).map((id) => String(id || '').trim()).filter((id) => currentBotIds.value.includes(id))))
+      : [];
+    const nextEventBotIds = configuredEventBotIds.length > 0
+      ? configuredEventBotIds
+      : currentBotIds.value.slice();
+    if (currentPrimaryBotId.value && !nextEventBotIds.includes(currentPrimaryBotId.value)) {
+      nextEventBotIds.push(currentPrimaryBotId.value);
+    }
+    currentEventBotIds.value = Array.from(new Set(nextEventBotIds.filter((id) => currentBotIds.value.includes(id))));
   } catch (error: any) {
     message.error(error?.response?.data?.error || '加载频道机器人失败');
   } finally {
@@ -119,7 +150,7 @@ const refreshChannelBotSelection = async () => {
   }
 };
 
-const syncChannelBotSelection = async (nextBotId: string) => {
+const syncChannelBotBindings = async (nextBotIds: string[]) => {
   if (!channelId.value || !botRoleId.value) {
     return;
   }
@@ -129,14 +160,20 @@ const syncChannelBotSelection = async (nextBotId: string) => {
     .filter((item: UserRoleModel) => item.roleId === botRoleId.value && item.user?.id)
     .map((item: UserRoleModel) => item.user?.id || '')
     .filter(Boolean);
-  if (nextBotId && !existingIds.includes(nextBotId)) {
-    await chat.userRoleLink(botRoleId.value, [nextBotId]);
+  const normalizedNext = Array.from(new Set(nextBotIds.map((id) => String(id || '').trim()).filter(Boolean)));
+  const toAdd = normalizedNext.filter((id) => !existingIds.includes(id));
+  if (toAdd.length) {
+    await chat.userRoleLink(botRoleId.value, toAdd);
   }
-  const toRemove = nextBotId ? existingIds.filter(id => id !== nextBotId) : existingIds;
+  const toRemove = existingIds.filter((id) => !normalizedNext.includes(id));
   if (toRemove.length) {
     await chat.userRoleUnlink(botRoleId.value, toRemove);
   }
-  currentBotId.value = nextBotId;
+  currentBotIds.value = normalizedNext;
+  currentEventBotIds.value = currentEventBotIds.value.filter((id) => normalizedNext.includes(id));
+  if (currentPrimaryBotId.value && !normalizedNext.includes(currentPrimaryBotId.value)) {
+    currentPrimaryBotId.value = normalizedNext[0] || '';
+  }
 };
 
 const loadChannelPermission = async () => {
@@ -176,8 +213,8 @@ const saveChannelMode = async () => {
     return;
   }
   if (currentMode.value === 'bot') {
-    if (!currentBotId.value) {
-      message.error('请选择当前频道要使用的 BOT');
+    if (currentBotIds.value.length === 0) {
+      message.error('请至少绑定一个 BOT');
       return;
     }
     if (!hasBotOptions.value) {
@@ -188,17 +225,39 @@ const saveChannelMode = async () => {
   channelSaving.value = true;
   try {
     if (currentMode.value === 'bot') {
-      await syncChannelBotSelection(currentBotId.value);
+      const primary = currentPrimaryBotId.value && currentBotIds.value.includes(currentPrimaryBotId.value)
+        ? currentPrimaryBotId.value
+        : currentBotIds.value[0];
+      const eventBotIds = Array.from(new Set(
+        (currentEventBotIds.value.length > 0 ? currentEventBotIds.value : currentBotIds.value)
+          .map((id) => String(id || '').trim())
+          .filter((id) => currentBotIds.value.includes(id)),
+      ));
+      if (primary && !eventBotIds.includes(primary)) {
+        eventBotIds.push(primary);
+      }
+      await syncChannelBotBindings(currentBotIds.value);
       await chat.updateChannelFeatures(channelId.value, {
         botFeatureEnabled: true,
         builtInDiceEnabled: false,
+        primaryBotId: primary,
+        eventBotIds,
       });
+      if (chat.curChannel?.id === channelId.value && primary) {
+        void characterCardStore.revalidateCharacterApi(channelId.value);
+      }
+      currentPrimaryBotId.value = primary;
+      currentEventBotIds.value = eventBotIds;
     } else {
-      await syncChannelBotSelection('');
+      await syncChannelBotBindings([]);
       await chat.updateChannelFeatures(channelId.value, {
         botFeatureEnabled: false,
         builtInDiceEnabled: true,
+        primaryBotId: '',
+        eventBotIds: [],
       });
+      currentPrimaryBotId.value = '';
+      currentEventBotIds.value = [];
     }
     message.success('频道默认掷骰方式已更新');
     emit('update');
@@ -237,11 +296,13 @@ const handleBotListUpdated = async () => {
 };
 
 watch(
-  () => [props.channel?.id, props.channel?.builtInDiceEnabled, props.channel?.botFeatureEnabled] as const,
+  () => [props.channel?.id, props.channel?.builtInDiceEnabled, props.channel?.botFeatureEnabled, props.channel?.primaryBotId, props.channel?.eventBotIds] as const,
   async ([id]) => {
     if (!id) {
       canManageChannel.value = false;
-      currentBotId.value = '';
+      currentBotIds.value = [];
+      currentPrimaryBotId.value = '';
+      currentEventBotIds.value = [];
       return;
     }
     resetCurrentModeFromChannel();
@@ -301,15 +362,38 @@ onUnmounted(() => {
           </n-radio-group>
           <n-select
             v-if="currentMode === 'bot'"
-            v-model:value="currentBotId"
+            v-model:value="currentBotIds"
             :options="botSelectOptions"
             :loading="botOptionsLoading || channelBotsLoading"
             :disabled="channelSectionDisabled || channelSaving || !hasBotOptions"
-            placeholder="选择当前频道要使用的 BOT"
+            placeholder="选择要绑定到当前频道的 BOT"
             clearable
+            multiple
+          />
+          <n-select
+            v-if="currentMode === 'bot' && currentBotIds.length > 0"
+            v-model:value="currentPrimaryBotId"
+            :options="primaryBotSelectOptions"
+            :loading="botOptionsLoading || channelBotsLoading"
+            :disabled="channelSectionDisabled || channelSaving"
+            placeholder="选择主控 BOT"
+            clearable
+          />
+          <n-select
+            v-if="currentMode === 'bot' && currentBotIds.length > 0"
+            v-model:value="currentEventBotIds"
+            :options="eventBotSelectOptions"
+            :loading="botOptionsLoading || channelBotsLoading"
+            :disabled="channelSectionDisabled || channelSaving"
+            placeholder="选择接收频道事件的 BOT"
+            clearable
+            multiple
           />
           <div v-if="currentMode === 'bot' && !botOptionsLoading && !hasBotOptions" class="tab-dice-mode__hint">
             暂无可用机器人令牌，请先在后台创建。
+          </div>
+          <div v-if="currentMode === 'bot' && currentBotIds.length > 0" class="tab-dice-mode__hint">
+            已绑定 BOT 决定 group 权限；事件接收 BOT 决定哪些 BOT 收到频道事件；主控 BOT 负责命令执行与角色卡能力。
           </div>
           <div v-if="isPrivateChannel" class="tab-dice-mode__hint">
             私聊频道不支持在这里修改默认掷骰处理方式。

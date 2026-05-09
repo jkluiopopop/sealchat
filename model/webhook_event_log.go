@@ -65,3 +65,11 @@ func WebhookEventLogAppendForMessage(channelID, eventType, messageID string) err
 	}
 	return WebhookEventLogAppend(channelID, eventType, messageID, integrationID, source, externalID, "")
 }
+
+func WebhookEventLogCleanupBefore(cutoff time.Time) (int64, error) {
+	if cutoff.IsZero() {
+		return 0, nil
+	}
+	tx := db.Where("created_at < ?", cutoff).Delete(&WebhookEventLogModel{})
+	return tx.RowsAffected, tx.Error
+}

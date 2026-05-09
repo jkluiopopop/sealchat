@@ -4,6 +4,13 @@ import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack, sanitizeFontFamily
 import type { FontSourceType } from '@/services/font/types'
 import { restoreCachedFontById } from '@/services/font/fontLoader'
 import {
+  normalizeAvatarVisibilityScope,
+  normalizeMessageVisibilityScope,
+  type AvatarVisibilityScope,
+  type MessageVisibilityScope,
+} from './displayAvatarVisibility'
+import { normalizeCharacterCardBadgeSettingsExpanded } from './displayCharacterCardSettings'
+import {
   migrateLegacyThemeSelection,
   resolveCustomThemeEnabledUpdate,
   resolveEffectiveThemeSelection,
@@ -14,6 +21,7 @@ import type {
   PlatformTheme,
   ThemeSelectionMode,
 } from '@/services/theme/themeTypes'
+import { MESSAGE_SOUND_MODE_VALUES, type MessageSoundMode } from '@/utils/messageSoundMode'
 import { DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION } from '@/utils/worldKeywordTooltipInteraction'
 
 export type DisplayLayout = 'bubble' | 'compact'
@@ -53,6 +61,7 @@ export interface DisplaySettings {
   sidebarWidth: number         // 左侧频道栏宽度 (px)
   channelNameWrapEnabled: boolean // 侧栏频道名自动换行
   showAvatar: boolean
+  avatarVisibilityScope: AvatarVisibilityScope
   preferStaticAvatarDecoration: boolean
   avatarSize: number            // 头像大小 (px)
   avatarBorderRadius: number    // 头像圆角 (0-50, 50为圆形)
@@ -109,10 +118,13 @@ export interface DisplaySettings {
   disableContextMenu: boolean
   quickGalleryLinkedEmojiSendDirectly: boolean
   quickGalleryPageSize: number
+  messageSoundMode: MessageSoundMode
   // 输入区域自定义高度
   inputAreaHeight: number  // 0 means auto
   // 人物卡
+  characterCardBadgeSettingsExpanded: boolean
   characterCardBadgeEnabled: boolean
+  characterCardBadgeVisibilityScope: MessageVisibilityScope
   characterCardBadgeAutoContrastEnabled: boolean
   characterCardAutoSyncBotNickname: boolean
   characterCardBadgeTemplateByWorld: Record<string, string>
@@ -223,6 +235,12 @@ const QUICK_INPUT_TRIGGER_DEFAULT = '/'
 const coerceQuickInputTrigger = (value?: string): string => {
   if (typeof value === 'string' && value.length === 1) return value
   return QUICK_INPUT_TRIGGER_DEFAULT
+}
+const coerceMessageSoundMode = (value: unknown): MessageSoundMode => {
+  if (typeof value === 'string' && (MESSAGE_SOUND_MODE_VALUES as readonly string[]).includes(value)) {
+    return value as MessageSoundMode
+  }
+  return 'away'
 }
 const TIMESTAMP_FORMAT_VALUES: TimestampFormat[] = ['relative', 'time', 'datetime', 'datetimeSeconds']
 const TIMESTAMP_FORMAT_DEFAULT: TimestampFormat = 'datetimeSeconds'
@@ -415,6 +433,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   channelNameWrapEnabled: false,
   showAvatar: true,
+  avatarVisibilityScope: 'all',
   preferStaticAvatarDecoration: false,
   avatarSize: AVATAR_SIZE_DEFAULT,
   avatarBorderRadius: AVATAR_BORDER_RADIUS_DEFAULT,
@@ -468,8 +487,11 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   disableContextMenu: true,  // 默认禁用浏览器右键菜单
   quickGalleryLinkedEmojiSendDirectly: false,
   quickGalleryPageSize: QUICK_GALLERY_PAGE_SIZE_DEFAULT,
+  messageSoundMode: 'away',
   inputAreaHeight: INPUT_AREA_HEIGHT_DEFAULT,
+  characterCardBadgeSettingsExpanded: true,
   characterCardBadgeEnabled: true,
+  characterCardBadgeVisibilityScope: 'ic',
   characterCardBadgeAutoContrastEnabled: true,
   characterCardAutoSyncBotNickname: true,
   characterCardBadgeTemplateByWorld: {},
@@ -631,6 +653,7 @@ const loadSettings = (): DisplaySettings => {
       ),
       channelNameWrapEnabled: coerceBoolean((parsed as any)?.channelNameWrapEnabled ?? false),
       showAvatar: coerceBoolean(parsed.showAvatar),
+      avatarVisibilityScope: normalizeAvatarVisibilityScope((parsed as any)?.avatarVisibilityScope),
       preferStaticAvatarDecoration: coerceBoolean((parsed as any)?.preferStaticAvatarDecoration ?? false),
       avatarSize: coerceNumberInRange(
         (parsed as any)?.avatarSize,
@@ -746,8 +769,13 @@ const loadSettings = (): DisplaySettings => {
       disableContextMenu: coerceBoolean((parsed as any)?.disableContextMenu ?? true),
       quickGalleryLinkedEmojiSendDirectly: coerceBoolean((parsed as any)?.quickGalleryLinkedEmojiSendDirectly ?? false),
       quickGalleryPageSize: normalizeQuickGalleryPageSize((parsed as any)?.quickGalleryPageSize),
+      messageSoundMode: coerceMessageSoundMode((parsed as any)?.messageSoundMode),
       inputAreaHeight: normalizeInputAreaHeight((parsed as any)?.inputAreaHeight),
+      characterCardBadgeSettingsExpanded: normalizeCharacterCardBadgeSettingsExpanded(
+        (parsed as any)?.characterCardBadgeSettingsExpanded,
+      ),
       characterCardBadgeEnabled: coerceBoolean((parsed as any)?.characterCardBadgeEnabled ?? true),
+      characterCardBadgeVisibilityScope: normalizeMessageVisibilityScope((parsed as any)?.characterCardBadgeVisibilityScope),
       characterCardBadgeAutoContrastEnabled: coerceBoolean((parsed as any)?.characterCardBadgeAutoContrastEnabled ?? true),
       characterCardAutoSyncBotNickname: coerceBoolean((parsed as any)?.characterCardAutoSyncBotNickname ?? true),
       characterCardBadgeTemplateByWorld: isPlainObject((parsed as any)?.characterCardBadgeTemplateByWorld)
@@ -778,6 +806,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'showAvatar')
       ? coerceBoolean(patch.showAvatar)
       : base.showAvatar,
+  avatarVisibilityScope:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'avatarVisibilityScope')
+      ? normalizeAvatarVisibilityScope((patch as any).avatarVisibilityScope)
+      : base.avatarVisibilityScope,
   preferStaticAvatarDecoration:
     patch && Object.prototype.hasOwnProperty.call(patch, 'preferStaticAvatarDecoration')
       ? coerceBoolean((patch as any).preferStaticAvatarDecoration)
@@ -1022,14 +1054,26 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'quickGalleryPageSize')
       ? normalizeQuickGalleryPageSize((patch as any).quickGalleryPageSize)
       : base.quickGalleryPageSize,
+  messageSoundMode:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'messageSoundMode')
+      ? coerceMessageSoundMode((patch as any).messageSoundMode)
+      : base.messageSoundMode,
   inputAreaHeight:
     patch && Object.prototype.hasOwnProperty.call(patch, 'inputAreaHeight')
       ? normalizeInputAreaHeight((patch as any).inputAreaHeight)
       : base.inputAreaHeight,
+  characterCardBadgeSettingsExpanded:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeSettingsExpanded')
+      ? normalizeCharacterCardBadgeSettingsExpanded((patch as any).characterCardBadgeSettingsExpanded)
+      : base.characterCardBadgeSettingsExpanded,
   characterCardBadgeEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeEnabled')
       ? coerceBoolean((patch as any).characterCardBadgeEnabled)
       : base.characterCardBadgeEnabled,
+  characterCardBadgeVisibilityScope:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeVisibilityScope')
+      ? normalizeMessageVisibilityScope((patch as any).characterCardBadgeVisibilityScope)
+      : base.characterCardBadgeVisibilityScope,
   characterCardBadgeAutoContrastEnabled:
     patch && Object.prototype.hasOwnProperty.call(patch, 'characterCardBadgeAutoContrastEnabled')
       ? coerceBoolean((patch as any).characterCardBadgeAutoContrastEnabled)

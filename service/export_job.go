@@ -384,6 +384,9 @@ func canMerge(base *model.MessageModel, currentIcMode string, last time.Time, ne
 	if base.IsWhisper != next.IsWhisper {
 		return false
 	}
+	if whisperMergeContextKey(base) != whisperMergeContextKey(next) {
+		return false
+	}
 	if base.IsArchived != next.IsArchived {
 		return false
 	}
@@ -409,6 +412,31 @@ func senderKey(msg *model.MessageModel) string {
 		return "user:" + user
 	}
 	return ""
+}
+
+func whisperMergeContextKey(msg *model.MessageModel) string {
+	if msg == nil || !msg.IsWhisper {
+		return "public"
+	}
+	recipientIDs := make([]string, 0, len(msg.WhisperTargets)+1)
+	for _, target := range msg.WhisperTargets {
+		if target == nil {
+			continue
+		}
+		if id := strings.TrimSpace(target.ID); id != "" {
+			recipientIDs = append(recipientIDs, id)
+		}
+	}
+	recipientIDs = append(recipientIDs, splitWhisperIDs(msg.WhisperTo)...)
+	recipientIDs = normalizeWhisperRecipientIDs(recipientIDs)
+	if len(recipientIDs) > 0 {
+		return "whisper:" + strings.Join(recipientIDs, ",")
+	}
+	targetNames := msg.ResolveWhisperTargetDisplayNames()
+	if len(targetNames) > 0 {
+		return "whisper-fallback:" + strings.Join(targetNames, "|")
+	}
+	return "whisper:unknown"
 }
 
 func normalizeIcMode(mode string) string {

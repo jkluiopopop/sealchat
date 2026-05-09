@@ -23,8 +23,6 @@ import (
 	"github.com/spf13/afero"
 
 	"sealchat/model"
-	"sealchat/pm"
-	"sealchat/service"
 	"sealchat/utils"
 )
 
@@ -377,36 +375,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1.Post("/password-reset/request", EmailAuthPasswordResetRequest)
 	v1.Post("/password-reset/confirm", EmailAuthPasswordResetConfirm)
 
-	v1.Get("/config", func(c *fiber.Ctx) error {
-		ret := sanitizeConfigForClient(appConfig)
-		u := getCurUser(c)
-		isAdmin := u != nil && pm.CanWithSystemRole(u.ID, pm.PermModAdmin)
-		if !isAdmin {
-			ret.ServeAt = ""
-		} else if appConfig != nil {
-			ret.RegisterInviteCode = appConfig.RegisterInviteCode
-		}
-		ffmpegAvailable := false
-		if svc := service.GetAudioService(); svc != nil {
-			ffmpegAvailable = svc.FFmpegAvailable()
-		}
-		audioImportEnabled := false
-		if appConfig != nil && strings.TrimSpace(appConfig.Audio.ImportDir) != "" {
-			audioImportEnabled = true
-		}
-		resp := struct {
-			utils.AppConfig
-			FFmpegAvailable          bool `json:"ffmpegAvailable"`
-			AllowWorldAudioWorkbench bool `json:"allowWorldAudioWorkbench"`
-			AudioImportEnabled       bool `json:"audioImportEnabled"`
-		}{
-			AppConfig:                ret,
-			FFmpegAvailable:          ffmpegAvailable,
-			AllowWorldAudioWorkbench: ret.Audio.AllowWorldAudioWorkbench,
-			AudioImportEnabled:       audioImportEnabled,
-		}
-		return c.Status(http.StatusOK).JSON(resp)
-	})
+	v1.Get("/config", OptionalSignCheckMiddleware, ConfigGetHandler)
 	v1.Get("/public/worlds/:worldId", WorldPublicDetail)
 	v1.Get("/public/ob/:slug", WorldPublicObserverResolveHandler)
 	v1.Get("/public/ob/channels/:channelId/messages/search", ChannelMessageSearchObserver)
@@ -483,6 +452,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 
 	v1Auth.Post("/attachment-upload", AttachmentUploadTempFile)
 	v1Auth.Post("/attachment-upload-quick", AttachmentUploadQuick)
+	v1Auth.Post("/attachment-import-from-url", AttachmentImportFromURL)
 	v1Auth.Post("/attachment-confirm", AttachmentSetConfirm)
 	v1Auth.Post("/attachments-delete", AttachmentDelete)
 	v1Auth.Get("/attachment/:id/meta", AttachmentMeta)
@@ -777,6 +747,10 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Post("/admin/audio-assets/bulk-delete", AdminAudioAssetBulkDeleteSafe)
 	v1AuthAdmin.Get("/admin/audio-assets/cleanup-preview", AdminAudioAssetCleanupPreview)
 	v1AuthAdmin.Post("/admin/audio-assets/cleanup", AdminAudioAssetCleanupExecute)
+	v1AuthAdmin.Get("/admin/audio-quotas", AdminAudioQuotaList)
+	v1AuthAdmin.Get("/admin/audio-quotas/:userId", AdminAudioQuotaGet)
+	v1AuthAdmin.Put("/admin/audio-quotas/:userId", AdminAudioQuotaUpsert)
+	v1AuthAdmin.Delete("/admin/audio-quotas/:userId", AdminAudioQuotaDelete)
 
 	// Image migration routes
 	v1AuthAdmin.Get("/admin/image-migration/preview", ImageMigrationPreview)

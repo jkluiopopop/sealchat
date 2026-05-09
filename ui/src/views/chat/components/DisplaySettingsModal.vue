@@ -23,6 +23,7 @@ import {
   buildDisplaySettingsDraftSavePayload,
   syncDisplaySettingsDraft,
 } from './displaySettingsDraft'
+import type { AvatarVisibilityScope } from '@/stores/displayAvatarVisibility'
 
 interface Props {
   visible: boolean
@@ -66,6 +67,11 @@ const layoutModeOptions: Array<{ label: string; value: DisplaySettings['layout']
 const paletteModeOptions: Array<{ label: string; value: DisplaySettings['palette'] }> = [
   { label: '日间模式', value: 'day' },
   { label: '夜间模式', value: 'night' },
+]
+const avatarVisibilityScopeOptions: Array<{ label: string; value: AvatarVisibilityScope }> = [
+  { label: '全部', value: 'all' },
+  { label: '场内', value: 'ic' },
+  { label: '场外', value: 'ooc' },
 ]
 const sendShortcutOptions: Array<{ label: string; value: DisplaySettings['sendShortcut'] }> = [
   { label: 'Enter 直接发送', value: 'enter' },
@@ -583,6 +589,19 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
             </template>
             样式设定
           </n-tooltip>
+          <n-radio-group
+            v-model:value="draft.avatarVisibilityScope"
+            size="small"
+            :disabled="!draft.showAvatar"
+          >
+            <n-radio-button
+              v-for="option in avatarVisibilityScopeOptions"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </n-radio-button>
+          </n-radio-group>
         </div>
       </section>
 
@@ -1580,6 +1599,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .font-settings-row {

@@ -510,6 +510,15 @@ func DigestWindowVisitorCleanupBefore(scopeType, scopeID string, windowSeconds i
 		Delete(&DigestWindowVisitorModel{}).Error
 }
 
+func DigestWindowVisitorCleanupBeforeAll(windowSeconds int, cutoffWindowStart int64) (int64, error) {
+	if windowSeconds <= 0 || cutoffWindowStart <= 0 {
+		return 0, nil
+	}
+	tx := db.Where("window_seconds = ? AND window_start < ?", windowSeconds, cutoffWindowStart).
+		Delete(&DigestWindowVisitorModel{})
+	return tx.RowsAffected, tx.Error
+}
+
 func DigestWindowSpeakerCleanupBefore(scopeType, scopeID string, windowSeconds int, cutoffWindowStart int64) error {
 	scopeType = strings.TrimSpace(scopeType)
 	scopeID = strings.TrimSpace(scopeID)
@@ -518,4 +527,13 @@ func DigestWindowSpeakerCleanupBefore(scopeType, scopeID string, windowSeconds i
 	}
 	return db.Where("scope_type = ? AND scope_id = ? AND window_seconds = ? AND window_start < ?", scopeType, scopeID, windowSeconds, cutoffWindowStart).
 		Delete(&DigestWindowSpeakerModel{}).Error
+}
+
+func DigestWindowSpeakerCleanupBeforeAll(windowSeconds int, cutoffWindowStart int64) (int64, error) {
+	if windowSeconds <= 0 || cutoffWindowStart <= 0 {
+		return 0, nil
+	}
+	tx := db.Where("window_seconds = ? AND window_start < ?", windowSeconds, cutoffWindowStart).
+		Delete(&DigestWindowSpeakerModel{})
+	return tx.RowsAffected, tx.Error
 }

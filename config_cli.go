@@ -6,8 +6,10 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"sealchat/model"
+	"sealchat/service"
 	"sealchat/utils"
 
 	"github.com/knadh/koanf/parsers/yaml"
@@ -302,8 +304,12 @@ func handleSQLiteVacuum() error {
 	if !model.IsSQLite() {
 		return fmt.Errorf("当前数据库不是 SQLite，无法执行 VACUUM")
 	}
-	if err := model.VacuumSQLite(); err != nil {
+	report, err := service.VacuumSQLiteWithMaintenance(time.Now())
+	if err != nil {
 		return err
+	}
+	if report != nil && report.TotalAffectedRows > 0 {
+		fmt.Printf("预清理完成，共处理 %d 条记录\n", report.TotalAffectedRows)
 	}
 	fmt.Println("SQLite VACUUM 执行完成")
 	return nil

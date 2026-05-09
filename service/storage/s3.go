@@ -24,6 +24,7 @@ type s3Backend struct {
 	bucket         string
 	publicBaseURL  string
 	forcePathStyle bool
+	presignURLFunc func(context.Context, string, time.Duration) (string, error)
 }
 
 func newS3Backend(cfg utils.S3StorageConfig) (*s3Backend, error) {
@@ -108,6 +109,27 @@ func (s *s3Backend) publicURL(objectKey string) string {
 		return ""
 	}
 	return fmt.Sprintf("%s/%s", s.publicBaseURL, strings.TrimLeft(objectKey, "/"))
+}
+
+func (s *s3Backend) presignedURL(ctx context.Context, objectKey string, ttl time.Duration) string {
+	if s == nil || strings.TrimSpace(objectKey) == "" {
+		return ""
+	}
+	if s.presignURLFunc != nil {
+		target, err := s.presignURLFunc(ctx, objectKey, ttl)
+		if err == nil {
+			return strings.TrimSpace(target)
+		}
+		return ""
+	}
+	if s.client == nil || ttl <= 0 {
+		return ""
+	}
+	target, err := s.client.PresignedGetObject(ctx, s.bucket, objectKey, ttl, nil)
+	if err != nil || target == nil {
+		return ""
+	}
+	return target.String()
 }
 
 func normalizeEndpoint(endpoint string, useSSL bool) (string, bool) {

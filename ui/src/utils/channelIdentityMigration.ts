@@ -25,7 +25,11 @@ export interface IdentityAssetPayload {
   size: number;
   filename?: string;
   mimeType?: string;
-  data: string;
+  data?: string;
+  sourceUrl?: string;
+  externalUrl?: string;
+  publicUrl?: string;
+  presignedUrl?: string;
 }
 
 export type IdentityAvatarPayload = Omit<IdentityAssetPayload, 'assetKey'>
@@ -151,3 +155,17 @@ export const resolveIdentityAssetFetchUrl = (options: {
 }
 
 export const shouldIgnoreIdentityAssetFetchStatus = (status?: number | null) => Number(status || 0) === 404
+
+export const resolveIdentityAssetTransferUrl = (asset?: {
+  sourceUrl?: string | null;
+  externalUrl?: string | null;
+  publicUrl?: string | null;
+  presignedUrl?: string | null;
+}) => String(asset?.sourceUrl || asset?.externalUrl || asset?.publicUrl || asset?.presignedUrl || '').trim()
+
+export const shouldUseIdentityAssetRemoteImport = (asset?: {
+  sourceUrl?: string | null;
+  externalUrl?: string | null;
+  publicUrl?: string | null;
+  presignedUrl?: string | null;
+}) => !!resolveIdentityAssetTransferUrl(asset)

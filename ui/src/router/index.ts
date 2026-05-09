@@ -8,7 +8,6 @@ import WorldDetail from '@/views/world/WorldDetail.vue'
 import WorldPrivateHint from '@/views/world/WorldPrivateHint.vue'
 import InviteConsume from '@/views/invite/InviteConsume.vue'
 import ObserverEntry from '@/views/observer/ObserverEntry.vue'
-import StatusDashboard from '@/views/status/StatusDashboard.vue'
 
 
 const router = createRouter({
@@ -85,7 +84,7 @@ const router = createRouter({
     {
       path: '/status',
       name: 'status',
-      component: StatusDashboard,
+      component: () => import('@/views/status/StatusDashboard.vue'),
     },
     {
       path: '/:worldId/:channelId?',

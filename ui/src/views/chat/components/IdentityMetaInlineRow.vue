@@ -8,6 +8,7 @@ const props = defineProps<{
   identityId?: string
   identityColor?: string
   channelId?: string
+  messageTone?: 'ic' | 'ooc' | 'archived'
 }>()
 
 const rowRef = ref<HTMLElement | null>(null)
@@ -26,6 +27,7 @@ onUpdated(syncHostBackgroundColor)
     <CharacterCardBadge
       :identity-id="props.identityId"
       :identity-color="props.identityColor"
+      :message-tone="props.messageTone"
       :host-background-color="hostBackgroundColor"
     />
     <CharacterRemark

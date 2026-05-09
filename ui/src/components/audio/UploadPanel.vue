@@ -6,17 +6,33 @@
     </header>
 
     <div class="upload-panel__scope" v-if="audio.isSystemAdmin">
-      <n-radio-group v-model:value="uploadScope" size="small">
-        <n-radio-button value="common">通用级</n-radio-button>
-        <n-radio-button value="world">世界级</n-radio-button>
-      </n-radio-group>
-      <span class="scope-hint" v-if="uploadScope === 'common'">所有世界可用</span>
-      <span class="scope-hint" v-else-if="audio.currentWorldId">仅当前世界可用</span>
-      <span class="scope-hint scope-hint--warn" v-else>请先进入一个世界</span>
+      <div class="upload-panel__scope-main">
+        <n-radio-group v-model:value="uploadScope" size="small">
+          <n-radio-button value="common">通用级</n-radio-button>
+          <n-radio-button value="world">世界级</n-radio-button>
+        </n-radio-group>
+        <span class="scope-hint" v-if="uploadScope === 'common'">所有世界可用</span>
+        <span class="scope-hint" v-else-if="audio.currentWorldId">仅当前世界可用</span>
+        <span class="scope-hint scope-hint--warn" v-else>请先进入一个世界</span>
+      </div>
+      <div v-if="quotaSummary" class="upload-panel__quota-inline">
+        <span class="upload-panel__quota-text">{{ quotaInlineText }}</span>
+        <div class="upload-panel__quota-bar" :class="{ 'is-unlimited': !quotaSummary.limited, 'is-overflow': quotaOverflow }">
+          <div class="upload-panel__quota-fill" :style="{ width: `${quotaProgressPercent}%` }"></div>
+        </div>
+      </div>
     </div>
     <div class="upload-panel__scope upload-panel__scope--readonly" v-else-if="audio.canManageCurrentWorld">
-      <span class="scope-badge scope-badge--world">世界级</span>
-      <span class="scope-hint">上传的音频仅当前世界可用</span>
+      <div class="upload-panel__scope-main">
+        <span class="scope-badge scope-badge--world">世界级</span>
+        <span class="scope-hint">上传的音频仅当前世界可用</span>
+      </div>
+      <div v-if="quotaSummary" class="upload-panel__quota-inline">
+        <span class="upload-panel__quota-text">{{ quotaInlineText }}</span>
+        <div class="upload-panel__quota-bar" :class="{ 'is-unlimited': !quotaSummary.limited, 'is-overflow': quotaOverflow }">
+          <div class="upload-panel__quota-fill" :style="{ width: `${quotaProgressPercent}%` }"></div>
+        </div>
+      </div>
     </div>
 
     <label class="upload-panel__drop" @dragover.prevent @drop.prevent="handleDrop">
@@ -151,6 +167,28 @@ const importResultSummary = computed(() => {
     parts.push(`清理警告 ${warnings}`);
   }
   return `导入结果：${parts.join(' · ')}`;
+});
+const quotaSummary = computed(() => audio.quotaSummary);
+const quotaOverflow = computed(() => {
+  if (!quotaSummary.value?.limited) return false;
+  const quotaBytes = quotaSummary.value.quotaBytes ?? 0;
+  return quotaBytes > 0 && quotaSummary.value.usedBytes > quotaBytes;
+});
+const quotaProgressPercent = computed(() => {
+  if (!quotaSummary.value) return 0;
+  if (!quotaSummary.value.limited) return 100;
+  return Math.max(0, Math.min(100, quotaSummary.value.usagePercent ?? 0));
+});
+const quotaInlineText = computed(() => {
+  if (!quotaSummary.value) return '';
+  if (!quotaSummary.value.limited) {
+    return '管理员无上限';
+  }
+  if (quotaOverflow.value) {
+    const overflowBytes = Math.max(0, quotaSummary.value.usedBytes - (quotaSummary.value.quotaBytes ?? 0));
+    return `已超限 ${formatFileSize(overflowBytes)} · ${(quotaSummary.value.usagePercent ?? 0).toFixed(1)}%`;
+  }
+  return `剩余 ${formatFileSize(quotaSummary.value.remainingBytes ?? 0)} · ${(quotaSummary.value.usagePercent ?? 0).toFixed(1)}%`;
 });
 
 function getStatusLabel(status: UploadTaskState['status']): string {
@@ -313,10 +351,56 @@ function clearAll() {
   align-items: center;
   gap: 0.75rem;
   padding: 0.5rem 0;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.upload-panel__scope-main {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
 }
 
 .upload-panel__scope--readonly {
   color: var(--sc-text-secondary);
+}
+
+.upload-panel__quota-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
+  min-width: min(100%, 240px);
+}
+
+.upload-panel__quota-text {
+  font-size: 0.75rem;
+  color: var(--sc-text-secondary);
+  white-space: nowrap;
+}
+
+.upload-panel__quota-bar {
+  width: 150px;
+  max-width: 36vw;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--sc-border-mute) 45%, transparent);
+}
+
+.upload-panel__quota-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0f766e 0%, #22c55e 100%);
+}
+
+.upload-panel__quota-bar.is-overflow .upload-panel__quota-fill {
+  background: linear-gradient(90deg, #dc2626 0%, #f97316 100%);
+}
+
+.upload-panel__quota-bar.is-unlimited .upload-panel__quota-fill {
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.22) 0%, rgba(59, 130, 246, 0.38) 100%);
 }
 
 .scope-badge {
@@ -506,5 +590,17 @@ function clearAll() {
   display: flex;
   justify-content: flex-end;
   margin-top: 0.25rem;
+}
+
+@media (max-width: 720px) {
+  .upload-panel__quota-inline {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .upload-panel__quota-bar {
+    flex: 1 1 auto;
+    max-width: none;
+  }
 }
 </style>

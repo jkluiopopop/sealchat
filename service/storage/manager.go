@@ -7,6 +7,7 @@ import (
 	"mime"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"sealchat/utils"
 )
@@ -188,6 +189,32 @@ func (m *Manager) PublicURL(backend BackendType, objectKey string) string {
 	default:
 		return ""
 	}
+}
+
+func (m *Manager) PresignedURL(ctx context.Context, backend BackendType, objectKey string) string {
+	switch backend {
+	case BackendS3:
+		if m == nil || m.remote == nil {
+			return ""
+		}
+		ttlSeconds := m.cfg.S3.PresignTTL
+		if ttlSeconds <= 0 {
+			ttlSeconds = m.cfg.PresignTTL
+		}
+		if ttlSeconds <= 0 {
+			ttlSeconds = 900
+		}
+		return m.remote.presignedURL(ctx, objectKey, time.Duration(ttlSeconds)*time.Second)
+	default:
+		return ""
+	}
+}
+
+func (m *Manager) ResolveAttachmentExportURL(ctx context.Context, backend BackendType, objectKey string) string {
+	if target := m.PublicURL(backend, objectKey); target != "" {
+		return target
+	}
+	return m.PresignedURL(ctx, backend, objectKey)
 }
 
 func (m *Manager) ResolveLocalPath(objectKey string) (string, error) {
