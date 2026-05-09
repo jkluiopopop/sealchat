@@ -305,8 +305,7 @@ async function clearOverride() {
     :show="show"
     preset="card"
     title="用户音频配额"
-    class="audio-quota-modal"
-    :style="{ width: 'min(1320px, 98vw)' }"
+    class="audio-quota-modal sc-fluid-modal sc-fluid-modal--xwide"
     :mask-closable="false"
     @update:show="emit('update:show', $event)"
   >
@@ -353,16 +352,19 @@ async function clearOverride() {
           </div>
           <span>共 {{ total }} 条</span>
         </div>
-        <n-data-table
-          :columns="columns"
-          :data="rows"
-          :loading="listLoading"
-          :pagination="false"
-          :row-key="(row: AdminAudioQuotaItem) => row.userId"
-          :row-props="rowProps"
-          :max-height="420"
-          size="small"
-        />
+        <div class="audio-quota-modal__table-scroll sc-modal-table-scroll">
+          <n-data-table
+            :columns="columns"
+            :data="rows"
+            :loading="listLoading"
+            :pagination="false"
+            :row-key="(row: AdminAudioQuotaItem) => row.userId"
+            :row-props="rowProps"
+            :max-height="420"
+            :scroll-x="560"
+            size="small"
+          />
+        </div>
         <div class="audio-quota-modal__pagination">
           <n-pagination
             v-model:page="page"
@@ -519,8 +521,31 @@ async function clearOverride() {
   margin-top: 12px;
 }
 
-.audio-quota-modal :deep(.n-card) {
-  max-width: 98vw;
+.audio-quota-modal__table-scroll {
+  min-width: 0;
+}
+
+.audio-quota-modal__table-scroll :deep(.n-data-table-wrapper) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128, 128, 128, 0.35) transparent;
+}
+
+.audio-quota-modal__table-scroll :deep(.n-data-table-wrapper)::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.audio-quota-modal__table-scroll :deep(.n-data-table-wrapper)::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.audio-quota-modal__table-scroll :deep(.n-data-table-wrapper)::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.35);
+  border-radius: 999px;
+}
+
+.audio-quota-modal__table-scroll :deep(.n-data-table-wrapper)::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.55);
 }
 
 .audio-quota-modal__summary {

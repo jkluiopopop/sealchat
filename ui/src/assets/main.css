@@ -470,6 +470,45 @@ img.emoji {
   transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
 }
 
+/* 专用弹窗模板：类直接挂在 Naive Teleport 后的 n-card / n-dialog 本体上 */
+body .n-card.sc-fluid-modal,
+body .n-dialog.sc-fluid-modal {
+  --sc-modal-side-gap: 32px;
+  --sc-modal-width: min(720px, calc(100vw - var(--sc-modal-side-gap)));
+  width: var(--sc-modal-width) !important;
+  max-width: calc(100vw - var(--sc-modal-side-gap)) !important;
+  min-width: 0;
+}
+
+body .n-card.sc-fluid-modal > *,
+body .n-dialog.sc-fluid-modal > * {
+  min-width: 0;
+}
+
+body .n-card.sc-fluid-modal.sc-fluid-modal--wide,
+body .n-dialog.sc-fluid-modal.sc-fluid-modal--wide {
+  --sc-modal-width: min(900px, calc(100vw - var(--sc-modal-side-gap)));
+}
+
+body .n-card.sc-fluid-modal.sc-fluid-modal--xwide,
+body .n-dialog.sc-fluid-modal.sc-fluid-modal--xwide {
+  --sc-modal-width: min(1240px, calc(100vw - var(--sc-modal-side-gap)));
+}
+
+body .sc-fluid-modal .sc-modal-table-scroll {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+@media (max-width: 640px) {
+  body .n-card.sc-fluid-modal,
+  body .n-dialog.sc-fluid-modal {
+    --sc-modal-side-gap: 16px;
+  }
+}
+
 .n-drawer,
 .n-drawer-body,
 .n-drawer-content.n-drawer-content--native-scrollbar {

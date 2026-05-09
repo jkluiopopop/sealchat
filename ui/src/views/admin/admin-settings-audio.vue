@@ -766,7 +766,13 @@ async function executeCleanup() {
       <n-empty v-else description="没有可查看的素材信息" />
     </n-modal>
 
-    <n-modal v-model:show="cleanupModalVisible" preset="dialog" title="清理指定周期未使用素材" :mask-closable="false">
+    <n-modal
+      v-model:show="cleanupModalVisible"
+      preset="dialog"
+      title="清理指定周期未使用素材"
+      class="admin-audio__cleanup-modal sc-fluid-modal sc-fluid-modal--wide"
+      :mask-closable="false"
+    >
       <div class="admin-audio__cleanup">
         <n-radio-group v-model:value="cleanupDays">
           <n-radio-button v-for="option in cleanupDayOptions" :key="option.value" :value="option.value">
@@ -785,13 +791,16 @@ async function executeCleanup() {
           <n-alert v-if="cleanupPreview.detachThenDeleteCandidates" type="warning" :show-icon="false">
             预览列表已包含被引用素材；执行清理时会自动解除场景与当前播放状态中的引用。
           </n-alert>
-          <n-data-table
-            :columns="cleanupColumns"
-            :data="cleanupPreview.items"
-            :pagination="false"
-            size="small"
-            :max-height="260"
-          />
+          <div class="admin-audio__cleanup-table-scroll sc-modal-table-scroll">
+            <n-data-table
+              :columns="cleanupColumns"
+              :data="cleanupPreview.items"
+              :pagination="false"
+              :scroll-x="1280"
+              size="small"
+              :max-height="260"
+            />
+          </div>
         </template>
       </div>
 
@@ -1009,11 +1018,16 @@ async function executeCleanup() {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
 }
 
 .admin-audio__cleanup-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+.admin-audio__cleanup-table-scroll {
+  min-width: 0;
 }
 
 @media (max-width: 960px) {
