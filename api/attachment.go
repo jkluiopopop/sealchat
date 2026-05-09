@@ -237,21 +237,19 @@ func AttachmentMeta(c *fiber.Ctx) error {
 	}
 
 	publicURL := service.AttachmentPublicURL(&att)
-	presignedURL := service.AttachmentPresignedURL(&att)
 	return c.JSON(fiber.Map{
 		"message": "ok",
 		"item": fiber.Map{
-			"id":           att.ID,
-			"filename":     att.Filename,
-			"size":         att.Size,
-			"hash":         att.Hash,
-			"mimeType":     att.MimeType,
-			"isAnimated":   att.IsAnimated,
-			"storageType":  att.StorageType,
-			"objectKey":    att.ObjectKey,
-			"externalUrl":  att.ExternalURL,
-			"publicUrl":    publicURL,
-			"presignedUrl": presignedURL,
+			"id":          att.ID,
+			"filename":    att.Filename,
+			"size":        att.Size,
+			"hash":        att.Hash,
+			"mimeType":    att.MimeType,
+			"isAnimated":  att.IsAnimated,
+			"storageType": att.StorageType,
+			"objectKey":   att.ObjectKey,
+			"externalUrl": att.ExternalURL,
+			"publicUrl":   publicURL,
 		},
 	})
 }

@@ -12,7 +12,6 @@ export interface AttachmentMeta {
   objectKey?: string;
   externalUrl?: string;
   publicUrl?: string;
-  presignedUrl?: string;
 }
 
 const attachmentMetaStore = reactive<Record<string, AttachmentMeta>>({});

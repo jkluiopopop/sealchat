@@ -26,6 +26,7 @@ export interface IdentityAssetPayload {
   filename?: string;
   mimeType?: string;
   data?: string;
+  sourceUrl?: string;
   externalUrl?: string;
   publicUrl?: string;
   presignedUrl?: string;
@@ -140,10 +141,9 @@ export const resolveIdentityAssetFetchUrl = (options: {
   normalizedId: string;
   externalUrl?: string | null;
   publicUrl?: string | null;
-  presignedUrl?: string | null;
   urlBase: string;
 }) => {
-  const external = String(options.externalUrl || options.publicUrl || options.presignedUrl || '').trim()
+  const external = String(options.externalUrl || options.publicUrl || '').trim()
   if (external) {
     return external
   }
@@ -157,12 +157,14 @@ export const resolveIdentityAssetFetchUrl = (options: {
 export const shouldIgnoreIdentityAssetFetchStatus = (status?: number | null) => Number(status || 0) === 404
 
 export const resolveIdentityAssetTransferUrl = (asset?: {
+  sourceUrl?: string | null;
   externalUrl?: string | null;
   publicUrl?: string | null;
   presignedUrl?: string | null;
-}) => String(asset?.externalUrl || asset?.publicUrl || asset?.presignedUrl || '').trim()
+}) => String(asset?.sourceUrl || asset?.externalUrl || asset?.publicUrl || asset?.presignedUrl || '').trim()
 
 export const shouldUseIdentityAssetRemoteImport = (asset?: {
+  sourceUrl?: string | null;
   externalUrl?: string | null;
   publicUrl?: string | null;
   presignedUrl?: string | null;

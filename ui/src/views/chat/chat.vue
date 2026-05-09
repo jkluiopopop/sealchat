@@ -3464,22 +3464,29 @@ const downloadAttachmentAsPayload = async (
     return null;
   }
   if (meta.storageType === 's3') {
+    const sourceUrl = normalizedId
+      ? `${String(urlBase || '').replace(/\/$/, '')}/api/v1/attachment/${normalizedId}`
+      : '';
+    if (!sourceUrl) {
+      issueState && (issueState.missingAssets += 1);
+      console.warn('导出角色素材时无法生成平台附件链接，已跳过', {
+        attachmentId: normalizedId,
+      });
+      return null;
+    }
     return {
       attachmentId: normalizedId,
       hash: meta.hash || '',
       size: meta.size ?? 0,
       filename: meta.filename || fallbackFilename,
       mimeType: meta.mimeType || 'application/octet-stream',
-      externalUrl: meta.externalUrl || '',
-      publicUrl: meta.publicUrl || '',
-      presignedUrl: meta.presignedUrl || '',
+      sourceUrl,
     };
   }
   const downloadUrl = resolveIdentityAssetFetchUrl({
     normalizedId,
     externalUrl: meta.externalUrl,
     publicUrl: meta.publicUrl,
-    presignedUrl: meta.presignedUrl,
     urlBase,
   });
   const resp = await fetch(downloadUrl, {
@@ -3665,9 +3672,9 @@ const ensureImportAssets = async (
       filename: asset.filename,
       mimeType: asset.mimeType,
       data: asset.data,
+      sourceUrl: asset.sourceUrl,
       externalUrl: asset.externalUrl,
       publicUrl: asset.publicUrl,
-      presignedUrl: asset.presignedUrl,
     }, options);
     if (attachmentId) {
       result.set(asset.assetKey, attachmentId);

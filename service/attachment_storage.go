@@ -129,17 +129,6 @@ func AttachmentPublicURL(att *model.AttachmentModel) string {
 	return ""
 }
 
-func AttachmentPresignedURL(att *model.AttachmentModel) string {
-	if att == nil {
-		return ""
-	}
-	manager := GetStorageManager()
-	if manager == nil || strings.TrimSpace(att.ObjectKey) == "" {
-		return ""
-	}
-	return manager.PresignedURL(context.Background(), convertModelToBackend(att.StorageType), att.ObjectKey)
-}
-
 func AttachmentExportURL(att *model.AttachmentModel) string {
 	if att == nil {
 		return ""
