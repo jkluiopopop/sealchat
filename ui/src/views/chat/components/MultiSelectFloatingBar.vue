@@ -315,6 +315,7 @@ const handleToggleRangeMode = () => {
   position: fixed;
   bottom: 80px;
   left: 50%;
+  width: fit-content;
   transform: translateX(-50%);
   z-index: 2100;
   display: flex;
@@ -422,6 +423,7 @@ const handleToggleRangeMode = () => {
   color: inherit;
   padding: 6px 12px;
   font-size: 13px;
+  white-space: nowrap;
   cursor: pointer;
   transition: all 0.15s ease;
 
@@ -471,6 +473,7 @@ const handleToggleRangeMode = () => {
 @media (max-width: 768px) {
   .multi-select-bar {
     bottom: 70px;
+    width: auto;
     left: 8px;
     right: 8px;
     transform: none;
