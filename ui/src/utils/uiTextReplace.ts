@@ -25,7 +25,9 @@ const DEFAULT_RULES: UITextReplaceRule[] = [
   { id: 'default-announcement', searchText: '公告', replaceText: '公告', enabled: true },
 ]
 
-const IGNORE_SELECTOR = [
+const TRACKED_ATTRIBUTE_NAMES = ['placeholder', 'title', 'aria-label', 'aria-placeholder', 'alt'] as const
+
+const SHARED_IGNORE_SELECTORS = [
   '[data-ui-text-replace-ignore]',
   '[data-message-id]',
   '.message-row__grid',
@@ -42,10 +44,21 @@ const IGNORE_SELECTOR = [
   '.sticky-note-editor__wrapper',
   '.sticky-note__rich-input',
   '.ProseMirror',
+]
+
+const TEXT_IGNORE_SELECTOR = [
+  ...SHARED_IGNORE_SELECTORS,
   'input',
   'textarea',
   '[contenteditable="true"]',
 ].join(', ')
+
+const ATTRIBUTE_IGNORE_SELECTOR = [
+  ...SHARED_IGNORE_SELECTORS,
+  '[contenteditable="true"]',
+].join(', ')
+
+const TRACKED_ATTRIBUTE_SELECTOR = TRACKED_ATTRIBUTE_NAMES.map((item) => `[${item}]`).join(', ')
 
 const IGNORE_CLASS_NAMES = new Set([
   'chat-input-wrapper',
@@ -132,7 +145,7 @@ export const isUITextReplaceIgnoredContext = (context: UITextReplaceIgnoredConte
 
 const getRootElement = (): HTMLElement | null => {
   if (typeof document === 'undefined') return null
-  return document.getElementById('app') || document.body
+  return document.body || document.getElementById('app')
 }
 
 const getIdleWindow = (): IdleWindow | null => {
@@ -140,7 +153,7 @@ const getIdleWindow = (): IdleWindow | null => {
   return window as IdleWindow
 }
 
-const matchesIgnoredDomContext = (element: Element | null): boolean => {
+const matchesIgnoredTextDomContext = (element: Element | null): boolean => {
   if (!element) return true
   if (element instanceof HTMLElement && isUITextReplaceIgnoredContext({
     tagName: element.tagName,
@@ -150,7 +163,15 @@ const matchesIgnoredDomContext = (element: Element | null): boolean => {
   })) {
     return true
   }
-  return Boolean(element.closest(IGNORE_SELECTOR))
+  return Boolean(element.closest(TEXT_IGNORE_SELECTOR))
+}
+
+const matchesIgnoredAttributeDomContext = (element: Element | null): boolean => {
+  if (!element) return true
+  if (element instanceof HTMLElement && element.isContentEditable) {
+    return true
+  }
+  return Boolean(element.closest(ATTRIBUTE_IGNORE_SELECTOR))
 }
 
 class UITextReplaceRuntime {
@@ -159,8 +180,11 @@ class UITextReplaceRuntime {
   private flushTimer: number | null = null
   private pendingNodes = new Set<Node>()
   private trackedNodes = new Set<Text>()
+  private trackedAttributeElements = new Set<Element>()
   private originalTextMap = new WeakMap<Text, string>()
+  private originalAttributeMap = new WeakMap<Element, Map<string, string | null>>()
   private selfMutatingNodes = new WeakSet<Text>()
+  private selfMutatingAttributes = new WeakMap<Element, Set<string>>()
   private activeRules: PreparedUITextReplaceRule[] = []
   private configSignature = ''
 
@@ -170,6 +194,7 @@ class UITextReplaceRuntime {
     if (nextSignature === this.configSignature) return
 
     this.restoreTrackedNodes()
+    this.restoreTrackedAttributes()
     this.configSignature = nextSignature
     this.activeRules = prepareUITextReplaceRules(normalized)
 
@@ -218,10 +243,25 @@ class UITextReplaceRuntime {
           this.queueNode(target)
           continue
         }
+        if (mutation.type === 'attributes') {
+          const target = mutation.target
+          const attributeName = mutation.attributeName
+          if (!(target instanceof Element) || !attributeName) continue
+          if (this.consumeSelfMutatingAttribute(target, attributeName)) {
+            continue
+          }
+          if (this.hasOriginalAttributeValue(target, attributeName)) {
+            this.setOriginalAttributeValue(target, attributeName, target.getAttribute(attributeName))
+          }
+          this.queueNode(target)
+          continue
+        }
         mutation.addedNodes.forEach((node) => this.queueNode(node))
       }
     })
     this.observer.observe(root, {
+      attributes: true,
+      attributeFilter: TRACKED_ATTRIBUTE_NAMES as unknown as string[],
       childList: true,
       characterData: true,
       subtree: true,
@@ -282,11 +322,19 @@ class UITextReplaceRuntime {
     if (!(node instanceof Element) && !(node instanceof DocumentFragment)) {
       return
     }
-    if (node instanceof Element && matchesIgnoredDomContext(node)) {
+
+    if (node instanceof Element) {
+      this.processElementAttributes(node)
+    }
+
+    if (node instanceof Element || node instanceof DocumentFragment) {
+      this.processSubtreeAttributes(node)
+    }
+
+    if (node instanceof Element && matchesIgnoredTextDomContext(node)) {
       return
     }
-    const root = getRootElement()
-    if (!root) return
+
     const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT)
     let current = walker.nextNode()
     while (current) {
@@ -299,7 +347,7 @@ class UITextReplaceRuntime {
 
   private processTextNode(node: Text) {
     const parentElement = node.parentElement
-    if (!parentElement || matchesIgnoredDomContext(parentElement)) return
+    if (!parentElement || matchesIgnoredTextDomContext(parentElement)) return
 
     const currentText = node.nodeValue || ''
     if (!currentText.trim()) return
@@ -327,6 +375,102 @@ class UITextReplaceRuntime {
     node.nodeValue = value
   }
 
+  private processSubtreeAttributes(root: Element | DocumentFragment) {
+    if (!TRACKED_ATTRIBUTE_SELECTOR) return
+    const candidates = root.querySelectorAll(TRACKED_ATTRIBUTE_SELECTOR)
+    candidates.forEach((element) => this.processElementAttributes(element))
+  }
+
+  private processElementAttributes(element: Element) {
+    for (const attributeName of TRACKED_ATTRIBUTE_NAMES) {
+      this.processElementAttribute(element, attributeName)
+    }
+  }
+
+  private processElementAttribute(element: Element, attributeName: string) {
+    if (matchesIgnoredAttributeDomContext(element)) return
+
+    const hasAttribute = element.hasAttribute(attributeName)
+    const currentValue = hasAttribute ? element.getAttribute(attributeName) : null
+    const hasOriginalValue = this.hasOriginalAttributeValue(element, attributeName)
+    const baseValue = hasOriginalValue ? this.getOriginalAttributeValue(element, attributeName) : currentValue
+
+    if (baseValue === undefined) return
+    if (typeof baseValue === 'string' && !baseValue.trim()) return
+
+    const nextValue = typeof baseValue === 'string'
+      ? applyUITextReplaceRules(baseValue, this.activeRules)
+      : baseValue
+
+    if (nextValue === baseValue) {
+      if (currentValue !== baseValue) {
+        this.writeElementAttribute(element, attributeName, baseValue)
+      }
+      this.deleteOriginalAttributeValue(element, attributeName)
+      return
+    }
+
+    this.setOriginalAttributeValue(element, attributeName, baseValue)
+    if (currentValue !== nextValue) {
+      this.writeElementAttribute(element, attributeName, nextValue)
+    }
+  }
+
+  private writeElementAttribute(element: Element, attributeName: string, value: string | null) {
+    this.markSelfMutatingAttribute(element, attributeName)
+    if (value === null) {
+      element.removeAttribute(attributeName)
+      return
+    }
+    element.setAttribute(attributeName, value)
+  }
+
+  private markSelfMutatingAttribute(element: Element, attributeName: string) {
+    let current = this.selfMutatingAttributes.get(element)
+    if (!current) {
+      current = new Set<string>()
+      this.selfMutatingAttributes.set(element, current)
+    }
+    current.add(attributeName)
+  }
+
+  private consumeSelfMutatingAttribute(element: Element, attributeName: string): boolean {
+    const current = this.selfMutatingAttributes.get(element)
+    if (!current?.has(attributeName)) return false
+    current.delete(attributeName)
+    return true
+  }
+
+  private hasOriginalAttributeValue(element: Element, attributeName: string): boolean {
+    const current = this.originalAttributeMap.get(element)
+    return current?.has(attributeName) === true
+  }
+
+  private getOriginalAttributeValue(element: Element, attributeName: string): string | null | undefined {
+    const current = this.originalAttributeMap.get(element)
+    if (!current?.has(attributeName)) return undefined
+    return current.get(attributeName) ?? null
+  }
+
+  private setOriginalAttributeValue(element: Element, attributeName: string, value: string | null) {
+    let current = this.originalAttributeMap.get(element)
+    if (!current) {
+      current = new Map<string, string | null>()
+      this.originalAttributeMap.set(element, current)
+    }
+    current.set(attributeName, value)
+    this.trackedAttributeElements.add(element)
+  }
+
+  private deleteOriginalAttributeValue(element: Element, attributeName: string) {
+    const current = this.originalAttributeMap.get(element)
+    if (!current?.has(attributeName)) return
+    current.delete(attributeName)
+    if (current.size === 0) {
+      this.trackedAttributeElements.delete(element)
+    }
+  }
+
   private restoreTrackedNodes() {
     for (const node of Array.from(this.trackedNodes)) {
       if (!node.isConnected) {
@@ -338,6 +482,28 @@ class UITextReplaceRuntime {
         this.writeTextNode(node, original)
       }
       this.trackedNodes.delete(node)
+    }
+  }
+
+  private restoreTrackedAttributes() {
+    for (const element of Array.from(this.trackedAttributeElements)) {
+      if (!element.isConnected) {
+        this.trackedAttributeElements.delete(element)
+        continue
+      }
+      const current = this.originalAttributeMap.get(element)
+      if (!current) {
+        this.trackedAttributeElements.delete(element)
+        continue
+      }
+      for (const [attributeName, originalValue] of current.entries()) {
+        const currentValue = element.getAttribute(attributeName)
+        if (currentValue !== originalValue) {
+          this.writeElementAttribute(element, attributeName, originalValue)
+        }
+      }
+      current.clear()
+      this.trackedAttributeElements.delete(element)
     }
   }
 }
