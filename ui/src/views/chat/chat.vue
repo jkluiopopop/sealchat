@@ -1914,8 +1914,9 @@ const handleSelectionSearch = () => {
   if (!keyword) return
   channelSearch.openPanel()
   channelSearch.setKeyword(keyword)
+  channelSearch.setWithinResultsEnabled(false)
   channelSearch.bindChannel(chat.curChannel?.id || null)
-  void channelSearch.search(chat.curChannel?.id || undefined)
+  void channelSearch.searchPrimary(chat.curChannel?.id || undefined)
   hideSelectionBar()
 }
 

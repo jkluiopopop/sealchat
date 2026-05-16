@@ -379,6 +379,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1.Get("/public/worlds/:worldId", WorldPublicDetail)
 	v1.Get("/public/ob/:slug", WorldPublicObserverResolveHandler)
 	v1.Get("/public/ob/channels/:channelId/messages/search", ChannelMessageSearchObserver)
+	v1.Get("/public/ob/channels/:channelId/messages/search/refine", ChannelMessageSearchRefineObserver)
 	v1.Get("/public/worlds/:worldId/keywords", WorldKeywordPublicListHandler)
 	v1.Get("/public/worlds/:worldId/keywords/effective", EffectiveWorldKeywordPublicListHandler)
 	v1.Get("/public/worlds/:worldId/keywords/categories", WorldKeywordPublicCategoriesHandler)
@@ -505,6 +506,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	diceMacros.Post("/import", ChannelDiceMacroImport)
 
 	v1Auth.Get("/channels/:channelId/messages/search", ChannelMessageSearch)
+	v1Auth.Get("/channels/:channelId/messages/search/refine", ChannelMessageSearchRefine)
 	v1Auth.Post("/messages/:messageId/reactions", MessageReactionAdd)
 	v1Auth.Delete("/messages/:messageId/reactions", MessageReactionRemove)
 	v1Auth.Get("/messages/:messageId/reactions", MessageReactionList)

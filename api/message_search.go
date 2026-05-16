@@ -76,6 +76,11 @@ type messageSearchIdentity struct {
 	AvatarID    string `json:"avatar_attachment"`
 }
 
+type messageSearchStep struct {
+	Keyword   string
+	MatchMode string
+}
+
 const (
 	observerSearchRateWindow          = time.Minute
 	observerSearchRateLimitGlobal     = 120
@@ -121,6 +126,34 @@ func ChannelMessageSearch(c *fiber.Ctx) error {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": err.Error()})
 	}
 	return executeChannelMessageSearch(c, channelID, user.ID, channelRef)
+}
+
+func ChannelMessageSearchRefine(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{
+			"message": "未登录",
+		})
+	}
+
+	channelID, ok := parseChannelSearchChannelID(c)
+	if !ok {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"message": "缺少频道ID",
+		})
+	}
+
+	channelRef, err := resolveChannelAccess(user.ID, channelID)
+	if err != nil {
+		if errors.Is(err, fiber.ErrForbidden) {
+			return c.Status(http.StatusForbidden).JSON(fiber.Map{"message": "没有访问该频道的权限"})
+		}
+		if errors.Is(err, fiber.ErrNotFound) {
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{"message": "频道不存在"})
+		}
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": err.Error()})
+	}
+	return executeChannelMessageSearchRefine(c, channelID, user.ID, channelRef)
 }
 
 func ChannelMessageSearchObserver(c *fiber.Ctx) error {
@@ -175,6 +208,60 @@ func ChannelMessageSearchObserver(c *fiber.Ctx) error {
 		Name: channel.Name,
 	}
 	return executeChannelMessageSearch(c, channelID, "", channelRef)
+}
+
+func ChannelMessageSearchRefineObserver(c *fiber.Ctx) error {
+	channelID, ok := parseChannelSearchChannelID(c)
+	if !ok {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"message": "缺少频道ID",
+		})
+	}
+	observerSlug := strings.TrimSpace(c.Query("ob_slug"))
+	if observerSlug == "" {
+		observerSlug = strings.TrimSpace(c.Get("X-Observer-Slug"))
+	}
+	if observerSlug == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"message": "缺少OB链接标识",
+		})
+	}
+
+	clientIP := getClientIP(c)
+	allowed, retryAfter := allowObserverSearchRequest(clientIP, observerSlug, channelID)
+	if !allowed {
+		if retryAfter > 0 {
+			c.Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+		}
+		return c.Status(http.StatusTooManyRequests).JSON(fiber.Map{
+			"message": "搜索过于频繁，请稍后重试",
+		})
+	}
+
+	world, _, err := service.ResolveWorldObserverLink(observerSlug)
+	if err != nil {
+		if errors.Is(err, service.ErrWorldObserverLinkInvalid) {
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{"message": "旁观链接无效或已关闭"})
+		}
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "解析旁观链接失败"})
+	}
+	if world == nil || strings.TrimSpace(world.ID) == "" {
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{"message": "旁观链接无效或已关闭"})
+	}
+
+	channel, err := service.CanObserverAccessChannel(channelID, world.ID)
+	if err != nil {
+		if strings.Contains(err.Error(), "不存在") {
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{"message": "频道不存在"})
+		}
+		return c.Status(http.StatusForbidden).JSON(fiber.Map{"message": "没有访问该频道的权限"})
+	}
+
+	channelRef := &messageSearchChannelRef{
+		ID:   channel.ID,
+		Name: channel.Name,
+	}
+	return executeChannelMessageSearchRefine(c, channelID, "", channelRef)
 }
 
 func parseChannelSearchChannelID(c *fiber.Ctx) (string, bool) {
@@ -249,53 +336,16 @@ func executeChannelMessageSearch(c *fiber.Ctx, channelID, viewerUserID string, c
 		})
 	}
 
-	keyword := strings.TrimSpace(c.Query("keyword"))
+	keyword := normalizeSearchKeyword(c.Query("keyword"))
 	if utf8.RuneCountInString(keyword) < 1 {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"message": "请输入至少1个字符的关键字",
 		})
 	}
-	if utf8.RuneCountInString(keyword) > 120 {
-		runes := []rune(keyword)
-		keyword = string(runes[:120])
-	}
 
-	matchMode := strings.ToLower(strings.TrimSpace(c.Query("match_mode", "fuzzy")))
-	if matchMode != "exact" && matchMode != "fuzzy" {
-		matchMode = "fuzzy"
-	}
-
-	page := c.QueryInt("page", 1)
-	if page < 1 {
-		page = 1
-	}
-	pageSize := c.QueryInt("page_size", 10)
-	if pageSize < 1 {
-		pageSize = 10
-	}
-	if pageSize > 50 {
-		pageSize = 50
-	}
-
-	archivedFilter := strings.ToLower(strings.TrimSpace(c.Query("archived", "all")))
-	if archivedFilter != "all" && archivedFilter != "only" && archivedFilter != "exclude" {
-		archivedFilter = "all"
-	}
-
-	icMode := strings.ToLower(strings.TrimSpace(c.Query("ic_mode", "all")))
-	if icMode != "all" && icMode != "ic" && icMode != "ooc" {
-		icMode = "all"
-	}
-
-	includeOutside := c.QueryBool("include_outside", true)
-
-	timeStart := parseQueryInt64(c, "time_start")
-	timeEnd := parseQueryInt64(c, "time_end")
-
-	speakerIDs := parseQueryStringSlice(c, "speaker_ids")
-	if len(speakerIDs) > 0 {
-		speakerIDs = lo.Uniq(speakerIDs)
-	}
+	matchMode := parseMatchMode(c.Query("match_mode", "fuzzy"))
+	page, pageSize := parseMessageSearchPagination(c)
+	archivedFilter, icMode, includeOutside, timeStart, timeEnd, speakerIDs := parseMessageSearchFilters(c, "")
 
 	sortMode := strings.ToLower(strings.TrimSpace(c.Query("sort", "time_desc")))
 
@@ -466,6 +516,194 @@ func executeChannelMessageSearch(c *fiber.Ctx, channelID, viewerUserID string, c
 	return c.JSON(resp)
 }
 
+func executeChannelMessageSearchRefine(c *fiber.Ctx, channelID, viewerUserID string, channelRef *messageSearchChannelRef) error {
+	if channelRef == nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"message": "频道信息缺失",
+		})
+	}
+
+	baseSteps := parseMessageSearchSteps(c, "base_")
+	if len(baseSteps) == 0 {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"message": "缺少主搜索关键字",
+		})
+	}
+	currentStep := messageSearchStep{
+		Keyword:   normalizeSearchKeyword(c.Query("keyword")),
+		MatchMode: parseMatchMode(c.Query("match_mode", "fuzzy")),
+	}
+	if utf8.RuneCountInString(currentStep.Keyword) < 1 {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"message": "请输入至少1个字符的关键字",
+		})
+	}
+
+	page, pageSize := parseMessageSearchPagination(c)
+	archivedFilter, icMode, includeOutside, timeStart, timeEnd, speakerIDs := parseMessageSearchFilters(c, "base_")
+	sortMode := strings.ToLower(strings.TrimSpace(c.Query("sort", "time_desc")))
+
+	db := model.GetDB()
+	buildScopeQuery := func() *gorm.DB {
+		q := db.Model(&model.MessageModel{}).
+			Where("channel_id = ?", channelID).
+			Where("is_revoked = ?", false).
+			Where("is_deleted = ?", false)
+		q = applyWhisperVisibilityFilter(q, viewerUserID, channelID)
+
+		switch archivedFilter {
+		case "only":
+			q = q.Where("is_archived = ?", true)
+		case "exclude":
+			q = q.Where("is_archived = ?", false)
+		}
+
+		switch icMode {
+		case "ic":
+			q = q.Where("ic_mode = ?", "ic")
+		case "ooc":
+			q = q.Where("ic_mode = ?", "ooc")
+		default:
+			if !includeOutside {
+				q = q.Where("ic_mode <> ?", "ooc")
+			}
+		}
+
+		if len(speakerIDs) > 0 {
+			q = q.Where("sender_identity_id IN ?", speakerIDs)
+		}
+		if timeStart > 0 {
+			q = q.Where("created_at >= ?", time.UnixMilli(timeStart))
+		}
+		if timeEnd > 0 {
+			q = q.Where("created_at <= ?", time.UnixMilli(timeEnd))
+		}
+		return q
+	}
+
+	buildRefinedQuery := func(forceAllFallback bool) (*gorm.DB, [][]string, []string, []string, bool) {
+		steps := append(append([]messageSearchStep{}, baseSteps...), currentStep)
+		var (
+			query        *gorm.DB
+			stepTokens   = make([][]string, 0, len(steps))
+			backends     = make([]string, 0, len(steps))
+			usedFTSFlags = make([]bool, 0, len(steps))
+			usedFTS      bool
+		)
+		for idx, step := range steps {
+			nextQuery, tokens, stepUsedFTS, backend := buildKeywordQuery(
+				func() *gorm.DB {
+					if idx == 0 || query == nil {
+						return buildScopeQuery()
+					}
+					return query.Session(&gorm.Session{})
+				},
+				step.Keyword,
+				step.MatchMode,
+				forceFallbackOption(forceAllFallback || shouldForceLikeFallback(step.Keyword, step.MatchMode)),
+			)
+			query = nextQuery
+			stepTokens = append(stepTokens, tokens)
+			backends = append(backends, backend)
+			usedFTSFlags = append(usedFTSFlags, stepUsedFTS)
+			usedFTS = usedFTS || stepUsedFTS
+		}
+		return query, stepTokens, backends, lo.Map(steps, func(item messageSearchStep, _ int) string { return item.Keyword }), usedFTS
+	}
+
+	query, stepTokens, backends, stepKeywords, usedFTS := buildRefinedQuery(false)
+
+	countQuery := query.Session(&gorm.Session{})
+	var total int64
+	if err := countQuery.Count(&total).Error; err != nil {
+		if usedFTS {
+			for idx, backend := range backends {
+				if idx < len(stepTokens) {
+					reportFTSError(backend, err)
+				}
+			}
+			query, stepTokens, backends, stepKeywords, _ = buildRefinedQuery(true)
+			countQuery = query.Session(&gorm.Session{})
+			if retryErr := countQuery.Count(&total).Error; retryErr != nil {
+				return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+					"message": "查询失败",
+				})
+			}
+		} else {
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+				"message": "查询失败",
+			})
+		}
+	}
+
+	dataQuery := query.Session(&gorm.Session{})
+	switch sortMode {
+	case "relevance":
+		dataQuery = dataQuery.Order("updated_at desc").Order("created_at desc")
+	default:
+		dataQuery = dataQuery.Order("display_order desc").Order("created_at desc").Order("id desc")
+	}
+	offset := (page - 1) * pageSize
+	if offset < 0 {
+		offset = 0
+	}
+
+	var messages []*model.MessageModel
+	if err := dataQuery.
+		Offset(offset).
+		Limit(pageSize).
+		Preload("User", func(tx *gorm.DB) *gorm.DB {
+			return tx.Select("id, username, nickname, avatar, is_bot")
+		}).
+		Preload("Member", func(tx *gorm.DB) *gorm.DB {
+			return tx.Select("id, nickname, channel_id, user_id")
+		}).
+		Find(&messages).Error; err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"message": "查询失败",
+		})
+	}
+
+	items := lo.Map(messages, func(msg *model.MessageModel, _ int) messageSearchItem {
+		return buildMessageSearchItem(msg)
+	})
+
+	resp := messageSearchResponse{
+		Page:     page,
+		PageSize: pageSize,
+		Total:    total,
+		HasMore:  int64(page*pageSize) < total,
+		Items:    items,
+		Keyword:  currentStep.Keyword,
+		Match:    currentStep.MatchMode,
+		Tokens:   lastStringSlice(stepTokens),
+		Channel: &messageSearchChannelRef{
+			ID:   channelRef.ID,
+			Name: channelRef.Name,
+		},
+		Filters: map[string]any{
+			"base_keywords":        lo.Map(baseSteps, func(item messageSearchStep, _ int) string { return item.Keyword }),
+			"base_match_modes":     lo.Map(baseSteps, func(item messageSearchStep, _ int) string { return item.MatchMode }),
+			"base_archived":        archivedFilter,
+			"base_ic_mode":         icMode,
+			"base_include_outside": includeOutside,
+			"base_time_start":      timeStart,
+			"base_time_end":        timeEnd,
+			"base_speaker_ids":     speakerIDs,
+			"sort":                 sortMode,
+		},
+		Metadata: map[string]any{
+			"search_backend":   lastString(backends),
+			"search_backends":  backends,
+			"step_keywords":    stepKeywords,
+			"step_tokens":      stepTokens,
+			"search_chain_len": len(baseSteps) + 1,
+		},
+	}
+
+	return c.JSON(resp)
+}
+
 func resolveChannelAccess(userID, channelID string) (*messageSearchChannelRef, error) {
 	if len(channelID) < 30 {
 		ch, err := model.ChannelGet(channelID)
@@ -544,6 +782,106 @@ func parseQueryStringSlice(c *fiber.Ctx, key string) []string {
 		}
 	})
 	return values
+}
+
+func normalizeSearchKeyword(keyword string) string {
+	keyword = strings.TrimSpace(keyword)
+	if utf8.RuneCountInString(keyword) > 120 {
+		runes := []rune(keyword)
+		keyword = string(runes[:120])
+	}
+	return keyword
+}
+
+func parseMatchMode(raw string) string {
+	matchMode := strings.ToLower(strings.TrimSpace(raw))
+	if matchMode != "exact" && matchMode != "fuzzy" {
+		return "fuzzy"
+	}
+	return matchMode
+}
+
+func parseMessageSearchPagination(c *fiber.Ctx) (int, int) {
+	page := c.QueryInt("page", 1)
+	if page < 1 {
+		page = 1
+	}
+	pageSize := c.QueryInt("page_size", 10)
+	if pageSize < 1 {
+		pageSize = 10
+	}
+	if pageSize > 50 {
+		pageSize = 50
+	}
+	return page, pageSize
+}
+
+func parseMessageSearchFilters(c *fiber.Ctx, prefix string) (string, string, bool, int64, int64, []string) {
+	archivedFilter := strings.ToLower(strings.TrimSpace(c.Query(prefix+"archived", "all")))
+	if archivedFilter != "all" && archivedFilter != "only" && archivedFilter != "exclude" {
+		archivedFilter = "all"
+	}
+
+	icMode := strings.ToLower(strings.TrimSpace(c.Query(prefix+"ic_mode", "all")))
+	if icMode != "all" && icMode != "ic" && icMode != "ooc" {
+		icMode = "all"
+	}
+
+	includeOutside := c.QueryBool(prefix+"include_outside", true)
+	timeStart := parseQueryInt64(c, prefix+"time_start")
+	timeEnd := parseQueryInt64(c, prefix+"time_end")
+
+	speakerIDs := parseQueryStringSlice(c, prefix+"speaker_ids")
+	if len(speakerIDs) > 0 {
+		speakerIDs = lo.Uniq(speakerIDs)
+	}
+	return archivedFilter, icMode, includeOutside, timeStart, timeEnd, speakerIDs
+}
+
+func parseMessageSearchSteps(c *fiber.Ctx, prefix string) []messageSearchStep {
+	keywords := lo.Map(parseQueryStringSlice(c, prefix+"keywords"), func(item string, _ int) string {
+		return normalizeSearchKeyword(item)
+	})
+	matchModes := parseQueryStringSlice(c, prefix+"match_modes")
+	if len(keywords) == 0 {
+		keyword := normalizeSearchKeyword(c.Query(prefix + "keyword"))
+		if keyword == "" {
+			return nil
+		}
+		return []messageSearchStep{{
+			Keyword:   keyword,
+			MatchMode: parseMatchMode(c.Query(prefix+"match_mode", "fuzzy")),
+		}}
+	}
+	steps := make([]messageSearchStep, 0, len(keywords))
+	for idx, keyword := range keywords {
+		if keyword == "" {
+			continue
+		}
+		mode := "fuzzy"
+		if idx < len(matchModes) {
+			mode = parseMatchMode(matchModes[idx])
+		}
+		steps = append(steps, messageSearchStep{
+			Keyword:   keyword,
+			MatchMode: mode,
+		})
+	}
+	return steps
+}
+
+func lastString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[len(values)-1]
+}
+
+func lastStringSlice(values [][]string) []string {
+	if len(values) == 0 {
+		return []string{}
+	}
+	return values[len(values)-1]
 }
 
 func shouldForceLikeFallback(keyword, mode string) bool {
