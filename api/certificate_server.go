@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -39,10 +38,12 @@ func serveAppWithOptionalCertificate(app *fiber.App, config *utils.AppConfig) er
 	listenAddr := certificateBusinessListenAddr(config)
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
+		manager.Stop()
 		return fmt.Errorf("HTTPS 业务端口监听失败 %s: %w", listenAddr, err)
 	}
 	tlsConfig := manager.TLSConfig()
 	if tlsConfig == nil {
+		manager.Stop()
 		_ = ln.Close()
 		return fmt.Errorf("证书 TLS 配置不可用")
 	}
@@ -57,7 +58,7 @@ func serveAppWithOptionalCertificate(app *fiber.App, config *utils.AppConfig) er
 				log.Printf("HTTPS listener stopped: %v", err)
 			}
 		}()
-		startCertificateObtainInBackground(manager)
+		startCertificateMaintenance(manager)
 		return app.Listener(httpListener)
 	}
 
@@ -66,7 +67,7 @@ func serveAppWithOptionalCertificate(app *fiber.App, config *utils.AppConfig) er
 			log.Printf("HTTPS listener stopped: %v", err)
 		}
 	}()
-	startCertificateObtainInBackground(manager)
+	startCertificateMaintenance(manager)
 	return serveFiberHTTP(app, config)
 }
 
@@ -76,16 +77,19 @@ func newCertificateManagerForServing(ctx context.Context, config *utils.AppConfi
 	})
 }
 
-func startCertificateObtainInBackground(manager *service.CertificateManager) {
-	go func() {
-		obtainCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		if err := manager.ObtainNow(obtainCtx); err != nil {
-			log.Printf("[证书] 后台证书检查失败: %v", err)
-			return
-		}
-		log.Printf("[证书] 后台证书检查完成")
-	}()
+func startCertificateMaintenance(manager *service.CertificateManager) {
+	if manager == nil {
+		return
+	}
+	manager.StartRenewalLoop(context.Background())
+}
+
+func StopRuntimeCertificateManager() {
+	if runtimeCertificateManager == nil {
+		return
+	}
+	runtimeCertificateManager.Stop()
+	runtimeCertificateManager = nil
 }
 
 func startCertificateChallengeCompanions(config *utils.AppConfig, manager *service.CertificateManager, tlsConfig *tls.Config, listenAddr string) []error {

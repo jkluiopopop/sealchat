@@ -264,6 +264,10 @@ export interface CertificateConfig {
   httpsServeAt?: string;
   forceHTTPS: boolean;
   redirectHTTP: boolean;
+  checkIntervalMinutes: number;
+  renewBeforeDays: number;
+  retryInitialMinutes: number;
+  retryMaxMinutes: number;
   zeroSSLAPIKey?: string;
   zeroSSLEABKeyID?: string;
   zeroSSLEABMACKey?: string;
@@ -281,6 +285,15 @@ export interface CertificateStatus {
   notAfter?: string;
   remainingDays: number;
   lastError?: string;
+  lastCheckAt?: string;
+  lastSuccessAt?: string;
+  nextCheckAt?: string;
+  retryCount: number;
+  retrying: boolean;
+  renewBeforeDays: number;
+  checkIntervalMinutes: number;
+  retryInitialMinutes: number;
+  retryMaxMinutes: number;
 }
 
 export interface CertificateLogEntry {

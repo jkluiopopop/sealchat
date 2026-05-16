@@ -27,16 +27,25 @@ type CertificateManagerOptions struct {
 }
 
 type CertificateStatus struct {
-	Enabled            bool       `json:"enabled"`
-	RuntimeActive      bool       `json:"runtimeActive"`
-	SubjectIP          string     `json:"subjectIp"`
-	Issuer             string     `json:"issuer"`
-	Challenge          string     `json:"challenge"`
-	CertificatePresent bool       `json:"certificatePresent"`
-	NotBefore          *time.Time `json:"notBefore,omitempty"`
-	NotAfter           *time.Time `json:"notAfter,omitempty"`
-	RemainingDays      int        `json:"remainingDays"`
-	LastError          string     `json:"lastError,omitempty"`
+	Enabled              bool       `json:"enabled"`
+	RuntimeActive        bool       `json:"runtimeActive"`
+	SubjectIP            string     `json:"subjectIp"`
+	Issuer               string     `json:"issuer"`
+	Challenge            string     `json:"challenge"`
+	CertificatePresent   bool       `json:"certificatePresent"`
+	NotBefore            *time.Time `json:"notBefore,omitempty"`
+	NotAfter             *time.Time `json:"notAfter,omitempty"`
+	RemainingDays        int        `json:"remainingDays"`
+	LastError            string     `json:"lastError,omitempty"`
+	LastCheckAt          *time.Time `json:"lastCheckAt,omitempty"`
+	LastSuccessAt        *time.Time `json:"lastSuccessAt,omitempty"`
+	NextCheckAt          *time.Time `json:"nextCheckAt,omitempty"`
+	RetryCount           int        `json:"retryCount"`
+	Retrying             bool       `json:"retrying"`
+	RenewBeforeDays      int        `json:"renewBeforeDays"`
+	CheckIntervalMinutes int        `json:"checkIntervalMinutes"`
+	RetryInitialMinutes  int        `json:"retryInitialMinutes"`
+	RetryMaxMinutes      int        `json:"retryMaxMinutes"`
 }
 
 type CertificateLogEntry struct {
@@ -61,6 +70,20 @@ type CertificateManager struct {
 	lastError  string
 	logs       []CertificateLogEntry
 	logsMu     sync.Mutex
+	stateMu    sync.Mutex
+	obtainMu   sync.Mutex
+
+	lastCheckAt          *time.Time
+	lastSuccessAt        *time.Time
+	nextCheckAt          *time.Time
+	retryCount           int
+	retrying             bool
+	renewBeforeDays      int
+	checkIntervalMinutes int
+	retryInitialMinutes  int
+	retryMaxMinutes      int
+	renewalLoopCancel    context.CancelFunc
+	renewalLoopRunner    func(context.Context) time.Duration
 }
 
 func NewCertificateManager(ctx context.Context, appCfg *utils.AppConfig) (*CertificateManager, error) {
@@ -96,6 +119,10 @@ func NewCertificateManagerWithOptions(ctx context.Context, appCfg *utils.AppConf
 	manager.subjectIP = cfg.SubjectIP
 	manager.issuer = cfg.Issuer
 	manager.challenge = cfg.Challenge
+	manager.renewBeforeDays = cfg.RenewBeforeDays
+	manager.checkIntervalMinutes = cfg.CheckIntervalMinutes
+	manager.retryInitialMinutes = cfg.RetryInitialMinutes
+	manager.retryMaxMinutes = cfg.RetryMaxMinutes
 
 	cmCfg := certmagic.New(cache, certmagic.Config{
 		Storage:           storage,
@@ -167,10 +194,19 @@ func (m *CertificateManager) buildIssuer(cmCfg *certmagic.Config, storage certma
 }
 
 func (m *CertificateManager) Stop() {
-	if m == nil || m.cache == nil {
+	if m == nil {
 		return
 	}
-	m.cache.Stop()
+	m.stateMu.Lock()
+	cancel := m.renewalLoopCancel
+	m.renewalLoopCancel = nil
+	m.stateMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if m.cache != nil {
+		m.cache.Stop()
+	}
 }
 
 func (m *CertificateManager) TLSConfig() *tls.Config {
@@ -199,15 +235,7 @@ func (m *CertificateManager) ObtainNow(ctx context.Context) error {
 	if m == nil || !m.enabled || m.certConfig == nil || m.subjectIP == "" {
 		return fmt.Errorf("证书管理器未启用")
 	}
-	m.addLog("info", "obtain", "手动触发证书检查")
-	if err := m.certConfig.ManageSync(ctx, []string{m.subjectIP}); err != nil {
-		m.lastError = err.Error()
-		m.addLog("error", "obtain", err.Error())
-		return err
-	}
-	m.lastError = ""
-	m.addLog("info", "obtain", "手动证书检查已完成")
-	return nil
+	return m.obtainManagedCertificate(ctx, "手动触发证书检查", "手动证书检查已完成")
 }
 
 func (m *CertificateManager) HTTPValidationHandler(next http.Handler) http.Handler {
@@ -230,14 +258,25 @@ func (m *CertificateManager) Status(ctx context.Context) CertificateStatus {
 	if m == nil {
 		return CertificateStatus{}
 	}
+	m.stateMu.Lock()
 	status := CertificateStatus{
-		Enabled:       m.enabled,
-		RuntimeActive: m.enabled && m.certConfig != nil,
-		SubjectIP:     m.subjectIP,
-		Issuer:        string(m.issuer),
-		Challenge:     string(m.challenge),
-		LastError:     m.lastError,
+		Enabled:              m.enabled,
+		RuntimeActive:        m.enabled && m.certConfig != nil,
+		SubjectIP:            m.subjectIP,
+		Issuer:               string(m.issuer),
+		Challenge:            string(m.challenge),
+		LastError:            m.lastError,
+		LastCheckAt:          m.lastCheckAt,
+		LastSuccessAt:        m.lastSuccessAt,
+		NextCheckAt:          m.nextCheckAt,
+		RetryCount:           m.retryCount,
+		Retrying:             m.retrying,
+		RenewBeforeDays:      m.renewBeforeDays,
+		CheckIntervalMinutes: m.checkIntervalMinutes,
+		RetryInitialMinutes:  m.retryInitialMinutes,
+		RetryMaxMinutes:      m.retryMaxMinutes,
 	}
+	m.stateMu.Unlock()
 	if !status.RuntimeActive {
 		return status
 	}
@@ -295,4 +334,141 @@ func (m *CertificateManager) addLog(level, event, message string) {
 	if len(m.logs) > certificateLogLimit {
 		m.logs = m.logs[len(m.logs)-certificateLogLimit:]
 	}
+}
+
+func (m *CertificateManager) StartRenewalLoop(parent context.Context) {
+	if m == nil || !m.enabled || m.certConfig == nil || m.subjectIP == "" {
+		return
+	}
+	m.stateMu.Lock()
+	if m.renewalLoopCancel != nil {
+		m.stateMu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(parent)
+	m.renewalLoopCancel = cancel
+	runner := m.renewalLoopRunner
+	m.stateMu.Unlock()
+
+	if runner == nil {
+		runner = m.runSingleRenewalPass
+	}
+	m.addLog("info", "renewal", "自动续期守护已启动")
+	go m.runRenewalLoop(ctx, runner)
+}
+
+func (m *CertificateManager) runRenewalLoop(ctx context.Context, runner func(context.Context) time.Duration) {
+	for {
+		delay := runner(ctx)
+		if delay <= 0 {
+			delay = time.Duration(m.checkIntervalMinutes) * time.Minute
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			m.addLog("info", "renewal", "自动续期守护已停止")
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+func (m *CertificateManager) runSingleRenewalPass(ctx context.Context) time.Duration {
+	now := time.Now()
+	status := m.Status(ctx)
+	if shouldRenewCertificate(status.RemainingDays, m.renewBeforeDays, status.CertificatePresent) {
+		m.addLog("info", "renewal", "自动续期守护触发证书检查")
+		if err := m.obtainManagedCertificate(ctx, "自动续期守护触发证书检查", "自动续期守护证书检查已完成"); err != nil {
+			delay := nextCertificateCheckDelay(true, m.currentRetryCount()+1, m.checkIntervalMinutes, m.retryInitialMinutes, m.retryMaxMinutes)
+			m.recordRenewalFailure(now, delay, err)
+			m.addLog("error", "renewal", fmt.Sprintf("自动续期守护检查失败，将在 %s 后重试: %v", delay, err))
+			return delay
+		}
+		delay := nextCertificateCheckDelay(false, 0, m.checkIntervalMinutes, m.retryInitialMinutes, m.retryMaxMinutes)
+		m.recordRenewalSuccess(now, delay)
+		return delay
+	}
+
+	delay := nextCertificateCheckDelay(false, 0, m.checkIntervalMinutes, m.retryInitialMinutes, m.retryMaxMinutes)
+	m.recordRenewalSuccess(now, delay)
+	m.addLog("info", "renewal", "证书剩余时间充足，本轮无需续期")
+	return delay
+}
+
+func (m *CertificateManager) currentRetryCount() int {
+	if m == nil {
+		return 0
+	}
+	m.stateMu.Lock()
+	defer m.stateMu.Unlock()
+	return m.retryCount
+}
+
+func shouldRenewCertificate(remainingDays int, thresholdDays int, present bool) bool {
+	if !present {
+		return true
+	}
+	return remainingDays <= thresholdDays
+}
+
+func nextCertificateCheckDelay(retrying bool, retryCount int, normalMinutes int, initialRetryMinutes int, maxRetryMinutes int) time.Duration {
+	if !retrying || retryCount <= 0 {
+		return time.Duration(normalMinutes) * time.Minute
+	}
+	delay := initialRetryMinutes
+	for i := 1; i < retryCount; i++ {
+		delay *= 2
+		if delay >= maxRetryMinutes {
+			delay = maxRetryMinutes
+			break
+		}
+	}
+	return time.Duration(delay) * time.Minute
+}
+
+func (m *CertificateManager) recordRenewalFailure(now time.Time, nextDelay time.Duration, err error) {
+	if m == nil {
+		return
+	}
+	m.stateMu.Lock()
+	defer m.stateMu.Unlock()
+	m.lastError = err.Error()
+	m.retryCount++
+	m.retrying = true
+	lastCheckAt := now
+	nextCheckAt := now.Add(nextDelay)
+	m.lastCheckAt = &lastCheckAt
+	m.nextCheckAt = &nextCheckAt
+}
+
+func (m *CertificateManager) recordRenewalSuccess(now time.Time, nextDelay time.Duration) {
+	if m == nil {
+		return
+	}
+	m.stateMu.Lock()
+	defer m.stateMu.Unlock()
+	m.lastError = ""
+	m.retryCount = 0
+	m.retrying = false
+	lastCheckAt := now
+	lastSuccessAt := now
+	nextCheckAt := now.Add(nextDelay)
+	m.lastCheckAt = &lastCheckAt
+	m.lastSuccessAt = &lastSuccessAt
+	m.nextCheckAt = &nextCheckAt
+}
+
+func (m *CertificateManager) obtainManagedCertificate(ctx context.Context, startMessage string, successMessage string) error {
+	m.obtainMu.Lock()
+	defer m.obtainMu.Unlock()
+	m.addLog("info", "obtain", startMessage)
+	if err := m.certConfig.ManageSync(ctx, []string{m.subjectIP}); err != nil {
+		m.lastError = err.Error()
+		m.addLog("error", "obtain", err.Error())
+		return err
+	}
+	m.lastError = ""
+	m.addLog("info", "obtain", successMessage)
+	return nil
 }

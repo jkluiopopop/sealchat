@@ -185,6 +185,7 @@ func main() {
 	go func() {
 		_ = <-c
 		cancel()
+		api.StopRuntimeCertificateManager()
 		cleanUp()
 		releaseStartupLock()
 		os.Exit(0)

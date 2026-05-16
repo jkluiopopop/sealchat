@@ -3,7 +3,7 @@ import { useUtilsStore } from '@/stores/utils'
 import type { CertificateChallenge, CertificateConfig, CertificateIssuer, CertificateLogEntry, CertificateStatus } from '@/types'
 import { cloneDeep } from 'lodash-es'
 import { useMessage } from 'naive-ui'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 type CertificateConfigResponse = {
   config: CertificateConfig
@@ -23,6 +23,10 @@ const defaultConfig = (): CertificateConfig => ({
   httpsServeAt: '',
   forceHTTPS: true,
   redirectHTTP: true,
+  checkIntervalMinutes: 360,
+  renewBeforeDays: 14,
+  retryInitialMinutes: 5,
+  retryMaxMinutes: 240,
   zeroSSLAPIKey: '',
   zeroSSLEABKeyID: '',
   zeroSSLEABMACKey: '',
@@ -47,6 +51,10 @@ const challengeOptions: { label: string; value: CertificateChallenge }[] = [
   { label: 'TLS-ALPN-01（使用 443 端口）', value: 'tls-alpn-01' },
 ]
 
+const minimumRenewBeforeDays = computed(() => (
+  model.value.issuer === 'letsencrypt_shortlived' ? 3 : 1
+))
+
 const normalizeConfig = (value?: Partial<CertificateConfig> | null): CertificateConfig => ({
   ...defaultConfig(),
   ...(value || {}),
@@ -62,6 +70,12 @@ const formatCertificateTime = (value?: string | null) => {
   return new Date(value).toLocaleString()
 }
 
+watch(() => model.value.issuer, () => {
+  if (model.value.renewBeforeDays < minimumRenewBeforeDays.value) {
+    model.value.renewBeforeDays = minimumRenewBeforeDays.value
+  }
+})
+
 const statusRows = computed(() => {
   const item = status.value
   if (!item) return []
@@ -74,6 +88,15 @@ const statusRows = computed(() => {
     ['剩余天数', item.certificatePresent ? `${item.remainingDays} 天` : '未知'],
     ['生效时间', formatCertificateTime(item.notBefore)],
     ['过期时间', formatCertificateTime(item.notAfter)],
+    ['最近检查', formatCertificateTime(item.lastCheckAt)],
+    ['最近成功', formatCertificateTime(item.lastSuccessAt)],
+    ['下次检查', formatCertificateTime(item.nextCheckAt)],
+    ['重试状态', item.retrying ? '重试中' : '正常周期'],
+    ['重试次数', `${item.retryCount ?? 0}`],
+    ['检查周期', `${item.checkIntervalMinutes ?? 0} 分钟`],
+    ['续期阈值', `${item.renewBeforeDays ?? 0} 天`],
+    ['重试初始间隔', `${item.retryInitialMinutes ?? 0} 分钟`],
+    ['重试最大间隔', `${item.retryMaxMinutes ?? 0} 分钟`],
   ]
 })
 
@@ -184,6 +207,18 @@ defineExpose({
             <n-form-item label="HTTP 重定向">
               <n-switch v-model:value="model.redirectHTTP" />
             </n-form-item>
+            <n-form-item label="检查周期（分钟）" feedback="自动续期守护完成一轮成功检查后，按此周期进入下一轮。">
+              <n-input-number v-model:value="model.checkIntervalMinutes" :min="1" />
+            </n-form-item>
+            <n-form-item label="最小续期阈值（天）" feedback="剩余天数小于等于该值时，自动续期守护会主动触发证书检查。Let’s Encrypt 短期证书最低自动调整为 3 天。">
+              <n-input-number v-model:value="model.renewBeforeDays" :min="minimumRenewBeforeDays" />
+            </n-form-item>
+            <n-form-item label="重试初始间隔（分钟）" feedback="自动续期检查失败后，从此间隔开始指数退避重试。">
+              <n-input-number v-model:value="model.retryInitialMinutes" :min="1" />
+            </n-form-item>
+            <n-form-item label="重试最大间隔（分钟）" feedback="指数退避重试不会超过此上限。">
+              <n-input-number v-model:value="model.retryMaxMinutes" :min="1" />
+            </n-form-item>
 
             <n-divider>ZeroSSL 凭据</n-divider>
             <n-form-item label="API Key" feedback="已保存的密钥不会回显；留空表示保留旧值。">
@@ -206,7 +241,7 @@ defineExpose({
         <n-card title="当前状态" :bordered="false" class="admin-certificate__card">
           <div class="admin-certificate__actions">
             <n-button size="small" @click="refreshStatus">刷新</n-button>
-            <n-button size="small" type="primary" :loading="obtaining" @click="obtainNow">触发检查</n-button>
+            <n-button size="small" type="primary" :loading="obtaining" @click="obtainNow">触发检查与续期</n-button>
           </div>
           <div v-if="status?.lastError" class="admin-certificate__error">{{ status.lastError }}</div>
           <div v-for="row in statusRows" :key="row[0]" class="admin-certificate__status-row">

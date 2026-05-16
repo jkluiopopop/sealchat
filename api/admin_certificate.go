@@ -92,10 +92,14 @@ func certificateRuntimeStatus(ctx context.Context) service.CertificateStatus {
 	}
 	cfg := utils.NormalizeCertificateConfig(appConfig.Certificate)
 	return service.CertificateStatus{
-		Enabled:       cfg.Enabled,
-		RuntimeActive: false,
-		SubjectIP:     cfg.SubjectIP,
-		Issuer:        string(cfg.Issuer),
-		Challenge:     string(cfg.Challenge),
+		Enabled:              cfg.Enabled,
+		RuntimeActive:        false,
+		SubjectIP:            cfg.SubjectIP,
+		Issuer:               string(cfg.Issuer),
+		Challenge:            string(cfg.Challenge),
+		RenewBeforeDays:      cfg.RenewBeforeDays,
+		CheckIntervalMinutes: cfg.CheckIntervalMinutes,
+		RetryInitialMinutes:  cfg.RetryInitialMinutes,
+		RetryMaxMinutes:      cfg.RetryMaxMinutes,
 	}
 }
