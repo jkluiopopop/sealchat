@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue';
 import { chatEvent, useChatStore } from './chat';
 import { useUserStore } from './user';
 import { useDisplayStore } from './display';
-import { extractTemplateKeys, getWorldCardTemplate } from '@/utils/characterCardTemplate';
+import { extractTemplateKeys, getWorldCardTemplate, hasRenderableBadgeData } from '@/utils/characterCardTemplate';
 import {
   buildBotNicknameSyncCommand,
   resolveBotNicknameSyncName,
@@ -393,19 +393,27 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     if (!identityId) {
       return;
     }
+    const updatedAt = Number(
+      payload?.updatedAt
+      || event?.characterCardBadge?.updatedAt
+      || event?.timestamp
+      || Math.floor(Date.now() / 1000),
+    );
     const action = typeof payload?.action === 'string' ? payload.action : 'update';
+    const channelId = typeof event?.channel?.id === 'string'
+      ? event.channel.id
+      : badgeByIdentity.value[identityId]?.channelId || '';
     if (action === 'clear') {
-      const channelId = typeof event?.channel?.id === 'string'
-        ? event.channel.id
-        : badgeByIdentity.value[identityId]?.channelId || '';
+      const existing = channelId ? badgeCacheByChannel.value[channelId]?.[identityId] : null;
+      if (existing && updatedAt < existing.updatedAt) {
+        return;
+      }
       removeBadgeEntry(identityId);
       if (channelId) {
         removeBadgeCacheEntry(channelId, identityId);
       }
       return;
     }
-    const channelId = typeof event?.channel?.id === 'string' ? event.channel.id : '';
-    const updatedAt = typeof event?.timestamp === 'number' ? event.timestamp : Math.floor(Date.now() / 1000);
     const template = typeof payload?.template === 'string' ? payload.template : '';
     const attrs = payload?.attrs && typeof payload.attrs === 'object' ? payload.attrs : {};
     const entry: CharacterCardBadgeEntry = {
@@ -431,7 +439,6 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       loadBadgeCache(channelId);
       return;
     }
-    const updatedAt = typeof event?.timestamp === 'number' ? event.timestamp : Math.floor(Date.now() / 1000);
     const next = { ...badgeByIdentity.value };
     const cacheNext: Record<string, CharacterCardBadgeEntry> = {};
     Object.keys(next).forEach((key) => {
@@ -443,6 +450,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       const identityId = typeof item?.identityId === 'string' ? item.identityId : '';
       if (!identityId) continue;
       if (item?.action === 'clear') continue;
+      const updatedAt = Number(
+        item?.updatedAt
+        || event?.timestamp
+        || Math.floor(Date.now() / 1000),
+      );
       const template = typeof item?.template === 'string' ? item.template : '';
       const attrs = item?.attrs && typeof item.attrs === 'object' ? item.attrs : {};
       const entry: CharacterCardBadgeEntry = {
@@ -463,6 +475,15 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     if (badgeGatewayBound) return;
     chatEvent.on('character-card-badge-updated' as any, applyBadgeEvent);
     chatEvent.on('character-card-badge-snapshot' as any, applyBadgeSnapshot);
+    chatEvent.on('channel-identity-updated' as any, (payload?: { channelId?: string; removedId?: string; replacedId?: string }) => {
+      const channelId = String(payload?.channelId || '').trim();
+      const removedId = String(payload?.removedId || payload?.replacedId || '').trim();
+      if (!channelId || !removedId) {
+        return;
+      }
+      removeBadgeEntry(removedId);
+      removeBadgeCacheEntry(channelId, removedId);
+    });
     badgeGatewayBound = true;
   };
 
@@ -1101,6 +1122,10 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       await broadcastActiveBadge(channelId, resolvedIdentityId, 'clear');
       return;
     }
+    if (!hasRenderableBadgeData(template, attrsSource)) {
+      await broadcastActiveBadge(channelId, resolvedIdentityId, 'clear');
+      return;
+    }
     const keys = extractTemplateKeys(template);
     const filteredAttrs: Record<string, any> = {};
     if (keys.length > 0) {
@@ -1128,7 +1153,10 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
   };
 
-  const getBadgeByIdentity = (identityId: string) => badgeByIdentity.value[identityId];
+  const getBadgeByIdentity = (channelId: string, identityId: string) => {
+    if (!channelId || !identityId) return null;
+    return badgeCacheByChannel.value[channelId]?.[identityId] || null;
+  };
 
   watch(
     () => userStore.info?.id,

@@ -75,3 +75,13 @@ export function extractTemplateKeys(template: string): string[] {
   });
   return keys;
 }
+
+export function hasRenderableBadgeData(template: string, data?: Record<string, any>): boolean {
+  if (!template || !data) return false;
+  const keys = extractTemplateKeys(template);
+  if (keys.length === 0) return false;
+  return keys.some((key) => {
+    const value = data[key];
+    return value !== undefined && value !== null && value !== '';
+  });
+}

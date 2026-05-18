@@ -428,7 +428,7 @@ const inputIcMode = computed<'ic' | 'ooc'>({
       if (channelId && nextIdentityId && nextIdentityId !== previousIdentityId) {
         void (async () => {
           const syncResult = await characterCardStore.syncCardForIdentity(channelId, nextIdentityId, {
-            preserveWhenUnbound: true,
+            preserveWhenUnbound: false,
           });
           if (syncResult.ok) {
             emitTypingPreview();
@@ -1333,7 +1333,7 @@ const simulateCurrentIdentitySelection = async (channelId?: string) => {
       return false;
     }
     const syncResult = await characterCardStore.syncCardForIdentity(channelId, identityId, {
-      preserveWhenUnbound: true,
+      preserveWhenUnbound: false,
     });
     if (!syncResult.ok) {
       return false;
@@ -4928,7 +4928,7 @@ const submitIdentityForm = async () => {
     if (identityDialogMode.value === 'create') {
       const createdIdentity = await chat.channelIdentityCreate(payload);
       // Handle character card binding for new identity
-      if (createdIdentity?.id && chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
+      if (createdIdentity?.id && chat.curChannel?.id) {
         if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
           message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
         } else {
@@ -4947,12 +4947,16 @@ const submitIdentityForm = async () => {
     } else if (editingIdentity.value) {
       if (editingIdentity.value.isTemporary) {
         const replacedIdentity = await chat.channelIdentityReplaceTemporary(editingIdentity.value.id, payload);
-        if (replacedIdentity?.id && chat.curChannel?.id && identityForm.characterCardId && identityForm.characterCardId !== identityOriginalCardId.value) {
+        if (replacedIdentity?.id && chat.curChannel?.id) {
           if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
             message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
           } else {
             try {
-              await characterCardStore.bindIdentity(chat.curChannel.id, replacedIdentity.id, identityForm.characterCardId);
+              if (identityForm.characterCardId) {
+                await characterCardStore.bindIdentity(chat.curChannel.id, replacedIdentity.id, identityForm.characterCardId);
+              } else {
+                await characterCardStore.unbindIdentity(chat.curChannel.id, replacedIdentity.id);
+              }
             } catch (e) {
               console.warn('Failed to bind character card for replaced identity', e);
             }
@@ -11730,7 +11734,7 @@ const send = throttle(async () => {
     if (shortcutResult?.matched) {
       chat.setActiveIdentity(chat.curChannel.id, shortcutResult.matched.id);
       await characterCardStore.syncCardForIdentity(chat.curChannel.id, shortcutResult.matched.id, {
-        preserveWhenUnbound: true,
+        preserveWhenUnbound: false,
       });
       draft = shortcutResult.restContent;
       textToSend.value = shortcutResult.restContent;
