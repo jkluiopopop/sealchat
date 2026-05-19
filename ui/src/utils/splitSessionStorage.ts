@@ -93,10 +93,13 @@ export const createIcOocSplitSessionSnapshot = (
   scopeWorldId: string,
   worldId: string,
   channelId: string,
+  layout: 'ic-left' | 'ooc-left' = 'ic-left',
 ): SplitSessionSnapshot => {
   const normalizedScopeWorldId = scopeWorldId.trim()
   const normalizedWorldId = worldId.trim()
   const normalizedChannelId = channelId.trim()
+  const leftIcFilter = layout === 'ooc-left' ? 'ooc' : 'ic'
+  const rightIcFilter = layout === 'ooc-left' ? 'ic' : 'ooc'
   const snapshot = createDefaultSplitSessionSnapshot(normalizedScopeWorldId)
   snapshot.updatedAt = Date.now()
   snapshot.panes = {
@@ -106,7 +109,7 @@ export const createIcOocSplitSessionSnapshot = (
       channelId: normalizedChannelId,
       filterState: {
         ...snapshot.panes.A.filterState,
-        icFilter: 'ic',
+        icFilter: leftIcFilter,
       },
     },
     B: {
@@ -115,7 +118,7 @@ export const createIcOocSplitSessionSnapshot = (
       channelId: normalizedChannelId,
       filterState: {
         ...snapshot.panes.B.filterState,
-        icFilter: 'ooc',
+        icFilter: rightIcFilter,
       },
     },
   }

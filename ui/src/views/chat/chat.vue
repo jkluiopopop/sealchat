@@ -217,7 +217,7 @@ const openSplitView = async () => {
   await openSplitRoute(worldId, worldId, currentChannelId, '');
 };
 
-const openIcOocSplitView = async () => {
+const openIcOocSplitView = async (side: 'left' | 'right') => {
   const currentChannelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
   const worldId = chat.currentWorldId ? String(chat.currentWorldId) : '';
   if (!worldId || !currentChannelId) {
@@ -225,7 +225,12 @@ const openIcOocSplitView = async () => {
     return;
   }
   const scopeWorldId = buildIcOocSplitScopeWorldId(worldId);
-  const snapshot = createIcOocSplitSessionSnapshot(scopeWorldId, worldId, currentChannelId);
+  const snapshot = createIcOocSplitSessionSnapshot(
+    scopeWorldId,
+    worldId,
+    currentChannelId,
+    side === 'right' ? 'ooc-left' : 'ic-left',
+  );
   if (!writeSplitSessionSnapshot(scopeWorldId, snapshot)) {
     message.error('初始化场内外分屏失败');
     return;
