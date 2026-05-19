@@ -514,7 +514,7 @@ const cycleIcFilter = () => {
                   class="ribbon-dual-split__choice ribbon-dual-split__choice--right"
                   @click.stop="handleSplitChooserSelect('right')"
                 >
-                  右场外
+                  右场内
                 </button>
               </div>
             </div>
