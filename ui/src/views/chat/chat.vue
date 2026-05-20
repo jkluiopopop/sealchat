@@ -78,6 +78,7 @@ import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
 import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
 import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
+import { shouldAttemptCharacterApiReconnectBeforeBotCommand } from '@/utils/characterApiReconnectGuard';
 import { buildOptimisticMessageIcModeFields } from '@/utils/optimisticMessageIcMode';
 import { buildGeneratedAvatarFile } from '@/utils/generatedAvatarImage';
 import { extractPushNotificationPreviewText } from '@/utils/pushNotificationPreview';
@@ -1386,6 +1387,9 @@ watch(
   () => [chat.curChannel?.id, chat.curChannel?.characterApiEnabled] as const,
   ([channelId, characterApiEnabled]) => {
     initCharacterRemark(channelId);
+    if (channelId && characterApiEnabled === true) {
+      characterCardStore.markCharacterApiHealthy(channelId);
+    }
     if (!channelId || characterApiEnabled !== true) return;
     void (async () => {
       const didSync = await simulateCurrentIdentitySelection(channelId);
@@ -11951,6 +11955,27 @@ const send = throttle(async () => {
     } else {
       // 纯文本模式：仅做安全转义与 Satori 占位替换，轻量 Markdown 交给前端渲染
       finalContent = await normalizePlainMessageContent(draft);
+    }
+
+    if (
+      activeChannelId
+      && shouldAttemptCharacterApiReconnectBeforeBotCommand({
+        content: finalContent,
+        botCommandPrefixes: chat.curChannel?.botCommandPrefixes,
+        botFeatureEnabled: effectiveBotFeatureEnabled.value,
+        isBotPrivateChat: isCurrentBotPrivateChatChannel.value,
+        characterApiReady: characterCardStore.isCharacterApiReady(activeChannelId),
+        hadSuccessfulCharacterApiSession: characterCardStore.hasSuccessfulCharacterApiSession(activeChannelId),
+      })
+    ) {
+      try {
+        await characterCardStore.ensureCharacterApiReadyForBotCommand(activeChannelId);
+      } catch (error) {
+        console.warn('[CharacterCard] Failed to revalidate before bot command send', {
+          channelId: activeChannelId,
+          error,
+        });
+      }
     }
 
     tmpMsg.content = finalContent;

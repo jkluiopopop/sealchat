@@ -48,6 +48,10 @@ export interface CharacterCardBadgeEntry {
   updatedAt: number;
 }
 
+type CharacterApiRevalidateResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
 const normalizeCharacterApiDisabledReason = (reason?: string, channel?: any) => {
   const msg = String(reason || '').trim();
   if (!msg) {
@@ -98,6 +102,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const lastBotNicknameSyncByChannel = ref<Record<string, string>>({});
   const badgeCacheByChannel = ref<Record<string, Record<string, CharacterCardBadgeEntry>>>({});
   const botCharacterDisabledByChannel = ref<Record<string, boolean>>({});
+  const characterApiHealthySessionByChannel = ref<Record<string, boolean>>({});
 
   const panelVisible = ref(false);
   const loading = ref(false);
@@ -108,6 +113,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   let loadedBindingsKey = '';
   let loadedBadgeCacheKey = '';
   let badgeGatewayBound = false;
+  const revalidateCharacterApiInFlight = new Map<string, Promise<CharacterApiRevalidateResult>>();
 
   const isBotCharacterDisabled = (channelId?: string) => {
     if (!channelId) {
@@ -118,6 +124,17 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       return true;
     }
     return botCharacterDisabledByChannel.value[channelId] === true;
+  };
+
+  const markCharacterApiHealthy = (channelId?: string) => {
+    const normalizedChannelId = String(channelId || '').trim();
+    if (!normalizedChannelId || characterApiHealthySessionByChannel.value[normalizedChannelId] === true) {
+      return;
+    }
+    characterApiHealthySessionByChannel.value = {
+      ...characterApiHealthySessionByChannel.value,
+      [normalizedChannelId]: true,
+    };
   };
 
   const markBotCharacterDisabled = (channelId: string) => {
@@ -146,6 +163,10 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   };
 
   const maybeDisableFromResponse = (channelId: string, resp: any) => {
+    if (resp?.data?.ok === true) {
+      markCharacterApiHealthy(channelId);
+      return;
+    }
     const err = resp?.data?.error;
     if (resp?.data?.ok === false && err === characterApiUnsupportedText) {
       markBotCharacterDisabled(channelId);
@@ -182,6 +203,30 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       return normalizeCharacterApiDisabledReason(channel.characterApiReason, channel);
     }
     return characterApiUnsupportedText;
+  };
+
+  const hasSuccessfulCharacterApiSession = (channelId?: string) => {
+    const normalizedChannelId = String(channelId || '').trim();
+    if (!normalizedChannelId) {
+      return false;
+    }
+    if (characterApiHealthySessionByChannel.value[normalizedChannelId] === true) {
+      return true;
+    }
+    const channel = chatStore.findChannelById(normalizedChannelId) as any;
+    if (channel?.characterApiEnabled === true) {
+      markCharacterApiHealthy(normalizedChannelId);
+      return true;
+    }
+    return false;
+  };
+
+  const isCharacterApiReady = (channelId?: string) => {
+    const normalizedChannelId = String(channelId || '').trim();
+    if (!normalizedChannelId) {
+      return false;
+    }
+    return !isBotCharacterDisabled(normalizedChannelId);
   };
 
   const getBindingsStorageKey = () => {
@@ -583,53 +628,84 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     return null;
   };
 
-  const revalidateCharacterApi = async (channelId: string) => {
+  const revalidateCharacterApi = async (channelId: string): Promise<CharacterApiRevalidateResult> => {
     const normalizedChannelId = (channelId || '').trim();
     if (!normalizedChannelId) {
       return { ok: false as const, error: '缺少频道ID' };
     }
-
-    await chatStore.ensureConnectionReady();
-    const payload: Record<string, string> = {
-      group_id: normalizedChannelId,
-    };
-    const userId = getUserId();
-    if (userId) {
-      payload.user_id = userId;
+    const pending = revalidateCharacterApiInFlight.get(normalizedChannelId);
+    if (pending) {
+      return pending;
     }
 
-    try {
-      const resp = await chatStore.sendAPI<{ data?: { ok?: boolean; error?: string } }>('character.capability.test', payload);
-      const ok = resp?.data?.ok === true;
-      if (ok) {
-        clearBotCharacterDisabled(normalizedChannelId);
-        chatStore.patchChannelAttributes(normalizedChannelId, {
-          characterApiEnabled: true,
-          characterApiReason: '',
-        } as any);
-        return { ok: true as const };
+    const task = (async (): Promise<CharacterApiRevalidateResult> => {
+      await chatStore.ensureConnectionReady();
+      const payload: Record<string, string> = {
+        group_id: normalizedChannelId,
+      };
+      const userId = getUserId();
+      if (userId) {
+        payload.user_id = userId;
       }
-      const err = String(resp?.data?.error || characterApiUnsupportedText).trim() || characterApiUnsupportedText;
-      markBotCharacterDisabled(normalizedChannelId);
-      chatStore.patchChannelAttributes(normalizedChannelId, {
-        characterApiEnabled: false,
-        characterApiReason: err,
-      } as any);
-      return { ok: false as const, error: err };
-    } catch (e: any) {
-      const err = String(
-        e?.response?.data?.error
-        || e?.response?.err
-        || e?.message
-        || '人物卡 API 验证失败',
-      ).trim() || '人物卡 API 验证失败';
-      markBotCharacterDisabled(normalizedChannelId);
-      chatStore.patchChannelAttributes(normalizedChannelId, {
-        characterApiEnabled: false,
-        characterApiReason: err,
-      } as any);
-      return { ok: false as const, error: err };
+
+      try {
+        const resp = await chatStore.sendAPI<{ data?: { ok?: boolean; error?: string } }>('character.capability.test', payload);
+        const ok = resp?.data?.ok === true;
+        if (ok) {
+          markCharacterApiHealthy(normalizedChannelId);
+          clearBotCharacterDisabled(normalizedChannelId);
+          chatStore.patchChannelAttributes(normalizedChannelId, {
+            characterApiEnabled: true,
+            characterApiReason: '',
+          } as any);
+          return { ok: true as const };
+        }
+        const err = String(resp?.data?.error || characterApiUnsupportedText).trim() || characterApiUnsupportedText;
+        markBotCharacterDisabled(normalizedChannelId);
+        chatStore.patchChannelAttributes(normalizedChannelId, {
+          characterApiEnabled: false,
+          characterApiReason: err,
+        } as any);
+        return { ok: false as const, error: err };
+      } catch (e: any) {
+        const err = String(
+          e?.response?.data?.error
+          || e?.response?.err
+          || e?.message
+          || '人物卡 API 验证失败',
+        ).trim() || '人物卡 API 验证失败';
+        markBotCharacterDisabled(normalizedChannelId);
+        chatStore.patchChannelAttributes(normalizedChannelId, {
+          characterApiEnabled: false,
+          characterApiReason: err,
+        } as any);
+        return { ok: false as const, error: err };
+      }
+    })();
+    revalidateCharacterApiInFlight.set(normalizedChannelId, task);
+    try {
+      return await task;
+    } finally {
+      revalidateCharacterApiInFlight.delete(normalizedChannelId);
     }
+  };
+
+  const ensureCharacterApiReadyForBotCommand = async (channelId: string) => {
+    const normalizedChannelId = String(channelId || '').trim();
+    if (!normalizedChannelId) {
+      return { attempted: false as const };
+    }
+    if (!hasSuccessfulCharacterApiSession(normalizedChannelId)) {
+      return { attempted: false as const };
+    }
+    if (isCharacterApiReady(normalizedChannelId)) {
+      return { attempted: false as const };
+    }
+    const result = await revalidateCharacterApi(normalizedChannelId);
+    return {
+      attempted: true as const,
+      ...result,
+    };
   };
 
   // Create a new character card
@@ -1201,6 +1277,10 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     requestBadgeSnapshot,
     broadcastActiveBadge,
     revalidateCharacterApi,
+    markCharacterApiHealthy,
+    hasSuccessfulCharacterApiSession,
+    isCharacterApiReady,
+    ensureCharacterApiReadyForBotCommand,
     isBotCharacterDisabled,
     getCharacterApiDisabledReason,
   };
