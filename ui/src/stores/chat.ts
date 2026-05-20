@@ -19,6 +19,7 @@ import { useDisplayStore } from './display';
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
 import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKey } from '@/utils/backgroundPreset';
 import { resolveNextUnreadCountForMessageNotice } from './chatUnreadNotice';
+import { mergeCharacterApiRuntimeStateIntoChannels } from './chatChannelRuntimeState';
 import { findChannelByIdFromTree, findFirstEnterableChannel, isDeletedChannelForAccess } from './chatChannelSelection';
 import { parseLastChannelByWorldMap, resolvePreferredChannelForWorld, updateLastChannelByWorldMap } from './chatWorldChannelSession';
 
@@ -2128,7 +2129,12 @@ export const useChatStore = defineStore({
     },
 
     applyChannelTree(worldId: string, channels: Channel[]) {
-      const groupedData = groupBy(channels, 'parentId');
+      const previousTree = (this.channelTreeByWorld?.[worldId] || []) as SChannel[];
+      const normalizedChannels = mergeCharacterApiRuntimeStateIntoChannels(
+        channels as SChannel[],
+        previousTree,
+      );
+      const groupedData = groupBy(normalizedChannels, 'parentId');
       const buildTree = (parentId: string): any => {
         const children = groupedData[parentId] || [];
         return children.map((child: Channel) => ({
