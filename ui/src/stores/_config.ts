@@ -1,6 +1,6 @@
 import axiosFactory, { Axios } from "axios"
 import Cookies from "js-cookie"
-import { persistAccessToken } from "@/utils/authToken";
+import { getStoredAccessToken, persistAccessToken } from "@/utils/authToken";
 const axios = axiosFactory.create()
 axios.defaults.withCredentials = true;
 
@@ -42,19 +42,36 @@ export const api = axiosFactory.create({
   responseType: 'json',
 });
 
-api.interceptors.request.use(config => {
-  const headers = (config.headers || {}) as Record<string, any>;
-  const existingAuth = headers['Authorization'] || headers['authorization'];
+export function buildAuthorizedHeaders(headers: Record<string, any> = {}) {
+  const nextHeaders = { ...headers };
+  const existingAuth = nextHeaders['Authorization'] || nextHeaders['authorization'];
   if (!existingAuth) {
-    const token = localStorage.getItem('accessToken') || Cookies.get('Authorization') || '';
+    const token = getStoredAccessToken();
     if (token && token !== 'null' && token !== 'undefined') {
-      headers['Authorization'] = token;
+      nextHeaders['Authorization'] = token;
     } else {
-      delete headers['Authorization'];
-      delete headers['authorization'];
+      delete nextHeaders['Authorization'];
+      delete nextHeaders['authorization'];
     }
   }
-  config.headers = headers;
+  return nextHeaders;
+}
+
+export function buildAuthorizedJsonRequestInit(init: RequestInit = {}): RequestInit {
+  const headers = buildAuthorizedHeaders((init.headers || {}) as Record<string, any>);
+  if (!headers['Content-Type'] && !headers['content-type']) {
+    headers['Content-Type'] = 'application/json';
+  }
+  return {
+    credentials: 'include',
+    ...init,
+    headers,
+  };
+}
+
+api.interceptors.request.use(config => {
+  const headers = (config.headers || {}) as Record<string, any>;
+  config.headers = buildAuthorizedHeaders(headers);
   return config;
 });
 

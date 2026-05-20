@@ -32,6 +32,11 @@ export interface AudioAssetUsageSummary {
   referenced: boolean;
 }
 
+export interface AudioPlayableStreamResponse {
+  streamUrl: string;
+  expiresAt: number;
+}
+
 export interface AudioQuotaSummary {
   limited: boolean;
   quotaBytes: number | null;

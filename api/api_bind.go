@@ -398,6 +398,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1.Get("/webhook/worlds/:worldId/digests", WebhookWorldDigestList)
 	v1.Get("/webhook/worlds/:worldId/digests/latest", WebhookWorldDigestLatest)
 	v1.Post("/webhook/channels/:channelId/messages", WebhookAuthMiddleware, WebhookMessages)
+	// 必须在 v1Auth.Use(SignCheckMiddleware) 之前注册。
+	// Fiber 同前缀 group middleware 会按注册顺序吞掉后续路由；若放在后面，playToken 请求会先被 SignCheckMiddleware 拦成 401。
+	v1.Get("/audio/stream/:id", OptionalSignCheckMiddleware, AudioAssetStream)
 
 	v1Auth := v1.Group("")
 	v1Auth.Use(SignCheckMiddleware)
@@ -563,9 +566,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	audio := v1Auth.Group("/audio")
 	audio.Get("/assets", AudioAssetList)
 	audio.Get("/assets/:id", AudioAssetGet)
+	audio.Post("/assets/:id/play-token", AudioAssetPlayToken)
 	audio.Get("/folders", AudioFolderList)
 	audio.Get("/scenes", AudioSceneList)
-	audio.Get("/stream/:id", AudioAssetStream)
 	audio.Get("/state", AudioPlaybackStateGet)
 	audioAdmin := audio.Group("", AudioWorkbenchMiddleware)
 	audioAdmin.Post("/assets/upload", AudioAssetUpload)
