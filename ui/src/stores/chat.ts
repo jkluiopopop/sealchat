@@ -21,6 +21,7 @@ import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKe
 import { resolveNextUnreadCountForMessageNotice } from './chatUnreadNotice';
 import { mergeCharacterApiRuntimeStateIntoChannels } from './chatChannelRuntimeState';
 import { findChannelByIdFromTree, findFirstEnterableChannel, isDeletedChannelForAccess } from './chatChannelSelection';
+import { addWhisperTargetUnique } from './whisperTargetSelection';
 import { parseLastChannelByWorldMap, resolvePreferredChannelForWorld, updateLastChannelByWorldMap } from './chatWorldChannelSession';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
@@ -4598,6 +4599,10 @@ export const useChatStore = defineStore({
         return;
       }
       this.whisperTargets.push(target);
+    },
+
+    addWhisperTarget(target: User) {
+      this.whisperTargets = addWhisperTargetUnique(this.whisperTargets, target);
     },
 
     removeWhisperTarget(target: User) {
