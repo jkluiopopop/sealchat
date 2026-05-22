@@ -1655,6 +1655,12 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
     flex-direction: column;
   }
 
+  .theme-management-summary {
+    flex: none;
+    min-width: 0;
+    width: 100%;
+  }
+
   .control-field > div:first-child {
     flex: 1;
     width: 100%;
