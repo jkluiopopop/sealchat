@@ -1422,6 +1422,7 @@ const handleActionRibbonStateRequest = () => {
 };
 
 const handleOpenDisplaySettings = () => {
+  showActionRibbon.value = true;
   displaySettingsVisible.value = true;
 };
 

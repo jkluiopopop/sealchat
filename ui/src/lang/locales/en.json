@@ -38,6 +38,7 @@
     "langAuto": "Auto",
     "notice": "Notifications",
     "inputStats": "Input Stats",
+    "display": "General Settings",
     "logout": "Log Out"
   },
   "inputStats": {

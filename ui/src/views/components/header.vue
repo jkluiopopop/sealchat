@@ -153,6 +153,10 @@ const options = computed(() => [
     label: t('headerMenu.inputStats'),
     key: 'inputStats',
   },
+  {
+    label: t('headerMenu.display'),
+    key: 'display',
+  },
   user.checkPerm('mod_admin') ? {
     label: t('headerMenu.admin'),
     key: 'admin',
@@ -240,6 +244,14 @@ const handleSelect = async (key: string | number) => {
 
     case 'inputStats':
       await toggleInputStats();
+      break;
+
+    case 'display':
+      notifShow.value = false;
+      userProfileShow.value = false;
+      adminShow.value = false;
+      inputStatsShow.value = false;
+      openDisplaySettings();
       break;
 
     case 'admin':

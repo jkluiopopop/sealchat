@@ -48,6 +48,7 @@
     "langAuto": "自动",
     "notice": "消息提醒",
     "inputStats": "输入统计",
+    "display": "常规设置",
     "logout": "退出登录"
   },
   "inputStats": {
