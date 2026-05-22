@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { h, ref, computed, watch, onMounted, onBeforeUnmount, nextTick, shallowRef, reactive } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, shallowRef, reactive } from 'vue';
 import { useMessage } from 'naive-ui';
-import type { MentionOption, SelectOption } from 'naive-ui';
+import type { MentionOption } from 'naive-ui';
 import type { Editor } from '@tiptap/vue-3';
 import { loadTipTapBundle } from '@/utils/tiptap-loader';
 import { listPlatformFonts } from '@/services/font/platformFontApi';
 import { ensurePlatformFontLoaded } from '@/services/font/platformFontRegistry';
+import { createPlatformFontSelectPreviewController } from '@/services/font/platformFontSelectPreview';
 import { useChatStore } from '@/stores/chat';
 import { useIFormStore } from '@/stores/iform';
 import { useUtilsStore } from '@/stores/utils';
@@ -74,7 +75,6 @@ const isMobile = ref(false);
 const fontSelectorExpanded = ref(false);
 const desktopFontSelectorExpanded = ref(false);
 const savedEditorSelectionRange = ref<{ start: number; end: number } | null>(null);
-const previewPlatformFontFamilies = reactive<Record<string, string>>({});
 const MOBILE_BREAKPOINT = 768;
 
 // Mention 面板状态
@@ -683,59 +683,17 @@ const customTextColor = ref('#1f2937');
 const platformFonts = ref<PlatformFontAsset[]>([]);
 const platformFontLoading = ref(false);
 const selectedPlatformFontId = ref<string | null>(null);
-type PlatformFontSelectOption = SelectOption & {
-  fontFamily?: string
-  rawLabel?: string
-}
-
-const resolvePlatformFontLabel = (item: { displayName?: string | null; family?: string | null }) => {
-  const displayName = String(item.displayName || '').trim();
-  if (displayName) {
-    return displayName;
-  }
-  return String(item.family || '').trim();
-};
-
-const resolveFontPreviewFamily = (item: { id?: string; family?: string | null }) => {
-  const cachedFamily = item.id ? previewPlatformFontFamilies[item.id] : '';
-  const family = cachedFamily || String(item.family || '').trim();
-  return family ? `"${family}"` : undefined;
-};
-
-const platformFontOptions = computed(() => {
-  return platformFonts.value.map((item) => ({
-    label: resolvePlatformFontLabel(item),
-    rawLabel: resolvePlatformFontLabel(item),
-    value: item.id,
-    fontFamily: resolveFontPreviewFamily(item),
-  }));
+const {
+  platformFontOptions,
+  renderPlatformFontLabel,
+  renderPlatformFontOption,
+  handleDropdownVisible: handlePlatformFontDropdownVisible,
+  primeSelectedPreview: primePlatformFontPreview,
+} = createPlatformFontSelectPreviewController({
+  fonts: platformFonts,
+  selectedId: selectedPlatformFontId,
+  menuClass: 'tiptap-platform-font-select__menu',
 });
-
-const renderPlatformFontLabel = (option: SelectOption) => {
-  const fontOption = option as PlatformFontSelectOption;
-  return h(
-    'span',
-    {
-      class: 'tiptap-platform-font-option__label',
-      style: fontOption.fontFamily ? { fontFamily: fontOption.fontFamily } : undefined,
-      title: String(fontOption.rawLabel || fontOption.label || ''),
-    },
-    String(fontOption.rawLabel || fontOption.label || ''),
-  );
-};
-
-const renderPlatformFontOption = ({ node, option }: { node: any; option: SelectOption }) => {
-  const fontOption = option as PlatformFontSelectOption;
-  return h(
-    'div',
-    {
-      class: 'tiptap-platform-font-option',
-      style: fontOption.fontFamily ? { fontFamily: fontOption.fontFamily } : undefined,
-      title: String(fontOption.rawLabel || fontOption.label || ''),
-    },
-    [node],
-  );
-};
 
 const updateIsMobile = () => {
   const isNarrowViewport = window.innerWidth <= MOBILE_BREAKPOINT;
@@ -762,6 +720,11 @@ const handleDesktopFontSelectorShowUpdate = (show: boolean) => {
     return;
   }
   desktopFontSelectorExpanded.value = show;
+};
+
+const handlePlatformFontSelectShowUpdate = (show: boolean) => {
+  handlePlatformFontDropdownVisible(show);
+  handleDesktopFontSelectorShowUpdate(show);
 };
 
 const applyCustomHighlightColor = () => {
@@ -1224,15 +1187,7 @@ const refreshPlatformFonts = async () => {
   platformFontLoading.value = true;
   try {
     platformFonts.value = await listPlatformFonts();
-    platformFonts.value.forEach((item) => {
-      void ensurePlatformFontLoaded(item.id, item.family)
-        .then((family) => {
-          previewPlatformFontFamilies[item.id] = family;
-        })
-        .catch(() => {
-          previewPlatformFontFamilies[item.id] = item.family;
-        });
-    });
+    primePlatformFontPreview(selectedPlatformFontId.value);
   } catch (error) {
     console.warn('加载平台字体失败', error);
     platformFonts.value = [];
@@ -1267,7 +1222,6 @@ const applyPlatformFont = async (fontId: string | null) => {
     platformFontFamily: family,
     fontFamily: `"${family}"`,
   }).run();
-  previewPlatformFontFamilies[target.id] = family;
   selectedPlatformFontId.value = target.id;
   if (isMobile.value) {
     closeFontSelector();
@@ -1343,6 +1297,7 @@ watch(editor, (instance) => {
   if (!instance) return;
   const attrs = instance.getAttributes('textStyle') as Record<string, any>;
   selectedPlatformFontId.value = typeof attrs?.fontAssetId === 'string' ? attrs.fontAssetId : null;
+  primePlatformFontPreview(selectedPlatformFontId.value);
 });
 
 onMounted(() => {
@@ -1629,7 +1584,7 @@ defineExpose({
             :render-option="renderPlatformFontOption"
             content-class="tiptap-platform-font-select__menu"
             @update:value="applyPlatformFont"
-            @update:show="handleDesktopFontSelectorShowUpdate"
+            @update:show="handlePlatformFontSelectShowUpdate"
             @focus="desktopFontSelectorExpanded = true"
             @blur="closeFontSelector"
           />

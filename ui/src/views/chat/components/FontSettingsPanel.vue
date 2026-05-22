@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, h, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useDisplayStore } from '@/stores/display'
 import { buildGlobalFontFamilyStack, createFontAssetId, sanitizeFontFamilyName } from '@/services/font/fontUtils'
 import { listPlatformFonts } from '@/services/font/platformFontApi'
 import { ensurePlatformFontLoaded } from '@/services/font/platformFontRegistry'
+import { createPlatformFontSelectPreviewController } from '@/services/font/platformFontSelectPreview'
 import { listFontAssetMeta, deleteFontAssetById, isFontAssetCacheAvailable, saveFontAsset } from '@/services/font/fontCache'
 import { isLocalFontApiAvailable, loadFontFromFile, loadFontFromUrl, queryLocalFontCandidates, restoreCachedFontById } from '@/services/font/fontLoader'
 import type { LocalFontCandidate } from '@/services/font/fontLoader'
@@ -27,6 +28,7 @@ interface LocalFontOption {
   label: string
   value: string
   aliases: string[]
+  family: string
 }
 
 type SelectableFontSourceType = Extract<FontSourceType, 'system' | 'platform' | 'upload' | 'manual' | 'url'>
@@ -55,6 +57,36 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 const platformFonts = ref<PlatformFontAsset[]>([])
 const loadingPlatformFonts = ref(false)
 const selectedPlatformFontId = ref<string | null>(null)
+const {
+  platformFontOptions,
+  renderPlatformFontLabel,
+  renderPlatformFontOption,
+  handleDropdownVisible: handlePlatformFontDropdownVisible,
+  primeSelectedPreview: primePlatformFontPreview,
+} = createPlatformFontSelectPreviewController({
+  fonts: platformFonts,
+  selectedId: selectedPlatformFontId,
+  menuClass: 'font-settings-platform-font-select__menu',
+  showPreviewText: false,
+})
+
+const renderLocalFontLabel = (option: LocalFontOption) => {
+  const family = sanitizeFontFamilyName(option.family || option.value || '')
+  return h('span', {
+    class: 'platform-font-select-preview__value',
+    style: family ? { fontFamily: buildGlobalFontFamilyStack(family) } : undefined,
+    title: option.label,
+  }, option.label)
+}
+
+const renderLocalFontOption = ({ node, option }: { node: any; option: LocalFontOption }) => {
+  const family = sanitizeFontFamilyName(option.family || option.value || '')
+  return h('div', {
+    class: 'platform-font-select-preview__option platform-font-select-preview__option--single',
+    style: family ? { fontFamily: buildGlobalFontFamilyStack(family) } : undefined,
+    title: option.label,
+  }, [node])
+}
 
 const fontSourceOptions: Record<SelectableFontSourceType, FontSourceOption> = {
   system: {
@@ -129,6 +161,7 @@ const buildLocalFontOptions = (candidates: LocalFontCandidate[]): LocalFontOptio
       label,
       value: item.family,
       aliases: item.aliases,
+      family: item.family,
     }
   })
   rebuildLocalAliasLookup(options)
@@ -199,6 +232,7 @@ const refreshPlatformFonts = async () => {
   loadingPlatformFonts.value = true
   try {
     platformFonts.value = await listPlatformFonts()
+    primePlatformFontPreview(selectedPlatformFontId.value)
   } catch (error) {
     console.warn('加载平台字体列表失败', error)
     platformFonts.value = []
@@ -579,6 +613,8 @@ const handleRestoreDefault = () => {
           clearable
           :options="localFontOptions"
           placeholder="读取后选择字体"
+          :render-label="renderLocalFontLabel"
+          :render-option="renderLocalFontOption"
           @update:value="handleSelectLocalFont"
         />
       </section>
@@ -635,12 +671,13 @@ const handleRestoreDefault = () => {
           :value="selectedPlatformFontId"
           filterable
           clearable
-          :options="platformFonts.map((item) => ({
-            label: `${item.displayName || item.family} · ${item.family}`,
-            value: item.id,
-          }))"
+          :options="platformFontOptions"
           placeholder="选择平台字体"
+          :render-label="renderPlatformFontLabel"
+          :render-option="renderPlatformFontOption"
+          content-class="font-settings-platform-font-select__menu"
           @update:value="handleSelectPlatformFont"
+          @update:show="handlePlatformFontDropdownVisible"
         />
       </section>
 
@@ -922,5 +959,49 @@ const handleRestoreDefault = () => {
   .url-grid {
     grid-template-columns: 1fr;
   }
+}
+</style>
+
+<style lang="scss">
+.font-settings-platform-font-select__menu {
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16), 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+.platform-font-select-preview__option {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.platform-font-select-preview__option--single {
+  display: block;
+}
+
+.platform-font-select-preview__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  color: var(--sc-text-primary, inherit);
+}
+
+.platform-font-select-preview__sample {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  opacity: 0.82;
+  color: var(--sc-text-secondary, inherit);
+}
+
+.platform-font-select-preview__value {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
