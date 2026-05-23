@@ -10842,12 +10842,7 @@ const saveEdit = async () => {
     stopTypingPreviewNow();
     let finalContent: string;
     if (inputMode.value === 'rich') {
-      const editorInstance = textInputRef.value?.getEditor?.();
-      if (editorInstance) {
-        finalContent = JSON.stringify(editorInstance.getJSON());
-      } else {
-        finalContent = processedDraft;
-      }
+      finalContent = processedDraft;
     } else {
       finalContent = await normalizePlainMessageContent(processedDraft);
     }
@@ -11093,7 +11088,7 @@ const collectMentionIdsFromTipTapNode = (node: any, output: Set<string>) => {
     collectMentionIdsFromText(node.text, output);
   }
 
-  if (node.type === 'mention') {
+  if (node.type === 'mention' || node.type === 'satoriMention') {
     const id = String(node.attrs?.id || '').trim();
     if (id) {
       output.add(id);
@@ -11236,7 +11231,7 @@ const extractTipTapText = (node: any): string => {
     return replaceAtTokensWithDisplayText(node.text);
   }
 
-  if (node.type === 'mention') {
+  if (node.type === 'mention' || node.type === 'satoriMention') {
     const mentionId = String(node.attrs?.id || '').trim();
     const mentionName = String(node.attrs?.name || '').trim();
     return `@${mentionName || mentionId || '用户'}`;
@@ -12527,6 +12522,10 @@ chatEvent.on('message-created', (e?: Event) => {
   const currentChannelId = String(chat.curChannel?.id || '').trim();
   const isCurrentChannelMessage = !!incomingChannelId && incomingChannelId === currentChannelId;
   const isSelf = incoming.user?.id === user.info.id;
+  const content = incoming.content || '';
+  const currentUserId = user.info.id;
+  const mentionIds = !isSelf ? collectMentionIdsFromContent(content) : new Set<string>();
+  const isMentioned = !isSelf && (mentionIds.has(currentUserId) || mentionIds.has('all'));
   if (!isSelf && shouldPlayMessageSound({
     mode: display.settings.messageSoundMode,
     isSelf,
@@ -12539,6 +12538,9 @@ chatEvent.on('message-created', (e?: Event) => {
     sound.play();
   }
   if (!isCurrentChannelMessage) {
+    if (incomingChannelId && isMentioned) {
+      chat.setChannelMentionState(incomingChannelId, true);
+    }
     return;
   }
   const incomingIdentityId = resolveMessageIdentityId(incoming);
@@ -12584,12 +12586,6 @@ chatEvent.on('message-created', (e?: Event) => {
       return;
     }
   } else {
-    // 检测是否被 @ 了（包括 @all）
-    const content = incoming.content || '';
-    const currentUserId = user.info.id;
-    const mentionIds = collectMentionIdsFromContent(content);
-    const isMentioned = mentionIds.has(currentUserId) || mentionIds.has('all');
-
     if (isMentioned) {
       // 被 @ 时播放额外提示音或特殊处理
       import('naive-ui').then(({ useMessage }) => {

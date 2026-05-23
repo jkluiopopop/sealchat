@@ -2439,12 +2439,6 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			model.FriendRelationSetVisibleById(channel.ID)
 		}
 
-		noticePayload := map[string]any{
-			"op":        0,
-			"type":      "message-created-notice",
-			"channelId": data.ChannelID,
-		}
-
 		if whisperUser != nil {
 			targets := make([]string, 0, len(whisperRecipientIDs)+1)
 			if whisperTo != "" {
@@ -2457,12 +2451,12 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 					continue
 				}
 				_ = model.ChannelReadInit(data.ChannelID, uid)
-				ctx.BroadcastToUserJSON(uid, noticePayload)
+				ctx.BroadcastToUserJSON(uid, buildMessageCreatedNoticePayload(data.ChannelID, content, uid))
 			}
 		} else if channel.PermType == "private" {
 			if privateOtherUser != "" {
 				_ = model.ChannelReadInit(data.ChannelID, privateOtherUser)
-				ctx.BroadcastToUserJSON(privateOtherUser, noticePayload)
+				ctx.BroadcastToUserJSON(privateOtherUser, buildMessageCreatedNoticePayload(data.ChannelID, content, privateOtherUser))
 			}
 		} else {
 			// 给当前在线人都通知一遍
@@ -2485,7 +2479,21 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			_ = model.ChannelReadSetInBatch([]string{data.ChannelID}, uidsOnline)
 
 			// 发送快速更新通知
-			ctx.BroadcastJSON(noticePayload, uidsOnline)
+			onlineSet := make(map[string]struct{}, len(uidsOnline))
+			for _, uid := range uidsOnline {
+				if uid != "" {
+					onlineSet[uid] = struct{}{}
+				}
+			}
+			for _, uid := range uids {
+				if uid == "" {
+					continue
+				}
+				if _, isOnlineInChannel := onlineSet[uid]; isOnlineInChannel {
+					continue
+				}
+				ctx.BroadcastToUserJSON(uid, buildMessageCreatedNoticePayload(data.ChannelID, content, uid))
+			}
 		}
 
 		return messageData, nil
@@ -4411,11 +4419,11 @@ func apiUnreadCount(ctx *ChatContext, data *struct {
 	} else {
 		chIds, _ = service.ChannelIdListByWorld(ctx.User.ID, worldID, includePrivate)
 	}
-	lst, err := model.ChannelUnreadFetch(chIds, ctx.User.ID)
+	state, err := model.ChannelUnreadStateFetch(chIds, ctx.User.ID)
 	if err != nil {
 		return nil, err
 	}
-	return lst, err
+	return state, nil
 }
 
 func apiWidgetInteract(ctx *ChatContext, data *struct {

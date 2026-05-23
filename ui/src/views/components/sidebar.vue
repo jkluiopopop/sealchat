@@ -736,9 +736,14 @@ const handleAckWorldAnnouncement = async () => {
                   </template>
                 </div>
 
-        <div class="right-num" v-if="chat.unreadCountMap[i.id]">
-          <div class="label-unread">
-            {{ chat.unreadCountMap[i.id] > 99 ? '99+' : chat.unreadCountMap[i.id] }}
+        <div class="right-num" v-if="chat.unreadCountMap[i.id] || chat.channelMentionMap[i.id]">
+          <div class="channel-unread-badge-group">
+            <div class="label-unread" v-if="chat.unreadCountMap[i.id]">
+              {{ chat.unreadCountMap[i.id] > 99 ? '99+' : chat.unreadCountMap[i.id] }}
+            </div>
+            <div class="label-unread label-unread--mention" v-if="chat.channelMentionMap[i.id]">
+              @
+            </div>
           </div>
         </div>
 
@@ -793,9 +798,14 @@ const handleAckWorldAnnouncement = async () => {
                       </template>
                     </div>
 
-                    <div class="right-num" v-if="chat.unreadCountMap[child.id]">
-                      <div class="label-unread">
-                        {{ chat.unreadCountMap[child.id] > 99 ? '99+' : chat.unreadCountMap[child.id] }}
+                    <div class="right-num" v-if="chat.unreadCountMap[child.id] || chat.channelMentionMap[child.id]">
+                      <div class="channel-unread-badge-group">
+                        <div class="label-unread" v-if="chat.unreadCountMap[child.id]">
+                          {{ chat.unreadCountMap[child.id] > 99 ? '99+' : chat.unreadCountMap[child.id] }}
+                        </div>
+                        <div class="label-unread label-unread--mention" v-if="chat.channelMentionMap[child.id]">
+                          @
+                        </div>
                       </div>
                     </div>
 

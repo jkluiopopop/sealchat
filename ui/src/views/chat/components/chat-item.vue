@@ -2448,7 +2448,7 @@ const collectMentionIdsFromTipTapNode = (node: any, output: Set<string>) => {
     collectMentionIdsFromText(node.text, output);
   }
 
-  if (node.type === 'mention') {
+  if (node.type === 'mention' || node.type === 'satoriMention') {
     const id = String(node.attrs?.id || '').trim();
     if (id) {
       output.add(id);

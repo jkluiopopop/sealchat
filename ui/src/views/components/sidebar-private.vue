@@ -175,9 +175,12 @@ const handleReject = async () => {
           :decoration="item.friendInfo?.userInfo?.avatarDecoration"
         />
         <div class="flex space-x-1 items-center">
-          <div class="" v-if="chat.unreadCountMap[item.id]">
-            <div class="label-unread">
+          <div class="channel-unread-badge-group" v-if="chat.unreadCountMap[item.id] || chat.channelMentionMap[item.id]">
+            <div class="label-unread" v-if="chat.unreadCountMap[item.id]">
               {{ chat.unreadCountMap[item.id] > 99 ? '99+' : chat.unreadCountMap[item.id] }}
+            </div>
+            <div class="label-unread label-unread--mention" v-if="chat.channelMentionMap[item.id]">
+              @
             </div>
           </div>
 
@@ -223,9 +226,12 @@ const handleReject = async () => {
             </n-tooltip>
           </div>
 
-          <div class="" v-if="chat.unreadCountMap[item.id]">
-            <div class="label-unread">
+          <div class="channel-unread-badge-group" v-if="chat.unreadCountMap[item.id] || chat.channelMentionMap[item.id]">
+            <div class="label-unread" v-if="chat.unreadCountMap[item.id]">
               {{ chat.unreadCountMap[item.id] > 99 ? '99+' : chat.unreadCountMap[item.id] }}
+            </div>
+            <div class="label-unread label-unread--mention" v-if="chat.channelMentionMap[item.id]">
+              @
             </div>
           </div>
         </div>

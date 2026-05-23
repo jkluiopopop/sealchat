@@ -459,6 +459,21 @@ img.emoji {
   border: 1px solid var(--sc-border-mute);
 }
 
+.channel-unread-badge-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.label-unread--mention {
+  min-width: 1.15rem;
+  text-align: center;
+  background-color: #dc2626;
+  color: #fff7f7;
+  border-color: rgba(127, 29, 29, 0.35);
+  font-weight: 700;
+}
+
 /* 全局夜间模式适配 */
 .n-modal .n-card,
 .n-modal .n-card__content,

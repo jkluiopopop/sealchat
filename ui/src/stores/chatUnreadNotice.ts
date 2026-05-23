@@ -4,11 +4,21 @@ type ChannelTreeNode = {
 };
 
 type UnreadCountMap = Record<string, number>;
+type ChannelMentionMap = Record<string, boolean>;
 
 interface MessageNoticeUnreadArgs {
   channelId: string;
   currentChannelId?: string;
   unreadCountMap: UnreadCountMap;
+  channelTree?: ChannelTreeNode[] | null;
+  channelTreePrivate?: ChannelTreeNode[] | null;
+}
+
+interface MessageNoticeMentionArgs {
+  channelId: string;
+  currentChannelId?: string;
+  mentioned?: boolean;
+  mentionMap: ChannelMentionMap;
   channelTree?: ChannelTreeNode[] | null;
   channelTreePrivate?: ChannelTreeNode[] | null;
 }
@@ -57,5 +67,38 @@ export const nextUnreadCountMapForMessageNotice = (args: MessageNoticeUnreadArgs
   return {
     ...args.unreadCountMap,
     [args.channelId]: nextCount,
+  };
+};
+
+export const resolveNextMentionStateForMessageNotice = ({
+  channelId,
+  currentChannelId,
+  mentioned,
+  mentionMap,
+  channelTree,
+  channelTreePrivate,
+}: MessageNoticeMentionArgs): boolean | null => {
+  if (!channelId || currentChannelId === channelId || mentioned !== true) {
+    return null;
+  }
+  const exists =
+    channelExistsInTree(channelTree, channelId) || channelExistsInTree(channelTreePrivate, channelId);
+  if (!exists) {
+    return null;
+  }
+  if (mentionMap[channelId] === true) {
+    return true;
+  }
+  return true;
+};
+
+export const nextChannelMentionMapForMessageNotice = (args: MessageNoticeMentionArgs): ChannelMentionMap => {
+  const nextMentioned = resolveNextMentionStateForMessageNotice(args);
+  if (nextMentioned === null) {
+    return args.mentionMap;
+  }
+  return {
+    ...args.mentionMap,
+    [args.channelId]: nextMentioned,
   };
 };

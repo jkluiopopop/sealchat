@@ -341,6 +341,7 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
       return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" ${title ? `title="${escapeHtml(title)}"` : ''} class="${imageClass}" />`;
 
     case 'mention':
+    case 'satoriMention':
       const mentionId = String(node.attrs?.id || '').trim();
       const mentionName = String(node.attrs?.name || '').trim();
       const mentionDisplay = mentionName || mentionId || '用户';
@@ -443,7 +444,7 @@ function extractText(node: TipTapNode): string {
     return '\n';
   }
 
-  if (node.type === 'mention') {
+  if (node.type === 'mention' || node.type === 'satoriMention') {
     const mentionId = String(node.attrs?.id || '').trim();
     const mentionName = String(node.attrs?.name || '').trim();
     return `@${mentionName || mentionId || '用户'}`;

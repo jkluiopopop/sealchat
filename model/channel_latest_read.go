@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -34,6 +35,11 @@ func ChannelReadListByUserId(inChIds []string, userId string) ([]*ChannelLatestR
 	return records, err
 }
 
+type ChannelUnreadState struct {
+	Counts   map[string]int64 `json:"counts"`
+	Mentions map[string]bool  `json:"mentions"`
+}
+
 func ChannelUnreadFetch(inChIds []string, userId string) (map[string]int64, error) {
 	items, err := ChannelReadListByUserId(inChIds, userId)
 	if err != nil {
@@ -53,6 +59,96 @@ func ChannelUnreadFetch(inChIds []string, userId string) (map[string]int64, erro
 	}
 
 	return unreadMap, err
+}
+
+func ChannelUnreadStateFetch(inChIds []string, userId string) (*ChannelUnreadState, error) {
+	state := &ChannelUnreadState{
+		Counts:   map[string]int64{},
+		Mentions: map[string]bool{},
+	}
+	if len(inChIds) == 0 || userId == "" {
+		return state, nil
+	}
+
+	items, err := ChannelReadListByUserId(inChIds, userId)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return state, nil
+	}
+
+	chIds := make([]string, 0, len(items))
+	timeLst := make([]time.Time, 0, len(items))
+	for _, item := range items {
+		if item == nil || item.ChannelId == "" {
+			continue
+		}
+		chIds = append(chIds, item.ChannelId)
+		timeLst = append(timeLst, time.UnixMilli(item.MessageTime))
+	}
+	if len(chIds) == 0 {
+		return state, nil
+	}
+
+	counts, err := MessagesCountByChannelIDsAfterTime(chIds, timeLst, userId)
+	if err != nil {
+		return nil, err
+	}
+	mentions, err := channelUnreadMentionFetch(chIds, timeLst, userId)
+	if err != nil {
+		return nil, err
+	}
+	state.Counts = counts
+	state.Mentions = mentions
+	return state, nil
+}
+
+func channelUnreadMentionFetch(channelIDs []string, updateTimes []time.Time, userID string) (map[string]bool, error) {
+	if len(channelIDs) != len(updateTimes) {
+		return nil, errors.New("channelIDs和updateTimes长度不匹配")
+	}
+	if len(channelIDs) == 0 || userID == "" {
+		return map[string]bool{}, nil
+	}
+
+	var results []struct {
+		ChannelID string
+	}
+
+	query := db.Table("mentions").
+		Select("DISTINCT mentions.loc_post_id AS channel_id").
+		Joins("JOIN messages ON messages.id = mentions.related_id").
+		Where("mentions.loc_post_type = ? AND mentions.related_type = ?", "channel", "message").
+		Where("(mentions.receiver_id = ? OR mentions.receiver_id = ?)", userID, "all").
+		Where("messages.user_id <> ?", userID).
+		Where("messages.is_deleted = ?", false).
+		Where(`(
+			messages.is_whisper = ?
+			OR messages.user_id = ?
+			OR messages.whisper_to = ?
+			OR EXISTS (
+				SELECT 1 FROM message_whisper_recipients r
+				WHERE r.message_id = messages.id AND r.user_id = ?
+			)
+		)`, false, userID, userID, userID)
+
+	conditions := db.Where("1 = 0")
+	for i, channelID := range channelIDs {
+		conditions = conditions.Or(db.Where("mentions.loc_post_id = ? AND messages.created_at > ?", channelID, updateTimes[i]))
+	}
+
+	if err := query.Where(conditions).Find(&results).Error; err != nil {
+		return nil, err
+	}
+
+	mentionMap := make(map[string]bool, len(results))
+	for _, result := range results {
+		if result.ChannelID != "" {
+			mentionMap[result.ChannelID] = true
+		}
+	}
+	return mentionMap, nil
 }
 
 func ChannelReadSet(channelId, userId string) error {
