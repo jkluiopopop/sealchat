@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"sealchat/model"
@@ -60,12 +61,14 @@ func apiCharacterBadgeBroadcast(ctx *ChatContext, data *characterBadgeBroadcastP
 	if action != "update" && action != "clear" {
 		return nil, errors.New("action 参数错误")
 	}
+	now := time.Now().Unix()
 	template := strings.TrimSpace(data.Template)
 	if action == "clear" || template == "" {
 		removeBadgeCache(channelID, identityID)
 		broadcastBadgeEvent(ctx, channelID, &protocol.CharacterCardBadgeEventPayload{
 			IdentityID: identityID,
 			Action:     "clear",
+			UpdatedAt:  now,
 		})
 		return map[string]any{"ok": true}, nil
 	}
@@ -81,6 +84,7 @@ func apiCharacterBadgeBroadcast(ctx *ChatContext, data *characterBadgeBroadcastP
 		Template:   template,
 		Attrs:      attrs,
 		Action:     "update",
+		UpdatedAt:  now,
 	}
 	upsertBadgeCache(channelID, payload)
 	broadcastBadgeEvent(ctx, channelID, payload)
@@ -127,8 +131,8 @@ func broadcastBadgeEvent(ctx *ChatContext, channelID string, payload *protocol.C
 		return
 	}
 	ctx.BroadcastEventInChannel(channelID, &protocol.Event{
-		Type:              protocol.EventCharacterCardBadgeUpdated,
-		Channel:           &protocol.Channel{ID: channelID},
+		Type:               protocol.EventCharacterCardBadgeUpdated,
+		Channel:            &protocol.Channel{ID: channelID},
 		CharacterCardBadge: payload,
 	})
 }
@@ -143,6 +147,9 @@ func upsertBadgeCache(channelID string, payload *protocol.CharacterCardBadgeEven
 	if !ok || channelMap == nil {
 		channelMap = map[string]*protocol.CharacterCardBadgeEventPayload{}
 		characterBadgeState.items[channelID] = channelMap
+	}
+	if existing := channelMap[payload.IdentityID]; existing != nil && payload.UpdatedAt < existing.UpdatedAt {
+		return
 	}
 	channelMap[payload.IdentityID] = payload
 }
@@ -187,6 +194,7 @@ func snapshotBadgeCache(channelID string) []*protocol.CharacterCardBadgeEventPay
 			Template:   item.Template,
 			Attrs:      attrs,
 			Action:     "update",
+			UpdatedAt:  item.UpdatedAt,
 		})
 	}
 	return items

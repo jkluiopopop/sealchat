@@ -2397,6 +2397,11 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
+		if renderResult != nil {
+			if err := model.MessageDiceRollReplace(m.ID, renderResult.Rolls); err != nil {
+				return nil, err
+			}
+		}
 		go func(channelID string, message model.MessageModel) {
 			if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
 				log.Printf("digest-push: 记录消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
@@ -2434,12 +2439,6 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			model.FriendRelationSetVisibleById(channel.ID)
 		}
 
-		noticePayload := map[string]any{
-			"op":        0,
-			"type":      "message-created-notice",
-			"channelId": data.ChannelID,
-		}
-
 		if whisperUser != nil {
 			targets := make([]string, 0, len(whisperRecipientIDs)+1)
 			if whisperTo != "" {
@@ -2452,12 +2451,12 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 					continue
 				}
 				_ = model.ChannelReadInit(data.ChannelID, uid)
-				ctx.BroadcastToUserJSON(uid, noticePayload)
+				ctx.BroadcastToUserJSON(uid, buildMessageCreatedNoticePayload(data.ChannelID, content, uid))
 			}
 		} else if channel.PermType == "private" {
 			if privateOtherUser != "" {
 				_ = model.ChannelReadInit(data.ChannelID, privateOtherUser)
-				ctx.BroadcastToUserJSON(privateOtherUser, noticePayload)
+				ctx.BroadcastToUserJSON(privateOtherUser, buildMessageCreatedNoticePayload(data.ChannelID, content, privateOtherUser))
 			}
 		} else {
 			// 给当前在线人都通知一遍
@@ -2480,7 +2479,21 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 			_ = model.ChannelReadSetInBatch([]string{data.ChannelID}, uidsOnline)
 
 			// 发送快速更新通知
-			ctx.BroadcastJSON(noticePayload, uidsOnline)
+			onlineSet := make(map[string]struct{}, len(uidsOnline))
+			for _, uid := range uidsOnline {
+				if uid != "" {
+					onlineSet[uid] = struct{}{}
+				}
+			}
+			for _, uid := range uids {
+				if uid == "" {
+					continue
+				}
+				if _, isOnlineInChannel := onlineSet[uid]; isOnlineInChannel {
+					continue
+				}
+				ctx.BroadcastToUserJSON(uid, buildMessageCreatedNoticePayload(data.ChannelID, content, uid))
+			}
 		}
 
 		return messageData, nil
@@ -3066,17 +3079,24 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 		newContent = fillBotMentionNames(data.ChannelID, newContent)
 		newContent = protocol.EscapeSatoriText(newContent)
 	}
+	existingDiceRolls, err := model.MessageDiceRollListByMessageID(msg.ID)
+	if err != nil {
+		return nil, err
+	}
+	var updatedDiceRolls []*model.MessageDiceRollModel
+	var renderResult *service.DiceRenderResult
 	if effectiveBuiltInDiceEnabled {
 		replayCacheKey := ""
 		if msg.ID != "" {
 			replayCacheKey = fmt.Sprintf("%s:%d", msg.ID, msg.UpdatedAt.UnixMilli())
 		}
-		renderResult, err := service.RenderDiceContentWithPreviousMessage(newContent, channel.DefaultDiceExpr, msg.Content, replayCacheKey, nil)
+		renderResult, err = service.RenderDiceContentWithExisting(newContent, channel.DefaultDiceExpr, existingDiceRolls, msg.Content, replayCacheKey, nil)
 		if err != nil {
 			return nil, err
 		}
 		if renderResult != nil {
 			newContent = renderResult.Content
+			updatedDiceRolls = renderResult.Rolls
 		}
 	}
 
@@ -3177,9 +3197,14 @@ func apiMessageUpdate(ctx *ChatContext, data *struct {
 	updates["edited_by_user_name"] = editorUserName
 	msg.EditedByUserID = ctx.User.ID
 	msg.EditedByUserName = editorUserName
-	err := model.MessageUpdate(msg.ID, updates)
+	err = model.MessageUpdate(msg.ID, updates)
 	if err != nil {
 		return nil, err
+	}
+	if effectiveBuiltInDiceEnabled {
+		if err := model.MessageDiceRollReplace(msg.ID, updatedDiceRolls); err != nil {
+			return nil, err
+		}
 	}
 
 	messageData := buildMessage()
@@ -3358,6 +3383,148 @@ func apiMessageReorder(ctx *ChatContext, data *struct {
 		ChannelID:    data.ChannelID,
 		DisplayOrder: msg.DisplayOrder,
 	}, nil
+}
+
+func apiMessageReorderBatch(ctx *ChatContext, data *struct {
+	ChannelID  string   `json:"channel_id"`
+	MessageIDs []string `json:"message_ids"`
+	ClientOpID string   `json:"client_op_id"`
+}) (any, error) {
+	channelID := strings.TrimSpace(data.ChannelID)
+	if channelID == "" {
+		return nil, fmt.Errorf("channel_id 不能为空")
+	}
+	ids := lo.Uniq(collectMessageIDs(data.MessageIDs))
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("message_ids 不能为空")
+	}
+
+	channel, err := model.ChannelGet(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if channel.ID == "" {
+		return nil, fmt.Errorf("频道不存在")
+	}
+	db := model.GetDB()
+
+	var permissionMessages []model.MessageModel
+	if err := db.Where("channel_id = ? AND id IN ? AND is_deleted = ?", channelID, ids, false).
+		Select("id, user_id").
+		Order("display_order asc").
+		Order("created_at asc").
+		Order("id asc").
+		Find(&permissionMessages).Error; err != nil {
+		return nil, err
+	}
+	if len(permissionMessages) != len(ids) {
+		return nil, fmt.Errorf("未找到可调整顺序的消息或无权限操作")
+	}
+	allSelfOwned := true
+	for _, msg := range permissionMessages {
+		if msg.UserID != ctx.User.ID {
+			allSelfOwned = false
+			break
+		}
+	}
+	if !allSelfOwned && !canReorderAllMessages(ctx.User.ID, channel) {
+		return nil, fmt.Errorf("您没有权限调整选中消息的位置")
+	}
+
+	type reorderResult struct {
+		message model.MessageModel
+	}
+	results := make([]reorderResult, 0, len(ids))
+	err = db.Transaction(func(tx *gorm.DB) error {
+		var messages []model.MessageModel
+		q := tx.Preload("User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, username, nickname, avatar, is_bot")
+		}).Preload("Member", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, nickname, channel_id, user_id")
+		}).Where("channel_id = ? AND id IN ? AND is_deleted = ?", channelID, ids, false)
+		if err := q.Order("display_order asc").Order("created_at asc").Order("id asc").Find(&messages).Error; err != nil {
+			return err
+		}
+		if len(messages) != len(ids) {
+			return fmt.Errorf("未找到可调整顺序的消息或无权限操作")
+		}
+		if allSelfOwned {
+			for _, msg := range messages {
+				if msg.UserID != ctx.User.ID {
+					return fmt.Errorf("未找到可调整顺序的消息或无权限操作")
+				}
+			}
+		}
+
+		var maxOrder float64
+		if err := tx.Model(&model.MessageModel{}).
+			Where("channel_id = ? AND is_deleted = ?", channelID, false).
+			Select("COALESCE(MAX(display_order), 0)").
+			Scan(&maxOrder).Error; err != nil {
+			return err
+		}
+
+		nextOrder := maxOrder
+		for _, msg := range messages {
+			nextOrder += displayOrderGap
+			if err := tx.Model(&model.MessageModel{}).
+				Where("id = ?", msg.ID).
+				UpdateColumn("display_order", nextOrder).Error; err != nil {
+				return err
+			}
+			msg.DisplayOrder = nextOrder
+			results = append(results, reorderResult{message: msg})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	channelData := channel.ToProtocolType()
+	operatorData := ctx.User.ToProtocolType()
+	for _, result := range results {
+		msg := result.message
+		if msg.WhisperTo != "" && msg.WhisperTarget == nil {
+			msg.WhisperTarget = loadWhisperTargetForChannel(channelID, msg.WhisperTo)
+		}
+		if msg.IsWhisper {
+			msg.WhisperTargets = loadWhisperTargetsForMessage(channelID, msg.ID, msg.WhisperTarget)
+		}
+		messageData := buildProtocolMessage(&msg, channelData)
+		ev := &protocol.Event{
+			Type:     protocol.EventMessageReordered,
+			Message:  messageData,
+			Channel:  channelData,
+			User:     operatorData,
+			Operator: operatorData,
+			Reorder: &protocol.MessageReorder{
+				MessageID:    msg.ID,
+				ChannelID:    channelID,
+				DisplayOrder: msg.DisplayOrder,
+				ClientOpID:   data.ClientOpID,
+			},
+		}
+		if msg.IsWhisper {
+			recipients := []string{ctx.User.ID}
+			if msg.WhisperTo != "" {
+				recipients = append(recipients, msg.WhisperTo)
+			}
+			recipientIDs := model.GetWhisperRecipientIDs(msg.ID)
+			if len(recipientIDs) > 0 {
+				recipients = append(recipients, recipientIDs...)
+			}
+			recipients = lo.Uniq(recipients)
+			ctx.BroadcastEventInChannelToUsers(channelID, recipients, ev)
+		} else {
+			ctx.BroadcastEventInChannel(channelID, ev)
+			ctx.BroadcastEventInChannelForBot(channelID, ev)
+		}
+	}
+
+	return &struct {
+		MessageIDs []string `json:"message_ids"`
+	}{MessageIDs: ids}, nil
 }
 
 func apiMessageEditHistory(ctx *ChatContext, data *struct {
@@ -4252,11 +4419,11 @@ func apiUnreadCount(ctx *ChatContext, data *struct {
 	} else {
 		chIds, _ = service.ChannelIdListByWorld(ctx.User.ID, worldID, includePrivate)
 	}
-	lst, err := model.ChannelUnreadFetch(chIds, ctx.User.ID)
+	state, err := model.ChannelUnreadStateFetch(chIds, ctx.User.ID)
 	if err != nil {
 		return nil, err
 	}
-	return lst, err
+	return state, nil
 }
 
 func apiWidgetInteract(ctx *ChatContext, data *struct {

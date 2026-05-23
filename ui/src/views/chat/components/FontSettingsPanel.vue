@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, h, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { useDisplayStore } from '@/stores/display'
 import { buildGlobalFontFamilyStack, createFontAssetId, sanitizeFontFamilyName } from '@/services/font/fontUtils'
+import { listPlatformFonts } from '@/services/font/platformFontApi'
+import { ensurePlatformFontLoaded } from '@/services/font/platformFontRegistry'
+import { createPlatformFontSelectPreviewController } from '@/services/font/platformFontSelectPreview'
 import { listFontAssetMeta, deleteFontAssetById, isFontAssetCacheAvailable, saveFontAsset } from '@/services/font/fontCache'
 import { isLocalFontApiAvailable, loadFontFromFile, loadFontFromUrl, queryLocalFontCandidates, restoreCachedFontById } from '@/services/font/fontLoader'
 import type { LocalFontCandidate } from '@/services/font/fontLoader'
 import type { FontAssetMeta, FontSourceType, ImportedFontPayload } from '@/services/font/types'
+import type { PlatformFontAsset } from '@/services/font/platformFontTypes'
 
 interface Props {
   show: boolean
@@ -24,6 +28,15 @@ interface LocalFontOption {
   label: string
   value: string
   aliases: string[]
+  family: string
+}
+
+type SelectableFontSourceType = Extract<FontSourceType, 'system' | 'platform' | 'upload' | 'manual' | 'url'>
+
+interface FontSourceOption {
+  value: SelectableFontSourceType
+  label: string
+  description: string
 }
 
 const sourceMode = ref<FontSourceType>('system')
@@ -41,6 +54,72 @@ const selectedCachedAssetId = ref<string | null>(null)
 const cachedAssets = ref<FontAssetMeta[]>([])
 const processing = ref(false)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const platformFonts = ref<PlatformFontAsset[]>([])
+const loadingPlatformFonts = ref(false)
+const selectedPlatformFontId = ref<string | null>(null)
+const {
+  platformFontOptions,
+  renderPlatformFontLabel,
+  renderPlatformFontOption,
+  handleDropdownVisible: handlePlatformFontDropdownVisible,
+  primeSelectedPreview: primePlatformFontPreview,
+} = createPlatformFontSelectPreviewController({
+  fonts: platformFonts,
+  selectedId: selectedPlatformFontId,
+  menuClass: 'font-settings-platform-font-select__menu',
+  showPreviewText: false,
+})
+
+const renderLocalFontLabel = (option: LocalFontOption) => {
+  const family = sanitizeFontFamilyName(option.family || option.value || '')
+  return h('span', {
+    class: 'platform-font-select-preview__value',
+    style: family ? { fontFamily: buildGlobalFontFamilyStack(family) } : undefined,
+    title: option.label,
+  }, option.label)
+}
+
+const renderLocalFontOption = ({ node, option }: { node: any; option: LocalFontOption }) => {
+  const family = sanitizeFontFamilyName(option.family || option.value || '')
+  return h('div', {
+    class: 'platform-font-select-preview__option platform-font-select-preview__option--single',
+    style: family ? { fontFamily: buildGlobalFontFamilyStack(family) } : undefined,
+    title: option.label,
+  }, [node])
+}
+
+const fontSourceOptions: Record<SelectableFontSourceType, FontSourceOption> = {
+  system: {
+    value: 'system',
+    label: '系统字体',
+    description: '读取当前设备已安装字体，适合本机自定义显示',
+  },
+  platform: {
+    value: 'platform',
+    label: '平台字体',
+    description: '使用管理员上传的云端字体',
+  },
+  upload: {
+    value: 'upload',
+    label: '上传字体',
+    description: '上传本地字体文件并缓存，适合长期复用',
+  },
+  manual: {
+    value: 'manual',
+    label: '手动输入',
+    description: '手填已安装字体名称，适合无法读取系统字体时使用',
+  },
+  url: {
+    value: 'url',
+    label: 'URL 导入',
+    description: '从字体链接导入并预览，跨域失败时建议改用上传',
+  },
+}
+
+const sourceModeColumns = [
+  [fontSourceOptions.system, fontSourceOptions.platform],
+  [fontSourceOptions.manual, fontSourceOptions.upload, fontSourceOptions.url],
+]
 
 const localFontAvailable = computed(() => isLocalFontApiAvailable())
 const cacheAvailable = computed(() => isFontAssetCacheAvailable())
@@ -82,6 +161,7 @@ const buildLocalFontOptions = (candidates: LocalFontCandidate[]): LocalFontOptio
       label,
       value: item.family,
       aliases: item.aliases,
+      family: item.family,
     }
   })
   rebuildLocalAliasLookup(options)
@@ -128,6 +208,10 @@ const previewFamily = computed(() => {
     )
     return candidate || currentDisplayFamily.value
   }
+  if (sourceMode.value === 'platform') {
+    const selected = platformFonts.value.find((item) => item.id === selectedPlatformFontId.value) || null
+    return sanitizeFontFamilyName(selected?.family || selected?.displayName || '') || currentDisplayFamily.value
+  }
   return currentDisplayFamily.value
 })
 
@@ -141,6 +225,19 @@ const refreshCachedAssets = async () => {
   } catch (error) {
     console.warn('加载字体缓存列表失败', error)
     cachedAssets.value = []
+  }
+}
+
+const refreshPlatformFonts = async () => {
+  loadingPlatformFonts.value = true
+  try {
+    platformFonts.value = await listPlatformFonts()
+    primePlatformFontPreview(selectedPlatformFontId.value)
+  } catch (error) {
+    console.warn('加载平台字体列表失败', error)
+    platformFonts.value = []
+  } finally {
+    loadingPlatformFonts.value = false
   }
 }
 
@@ -174,7 +271,11 @@ const setupDraftFromCurrent = async () => {
   importedDraft.value = null
   enhancedCoverageEnabled.value = !!display.settings.fontEnhancedCoverageEnabled
   selectedCachedAssetId.value = display.settings.globalFontAssetId || null
+  selectedPlatformFontId.value = display.settings.globalFontSourceType === 'platform'
+    ? (display.settings.globalFontAssetId || null)
+    : null
   await refreshCachedAssets()
+  await refreshPlatformFonts()
 }
 
 watch(
@@ -215,6 +316,21 @@ const handleLoadLocalFonts = async () => {
 const handleSelectLocalFont = (value: string | null) => {
   selectedLocalFamily.value = sanitizeFontFamilyName(value || '')
   sourceMode.value = 'system'
+}
+
+const handleSelectPlatformFont = async (value: string | null) => {
+  selectedPlatformFontId.value = value
+  sourceMode.value = 'platform'
+  const selected = platformFonts.value.find((item) => item.id === value) || null
+  if (!selected) return
+  processing.value = true
+  try {
+    await ensurePlatformFontLoaded(selected.id, selected.family)
+  } catch (error: any) {
+    message.error(error?.message || '平台字体预览加载失败')
+  } finally {
+    processing.value = false
+  }
 }
 
 const triggerFileSelect = () => {
@@ -363,6 +479,19 @@ const resolveSubmitPayload = async (): Promise<{ family: string; sourceType: Fon
     message.warning('请先导入字体文件或选择一个已缓存字体')
     return null
   }
+  if (sourceMode.value === 'platform') {
+    const selected = platformFonts.value.find((item) => item.id === selectedPlatformFontId.value) || null
+    if (!selected?.id) {
+      message.warning('请先选择一个平台字体')
+      return null
+    }
+    await ensurePlatformFontLoaded(selected.id, selected.family)
+    return {
+      family: sanitizeFontFamilyName(selected.family || selected.displayName),
+      sourceType: 'platform',
+      assetId: selected.id,
+    }
+  }
   return {
     family: '',
     sourceType: 'default',
@@ -424,11 +553,29 @@ const handleRestoreDefault = () => {
           <p class="section-title">选择方式</p>
           <p class="section-desc">系统字体读取失败时，可改用手动输入或导入字体</p>
         </header>
-        <n-radio-group v-model:value="sourceMode" size="small" class="source-mode-group">
-          <n-radio-button value="system">系统字体</n-radio-button>
-          <n-radio-button value="manual">手动输入</n-radio-button>
-          <n-radio-button value="upload">上传字体</n-radio-button>
-          <n-radio-button value="url">URL 导入</n-radio-button>
+        <n-radio-group v-model:value="sourceMode" class="source-mode-group">
+          <div class="source-mode-columns">
+            <div
+              v-for="(column, columnIndex) in sourceModeColumns"
+              :key="`source-column-${columnIndex}`"
+              class="source-mode-column"
+              :style="{ '--source-mode-rows': String(column.length) }"
+            >
+              <n-tooltip
+                v-for="option in column"
+                :key="option.value"
+                trigger="hover"
+                placement="top"
+              >
+                <template #trigger>
+                  <n-radio-button :value="option.value" class="source-mode-tile">
+                    <span class="source-mode-tile__label">{{ option.label }}</span>
+                  </n-radio-button>
+                </template>
+                <span>{{ option.description }}</span>
+              </n-tooltip>
+            </div>
+          </div>
         </n-radio-group>
       </section>
 
@@ -466,6 +613,8 @@ const handleRestoreDefault = () => {
           clearable
           :options="localFontOptions"
           placeholder="读取后选择字体"
+          :render-label="renderLocalFontLabel"
+          :render-option="renderLocalFontOption"
           @update:value="handleSelectLocalFont"
         />
       </section>
@@ -506,6 +655,30 @@ const handleRestoreDefault = () => {
           <n-input v-model:value="urlFamily" placeholder="可选：自定义字体名称" />
           <n-button secondary size="small" :disabled="processing" @click="handleImportFromUrl">导入并预览</n-button>
         </div>
+      </section>
+
+      <section v-if="sourceMode === 'platform'" class="font-settings-section">
+        <header>
+          <p class="section-title">平台字体</p>
+          <p class="section-desc">使用管理员上传的云端字体</p>
+        </header>
+        <div class="inline-row">
+          <n-button secondary size="small" :loading="loadingPlatformFonts" @click="refreshPlatformFonts">
+            刷新平台字体
+          </n-button>
+        </div>
+        <n-select
+          :value="selectedPlatformFontId"
+          filterable
+          clearable
+          :options="platformFontOptions"
+          placeholder="选择平台字体"
+          :render-label="renderPlatformFontLabel"
+          :render-option="renderPlatformFontOption"
+          content-class="font-settings-platform-font-select__menu"
+          @update:value="handleSelectPlatformFont"
+          @update:show="handlePlatformFontDropdownVisible"
+        />
       </section>
 
       <section class="font-settings-section">
@@ -608,30 +781,74 @@ const handleRestoreDefault = () => {
 .source-mode-group {
   width: 100%;
   max-width: 100%;
-  display: flex;
-  flex-wrap: nowrap;
-  overflow: hidden;
-  padding-bottom: 2px;
+}
+
+.source-mode-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.source-mode-column {
+  display: grid;
+  grid-template-rows: repeat(var(--source-mode-rows), minmax(0, 1fr));
+  gap: 0.65rem;
 }
 
 .source-mode-group :deep(.n-radio-group__splitor) {
   display: none;
 }
 
-.source-mode-group :deep(.n-radio-button) {
-  flex: 1 1 0;
+.source-mode-tile {
+  width: 100%;
+  --n-button-text-color: var(--sc-text-primary);
+  --n-button-text-color-hover: var(--sc-text-primary);
+  --n-button-text-color-active: var(--sc-text-primary);
+}
+
+.source-mode-tile :deep(.n-radio-button) {
+  width: 100%;
   min-width: 0;
+  border: 1px solid var(--sc-border-strong);
+  border-radius: 12px;
+  background: var(--sc-bg-elevated);
+  color: var(--sc-text-primary);
 }
 
-.source-mode-group :deep(.n-radio-button__state-border) {
-  border-radius: 8px;
+.source-mode-tile :deep(.n-radio-button__state-border) {
+  border-radius: 12px;
 }
 
-.source-mode-group :deep(.n-radio__label) {
+.source-mode-tile :deep(.n-radio__label) {
+  width: 100%;
+  display: flex;
   justify-content: center;
-  font-size: 0.76rem;
-  padding-inline: 0.45rem;
-  white-space: nowrap;
+  align-items: center;
+  text-align: center;
+  padding: 0.85rem 0.65rem;
+  white-space: normal;
+  line-height: 1.4;
+  color: var(--sc-text-primary);
+}
+
+.source-mode-tile__label {
+  display: block;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--sc-text-primary);
+}
+
+.source-mode-tile :deep(.n-radio-button),
+.source-mode-tile :deep(.n-radio-button__state-border) {
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+}
+
+.source-mode-tile:hover :deep(.n-radio-button),
+.source-mode-tile:hover :deep(.n-radio-button__state-border) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+  border-color: var(--sc-border-strong);
 }
 
 .upload-row {
@@ -742,5 +959,49 @@ const handleRestoreDefault = () => {
   .url-grid {
     grid-template-columns: 1fr;
   }
+}
+</style>
+
+<style lang="scss">
+.font-settings-platform-font-select__menu {
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16), 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+.platform-font-select-preview__option {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.platform-font-select-preview__option--single {
+  display: block;
+}
+
+.platform-font-select-preview__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  color: var(--sc-text-primary, inherit);
+}
+
+.platform-font-select-preview__sample {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+  opacity: 0.82;
+  color: var(--sc-text-secondary, inherit);
+}
+
+.platform-font-select-preview__value {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

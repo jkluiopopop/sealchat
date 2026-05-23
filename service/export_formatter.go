@@ -599,8 +599,25 @@ func applyTipTapMarks(content string, marks []*tiptapMark) string {
 			}
 			result = `<a href="` + href + `" target="` + htmlEscape(target) + `" rel="noopener noreferrer">` + result + "</a>"
 		case "textstyle":
-			if color := mark.attrString("color"); color != "" {
-				result = `<span style="color:` + htmlEscape(color) + `">` + result + "</span>"
+			attrs := make([]string, 0, 3)
+			styles := make([]string, 0, 2)
+			if fontAssetID := strings.TrimSpace(mark.attrString("fontAssetId")); fontAssetID != "" {
+				attrs = append(attrs, `data-platform-font-id="`+htmlEscape(fontAssetID)+`"`)
+			}
+			if platformFontFamily := strings.TrimSpace(mark.attrString("platformFontFamily")); platformFontFamily != "" {
+				attrs = append(attrs, `data-platform-font-family="`+htmlEscape(platformFontFamily)+`"`)
+			}
+			if fontFamily := strings.TrimSpace(mark.attrString("fontFamily")); fontFamily != "" {
+				styles = append(styles, `font-family: `+htmlEscape(fontFamily))
+			}
+			if color := strings.TrimSpace(mark.attrString("color")); color != "" {
+				styles = append(styles, `color:`+htmlEscape(color))
+			}
+			if len(styles) > 0 {
+				attrs = append(attrs, `style="`+strings.Join(styles, "; ")+`"`)
+			}
+			if len(attrs) > 0 {
+				result = `<span ` + strings.Join(attrs, " ") + `>` + result + "</span>"
 			}
 		}
 	}
@@ -2462,12 +2479,16 @@ var exportHTMLTemplate = htmltemplate.Must(htmltemplate.New("export_html").Funcs
 	"safeHTML": func(s string) htmltemplate.HTML {
 		return htmltemplate.HTML(s)
 	},
+	"safeCSS": func(s string) htmltemplate.CSS {
+		return htmltemplate.CSS(s)
+	},
 }).Parse(`<!DOCTYPE html>
 <html lang="zh">
 <head>
   <meta charset="UTF-8">
   <title>频道导出 - {{.ChannelName}}</title>
   <style>
+    {{if .EmbeddedFontCSS}}{{safeCSS .EmbeddedFontCSS}}{{end}}
     body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB",sans-serif; margin: 2rem; background: #f7f7f7; }
     .meta { margin-bottom: 1.5rem; color: #555; }
     .message { padding: 12px 16px; margin-bottom: 8px; background: #fff; border-radius: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
@@ -2514,7 +2535,14 @@ func (htmlFormatter) Build(payload *ExportPayload) ([]byte, error) {
 		return nil, fmt.Errorf("payload 为空")
 	}
 	buf := &bytes.Buffer{}
-	if err := exportHTMLTemplate.Execute(buf, payload); err != nil {
+	view := struct {
+		*ExportPayload
+		EmbeddedFontCSS string
+	}{
+		ExportPayload:   payload,
+		EmbeddedFontCSS: buildEmbeddedPlatformFontCSS(payload),
+	}
+	if err := exportHTMLTemplate.Execute(buf, view); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

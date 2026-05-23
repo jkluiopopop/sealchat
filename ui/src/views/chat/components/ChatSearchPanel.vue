@@ -41,6 +41,7 @@ const {
   pageSize,
   error,
   lastKeyword,
+  withinResultsEnabled,
 } = storeToRefs(channelSearch)
 
 const searchInputRef = ref<HTMLInputElement | null>(null)
@@ -346,6 +347,8 @@ onBeforeUnmount(() => {
 })
 
 const hasSearched = computed(() => !!lastKeyword.value)
+const canSearchWithinResults = computed(() => channelSearch.canSearchWithinResults)
+const activeHighlightKeyword = computed(() => lastKeyword.value.trim())
 const showEmptyState = computed(() => hasSearched.value && !loading.value && results.value.length === 0)
 const filterActive = computed(() => channelSearch.isFilterActive)
 const activeFilterCount = computed(() => {
@@ -395,7 +398,16 @@ const worldScopeFilter = computed({
   set: (val: boolean) => channelSearch.updateFilters({ worldScope: val }),
 })
 
-const worldScopeEnabled = computed(() => filters.value.worldScope === true)
+const worldScopeEnabled = computed(() => {
+  if (withinResultsEnabled.value && canSearchWithinResults.value) {
+    return channelSearch.currentResultWorldScope
+  }
+  return filters.value.worldScope === true
+})
+const withinResultsSwitchValue = computed({
+  get: () => withinResultsEnabled.value,
+  set: (val: boolean) => channelSearch.setWithinResultsEnabled(val),
+})
 
 const handleClose = () => {
   channelSearch.closePanel()
@@ -458,7 +470,7 @@ const renderSnippetFragments = (content: string, ranges?: Array<[number, number]
     }
     return fragments
   }
-  const keywordValue = lastKeyword.value.trim()
+  const keywordValue = activeHighlightKeyword.value.trim()
   if (!keywordValue) {
     return [{ text: content, highlighted: false }]
   }
@@ -542,20 +554,35 @@ const shortContent = (text: string) => {
           </div>
 
           <div class="chat-search-panel__filter-toggle">
-            <n-button
-              type="primary"
-              ghost
-              strong
-              size="small"
-              class="filter-toggle-button"
-              @click="toggleAdvancedFilters"
-              :aria-expanded="advancedFiltersVisible"
-            >
-              <n-icon size="16" class="mr-1">
-                <component :is="advancedFiltersVisible ? ChevronUpOutline : ChevronDownOutline" />
-              </n-icon>
-              {{ advancedFiltersVisible ? '收起筛选' : '展开筛选' }}
-            </n-button>
+            <div class="chat-search-panel__filter-toggle-main">
+              <n-button
+                type="primary"
+                ghost
+                strong
+                size="small"
+                class="filter-toggle-button"
+                @click="toggleAdvancedFilters"
+                :aria-expanded="advancedFiltersVisible"
+              >
+                <n-icon size="16" class="mr-1">
+                  <component :is="advancedFiltersVisible ? ChevronUpOutline : ChevronDownOutline" />
+                </n-icon>
+                {{ advancedFiltersVisible ? '收起筛选' : '展开筛选' }}
+              </n-button>
+              <n-tooltip trigger="hover">
+                <template #trigger>
+                  <div class="chat-search-panel__within-results">
+                    <span class="chat-search-panel__within-results-label">结果内搜索</span>
+                    <n-switch
+                      v-model:value="withinResultsSwitchValue"
+                      size="small"
+                      :disabled="!canSearchWithinResults"
+                    />
+                  </div>
+                </template>
+                仅在上一次搜索结果内继续筛选
+              </n-tooltip>
+            </div>
             <n-tag v-if="filterActive" size="small" type="warning" round>
               {{ activeFilterCount }} 项筛选
             </n-tag>
@@ -973,8 +1000,31 @@ const shortContent = (text: string) => {
   margin-top: 0;
 }
 
+.chat-search-panel__filter-toggle-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
 .filter-toggle-button {
   letter-spacing: 0.02em;
+}
+
+.chat-search-panel__within-results {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.chat-search-panel__within-results-label {
+  font-size: 0.78rem;
+  color: #334155;
+  white-space: nowrap;
 }
 
 .speaker-filter__trigger {
@@ -1162,6 +1212,15 @@ const shortContent = (text: string) => {
 :global(:root[data-display-palette='night'] .chat-search-panel__filter-bar) {
   background: rgba(30, 41, 59, 0.85);
   border-color: rgba(148, 163, 184, 0.45);
+}
+
+:global(:root[data-display-palette='night'] .chat-search-panel__within-results) {
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(96, 165, 250, 0.28);
+}
+
+:global(:root[data-display-palette='night'] .chat-search-panel__within-results-label) {
+  color: rgba(226, 232, 240, 0.9);
 }
 
 :global(:root[data-display-palette='night'] .filter-label) {

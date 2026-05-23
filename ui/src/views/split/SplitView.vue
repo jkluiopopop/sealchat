@@ -974,6 +974,7 @@ watch(
         @toggle-search="toggleSearch"
         @open-embed-panel="openEmbedPanel"
         @toggle-action-ribbon="toggleActionRibbon"
+        @open-display-settings="openPanel('display')"
       />
     </n-layout-header>
 

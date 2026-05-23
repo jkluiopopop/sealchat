@@ -46,6 +46,8 @@ interface Props {
   importActive?: boolean
   splitEnabled?: boolean
   splitActive?: boolean
+  icOocSplitEnabled?: boolean
+  icOocSplitActive?: boolean
   stickyNoteEnabled?: boolean
   stickyNoteActive?: boolean
   webhookEnabled?: boolean
@@ -68,6 +70,7 @@ interface Emits {
   (e: 'open-favorites'): void
   (e: 'open-channel-images'): void
   (e: 'open-split'): void
+  (e: 'open-ic-ooc-split', side: 'left' | 'right'): void
   (e: 'toggle-sticky-note'): void
   (e: 'open-webhook'): void
   (e: 'open-email-notification'): void
@@ -94,8 +97,14 @@ interface ActionButton {
   icon: any
   emitEvent: string
   activeKey: keyof Props
+  template?: 'default' | 'split-dual'
   disabled?: () => boolean
 }
+
+const SPLIT_DUAL_MORE_LEFT_KEY = 'ic-ooc-split:left'
+const SPLIT_DUAL_MORE_RIGHT_KEY = 'ic-ooc-split:right'
+const splitChooserExpanded = ref(false)
+const dualSplitActionRef = ref<HTMLElement | null>(null)
 
 const allActionButtons = computed<ActionButton[]>(() => {
   const buttons: ActionButton[] = [
@@ -127,6 +136,17 @@ const allActionButtons = computed<ActionButton[]>(() => {
   // 分屏入口（置于“消息归档”之后）
   if (props.splitEnabled !== false) {
     buttons.push({ key: 'split', label: '分屏', icon: SplitIcon, emitEvent: 'open-split', activeKey: 'splitActive' })
+  }
+
+  if (props.icOocSplitEnabled !== false) {
+    buttons.push({
+      key: 'ic-ooc-split',
+      label: '场内外分屏',
+      icon: SplitIcon,
+      emitEvent: 'open-ic-ooc-split',
+      activeKey: 'icOocSplitActive',
+      template: 'split-dual',
+    })
   }
 
   // 便签入口（置于“分屏”之后）
@@ -168,15 +188,37 @@ const hasOverflowButtons = computed(() => {
 
 // Dropdown menu options for overflow buttons
 const moreMenuOptions = computed(() => {
-  return overflowButtons.value.map(btn => ({
-    key: btn.key,
-    label: btn.label,
-    icon: () => h(NIcon, null, { default: () => h(btn.icon) }),
-    disabled: btn.disabled?.() === true,
-  }))
+  return overflowButtons.value.map((btn) => {
+    if (btn.template === 'split-dual') {
+      const disabled = btn.disabled?.() === true
+      return {
+        key: btn.key,
+        label: btn.label,
+        icon: () => h(NIcon, null, { default: () => h(btn.icon) }),
+        children: [
+          { key: SPLIT_DUAL_MORE_LEFT_KEY, label: '左场内', disabled },
+          { key: SPLIT_DUAL_MORE_RIGHT_KEY, label: '右场内', disabled },
+        ],
+      }
+    }
+    return {
+      key: btn.key,
+      label: btn.label,
+      icon: () => h(NIcon, null, { default: () => h(btn.icon) }),
+      disabled: btn.disabled?.() === true,
+    }
+  })
 })
 
 const handleMoreMenuSelect = (key: string) => {
+  if (key === SPLIT_DUAL_MORE_LEFT_KEY) {
+    emit('open-ic-ooc-split', 'left')
+    return
+  }
+  if (key === SPLIT_DUAL_MORE_RIGHT_KEY) {
+    emit('open-ic-ooc-split', 'right')
+    return
+  }
   const button = allActionButtons.value.find(btn => btn.key === key)
   if (!button || button.disabled?.() === true) {
     return
@@ -189,6 +231,34 @@ const handleButtonClick = (button: ActionButton) => {
     return
   }
   emit(button.emitEvent as any)
+}
+
+const handleSplitChooserPointerEnter = (button: ActionButton) => {
+  if (isMobile() || button.disabled?.() === true) return
+  splitChooserExpanded.value = true
+}
+
+const handleSplitChooserPointerLeave = () => {
+  if (isMobile()) return
+  splitChooserExpanded.value = false
+}
+
+const handleSplitChooserTriggerClick = (button: ActionButton) => {
+  if (button.disabled?.() === true) return
+  splitChooserExpanded.value = !splitChooserExpanded.value
+}
+
+const handleSplitChooserFocusOut = (event: FocusEvent) => {
+  const nextTarget = event.relatedTarget as Node | null
+  if (nextTarget && dualSplitActionRef.value?.contains(nextTarget)) {
+    return
+  }
+  splitChooserExpanded.value = false
+}
+
+const handleSplitChooserSelect = (side: 'left' | 'right') => {
+  splitChooserExpanded.value = false
+  emit('open-ic-ooc-split', side)
 }
 
 const BUTTON_GAP = 8 // gap between buttons (0.5rem)
@@ -249,6 +319,15 @@ const handleViewportResize = () => {
   scheduleVisibleCountCalculation()
 }
 
+const handleDocumentPointerDown = (event: PointerEvent) => {
+  if (!splitChooserExpanded.value) return
+  const target = event.target as Node | null
+  if (target && dualSplitActionRef.value?.contains(target)) {
+    return
+  }
+  splitChooserExpanded.value = false
+}
+
 onMounted(() => {
   nextTick(() => {
     scheduleVisibleCountCalculation()
@@ -269,6 +348,7 @@ onMounted(() => {
 
   window.addEventListener('resize', handleViewportResize)
   window.visualViewport?.addEventListener('resize', handleViewportResize)
+  document.addEventListener('pointerdown', handleDocumentPointerDown)
 })
 
 onBeforeUnmount(() => {
@@ -282,6 +362,7 @@ onBeforeUnmount(() => {
   }
   window.removeEventListener('resize', handleViewportResize)
   window.visualViewport?.removeEventListener('resize', handleViewportResize)
+  document.removeEventListener('pointerdown', handleDocumentPointerDown)
 })
 
 watch(
@@ -397,20 +478,60 @@ const cycleIcFilter = () => {
     <div class="ribbon-section ribbon-section--actions" ref="actionsContainerRef">
       <div class="ribbon-actions-viewport">
         <div class="ribbon-actions-grid">
-          <n-button
-            v-for="button in visibleButtons"
-            :key="button.key"
-            type="tertiary"
-            class="ribbon-action-button"
-            :class="{ 'is-active': props[button.activeKey] }"
-            :disabled="button.disabled?.() === true"
-            @click="handleButtonClick(button)"
-          >
-            <template #icon>
-              <n-icon :component="button.icon" />
-            </template>
-            {{ button.label }}
-          </n-button>
+          <template v-for="button in visibleButtons" :key="button.key">
+            <div
+              v-if="button.template === 'split-dual'"
+              ref="dualSplitActionRef"
+              class="ribbon-dual-split"
+              :class="{ 'is-expanded': splitChooserExpanded, 'is-active': props[button.activeKey], 'is-disabled': button.disabled?.() === true }"
+              @mouseenter="handleSplitChooserPointerEnter(button)"
+              @mouseleave="handleSplitChooserPointerLeave"
+              @focusin="button.disabled?.() === true ? undefined : (splitChooserExpanded = true)"
+              @focusout="handleSplitChooserFocusOut"
+            >
+              <button
+                type="button"
+                class="ribbon-dual-split__trigger"
+                :disabled="button.disabled?.() === true"
+                :aria-expanded="splitChooserExpanded ? 'true' : 'false'"
+                @click="handleSplitChooserTriggerClick(button)"
+              >
+                <span class="ribbon-dual-split__trigger-icon">
+                  <n-icon :component="button.icon" />
+                </span>
+                <span class="ribbon-dual-split__trigger-label">{{ button.label }}</span>
+              </button>
+              <div class="ribbon-dual-split__overlay" :class="{ 'is-expanded': splitChooserExpanded }">
+                <button
+                  type="button"
+                  class="ribbon-dual-split__choice ribbon-dual-split__choice--left"
+                  @click.stop="handleSplitChooserSelect('left')"
+                >
+                  左场内
+                </button>
+                <button
+                  type="button"
+                  class="ribbon-dual-split__choice ribbon-dual-split__choice--right"
+                  @click.stop="handleSplitChooserSelect('right')"
+                >
+                  右场内
+                </button>
+              </div>
+            </div>
+            <n-button
+              v-else
+              type="tertiary"
+              class="ribbon-action-button"
+              :class="{ 'is-active': props[button.activeKey] }"
+              :disabled="button.disabled?.() === true"
+              @click="handleButtonClick(button)"
+            >
+              <template #icon>
+                <n-icon :component="button.icon" />
+              </template>
+              {{ button.label }}
+            </n-button>
+          </template>
         </div>
       </div>
 
@@ -440,7 +561,17 @@ const cycleIcFilter = () => {
           class="ribbon-action-measurement-item"
           :data-action-key="button.key"
         >
-          <n-button type="tertiary" class="ribbon-action-button">
+          <template v-if="button.template === 'split-dual'">
+            <div class="ribbon-dual-split ribbon-dual-split--measurement">
+              <button type="button" class="ribbon-dual-split__trigger">
+                <span class="ribbon-dual-split__trigger-icon">
+                  <n-icon :component="button.icon" />
+                </span>
+                <span class="ribbon-dual-split__trigger-label">{{ button.label }}</span>
+              </button>
+            </div>
+          </template>
+          <n-button v-else type="tertiary" class="ribbon-action-button">
             <template #icon>
               <n-icon :component="button.icon" />
             </template>
@@ -589,6 +720,100 @@ const cycleIcFilter = () => {
   flex-shrink: 0;
 }
 
+.ribbon-dual-split {
+  position: relative;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.ribbon-dual-split__trigger {
+  width: 100%;
+  min-height: 2.1rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  border-color: var(--sc-border-strong);
+  padding: 0.45rem 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  color: var(--sc-text-primary);
+  background: transparent;
+  transition: opacity 0.2s ease, background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.ribbon-dual-split__trigger:hover {
+  background-color: var(--sc-chip-bg);
+}
+
+.ribbon-dual-split__trigger-icon,
+.ribbon-dual-split__trigger-label {
+  display: inline-flex;
+  align-items: center;
+}
+
+.ribbon-dual-split__trigger-label {
+  white-space: nowrap;
+}
+
+.ribbon-dual-split__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.985);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--sc-border-strong);
+  background: var(--sc-bg-elevated);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.14);
+  z-index: 2;
+}
+
+.ribbon-dual-split__overlay.is-expanded {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+.ribbon-dual-split.is-expanded .ribbon-dual-split__trigger {
+  opacity: 0;
+}
+
+.ribbon-dual-split__choice {
+  flex: 1 1 50%;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--sc-text-primary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 0 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.ribbon-dual-split__choice + .ribbon-dual-split__choice {
+  border-left: 1px solid var(--sc-border-strong);
+}
+
+.ribbon-dual-split__choice--left {
+  background: color-mix(in srgb, #10b981 12%, var(--sc-bg-elevated));
+}
+
+.ribbon-dual-split__choice--right {
+  background: color-mix(in srgb, #f59e0b 12%, var(--sc-bg-elevated));
+}
+
+.ribbon-dual-split__choice:hover {
+  background: color-mix(in srgb, var(--sc-chip-bg) 74%, white 0%);
+}
+
 .ribbon-action-button:hover {
   background-color: var(--sc-chip-bg);
   color: var(--sc-action-ribbon-hover-text, var(--sc-text-primary));
@@ -641,6 +866,18 @@ const cycleIcFilter = () => {
   background-color: rgba(244, 244, 245, 0.08);
 }
 
+:root[data-display-palette='night'] .ribbon-dual-split__overlay {
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.38);
+}
+
+:root[data-display-palette='night'] .ribbon-dual-split__choice--left {
+  background: color-mix(in srgb, #34d399 16%, var(--sc-bg-elevated));
+}
+
+:root[data-display-palette='night'] .ribbon-dual-split__choice--right {
+  background: color-mix(in srgb, #fbbf24 16%, var(--sc-bg-elevated));
+}
+
 .ribbon-action-button.is-active {
   --n-text-color: #1d4ed8;
   --n-text-color-hover: #1d4ed8;
@@ -671,6 +908,23 @@ const cycleIcFilter = () => {
 
 :root[data-display-palette='night'] .ribbon-action-button.is-active :deep(.n-button__content) {
   color: #cfe0ff !important;
+}
+
+.ribbon-dual-split.is-active .ribbon-dual-split__trigger {
+  color: #1d4ed8;
+  background-color: rgba(59, 130, 246, 0.18);
+  border-color: rgba(37, 99, 235, 0.35);
+}
+
+:root[data-display-palette='night'] .ribbon-dual-split.is-active .ribbon-dual-split__trigger {
+  color: #cfe0ff;
+  background-color: rgba(96, 165, 250, 0.25);
+  border-color: rgba(147, 197, 253, 0.45);
+}
+
+.ribbon-dual-split.is-disabled .ribbon-dual-split__trigger {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 @media (max-width: 768px) {
@@ -707,13 +961,22 @@ const cycleIcFilter = () => {
 
   .ribbon-actions-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.5rem;
   }
 
   .ribbon-actions-grid :deep(.n-button) {
     width: 100%;
     justify-content: center;
+  }
+
+  .ribbon-dual-split {
+    width: 100%;
+  }
+
+  .ribbon-dual-split__trigger {
+    justify-content: center;
+    padding-inline: 0.7rem;
   }
 
   .ribbon-actions-anchor :deep(.n-button) {
@@ -728,6 +991,12 @@ const cycleIcFilter = () => {
   .ribbon-section--summary {
     min-width: auto;
     justify-content: center;
+  }
+}
+
+@media (max-width: 520px) {
+  .ribbon-actions-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

@@ -88,9 +88,9 @@ const updateWidth = () => {
   viewportWidth.value = window.innerWidth;
 };
 const drawerWidth = computed(() => {
-  const preferred = audio.activeTab === 'player' ? 420 : 960;
+  const preferred = audio.activeTab === 'player' ? 420 : audio.activeTab === 'library' ? 1440 : 960;
   if (!viewportWidth.value) return preferred;
-  const margin = audio.activeTab === 'library' ? 48 : 24;
+  const margin = audio.activeTab === 'library' ? 20 : 24;
   const maxAllow = Math.max(320, viewportWidth.value - margin);
   return Math.min(preferred, maxAllow);
 });
@@ -173,6 +173,18 @@ onBeforeUnmount(() => {
 
 .audio-drawer__alert {
   margin-top: 0.5rem;
+}
+
+@media (max-width: 720px) {
+  .audio-drawer__header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .audio-drawer__modes {
+    flex-wrap: wrap;
+  }
 }
 </style>
 

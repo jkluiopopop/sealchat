@@ -84,6 +84,47 @@ export const createDefaultSplitSessionSnapshot = (scopeWorldId: string): SplitSe
   },
 })
 
+export const buildIcOocSplitScopeWorldId = (worldId: string): string => {
+  const normalizedWorldId = worldId.trim()
+  return normalizedWorldId ? `${normalizedWorldId}::preset:ic-ooc` : ''
+}
+
+export const createIcOocSplitSessionSnapshot = (
+  scopeWorldId: string,
+  worldId: string,
+  channelId: string,
+  layout: 'ic-left' | 'ooc-left' = 'ic-left',
+): SplitSessionSnapshot => {
+  const normalizedScopeWorldId = scopeWorldId.trim()
+  const normalizedWorldId = worldId.trim()
+  const normalizedChannelId = channelId.trim()
+  const leftIcFilter = layout === 'ooc-left' ? 'ooc' : 'ic'
+  const rightIcFilter = layout === 'ooc-left' ? 'ic' : 'ooc'
+  const snapshot = createDefaultSplitSessionSnapshot(normalizedScopeWorldId)
+  snapshot.updatedAt = Date.now()
+  snapshot.panes = {
+    A: {
+      ...snapshot.panes.A,
+      worldId: normalizedWorldId,
+      channelId: normalizedChannelId,
+      filterState: {
+        ...snapshot.panes.A.filterState,
+        icFilter: leftIcFilter,
+      },
+    },
+    B: {
+      ...snapshot.panes.B,
+      worldId: normalizedWorldId,
+      channelId: normalizedChannelId,
+      filterState: {
+        ...snapshot.panes.B.filterState,
+        icFilter: rightIcFilter,
+      },
+    },
+  }
+  return snapshot
+}
+
 export interface SplitSessionPaneRestoreObservedState {
   mode: SplitPaneMode
   worldId: string

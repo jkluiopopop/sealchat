@@ -14,7 +14,7 @@ func renderHTMLPart(payload *ExportPayload, assets viewerAssets) ([]byte, error)
 	if err != nil {
 		return nil, fmt.Errorf("序列化分片数据失败: %w", err)
 	}
-	return renderViewerShell("聊天分片", "window.__EXPORT_DATA__", data, assets)
+	return renderViewerShell("聊天分片", "window.__EXPORT_DATA__", data, assets, buildEmbeddedPlatformFontCSS(payload))
 }
 
 func renderViewerIndex(manifest *viewerManifest, assets viewerAssets) ([]byte, error) {
@@ -25,16 +25,17 @@ func renderViewerIndex(manifest *viewerManifest, assets viewerAssets) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("序列化 manifest 失败: %w", err)
 	}
-	return renderViewerShell("导出索引", "window.__EXPORT_INDEX__", data, assets)
+	return renderViewerShell("导出索引", "window.__EXPORT_INDEX__", data, assets, "")
 }
 
-func renderViewerShell(title, dataVar string, data []byte, assets viewerAssets) ([]byte, error) {
+func renderViewerShell(title, dataVar string, data []byte, assets viewerAssets, extraCSS string) ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteString("<!DOCTYPE html><html lang=\"zh\"><head><meta charset=\"UTF-8\">")
 	buf.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">")
 	buf.WriteString("<title>")
 	buf.WriteString(htmlEscape(title))
 	buf.WriteString("</title><style>")
+	buf.WriteString(extraCSS)
 	buf.WriteString(assets.CSS)
 	buf.WriteString("</style></head><body><div id=\"app\"></div><script>")
 	buf.WriteString(dataVar)

@@ -5,6 +5,14 @@
 
 import { urlBase } from '@/stores/_config';
 import { isLocalMessageLink, parseMessageLink } from './messageLink';
+import {
+  SMART_LINK_DATA_ATTR,
+  SMART_LINK_IMAGE_ROLE_ATTR,
+  SMART_LINK_NODE_TYPE,
+  SMART_LINK_TEXT_IMAGE_ROLE,
+  normalizeSmartLinkAttrs,
+  smartLinkToPlainText,
+} from './tiptapSmartLink';
 
 interface TipTapNode {
   type: string;
@@ -201,6 +209,21 @@ function mentionAwarePlainText(text: string): string {
   });
 }
 
+function resolveRenderableSmartLinkValue(
+  value: string,
+  options: RenderOptions,
+  baseUrl: string,
+): string {
+  const resolver = options.attachmentResolver;
+  if (resolver) {
+    const resolved = resolver(value);
+    if (resolved) {
+      return resolved;
+    }
+  }
+  return buildFallbackAttachmentUrl(value, baseUrl);
+}
+
 /**
  * 渲染单个节点
  */
@@ -255,6 +278,14 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
             text = `<a href="${escapeHtml(href)}" class="${linkClass}" target="${target}" rel="noopener noreferrer">${text}</a>`;
             break;
           case 'textStyle':
+            if (mark.attrs?.fontAssetId) {
+              const platformFontId = escapeHtml(String(mark.attrs.fontAssetId));
+              const platformFontFamily = escapeHtml(String(mark.attrs.platformFontFamily || mark.attrs.fontFamily || ''));
+              const extraStyle = mark.attrs?.fontFamily
+                ? ` style="font-family: ${escapeHtml(String(mark.attrs.fontFamily))} !important"`
+                : '';
+              text = `<span data-platform-font-id="${platformFontId}" data-platform-font-family="${platformFontFamily}"${extraStyle}>${text}</span>`;
+            }
             if (mark.attrs?.color) {
               const normalizedColor = normalizeCssColor(String(mark.attrs.color));
               if (normalizedColor && !shouldFilterTextColor(normalizedColor)) {
@@ -276,6 +307,21 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
 
   // 渲染块级节点
   switch (node.type) {
+    case SMART_LINK_NODE_TYPE: {
+      const attrs = normalizeSmartLinkAttrs(node.attrs);
+      if (!attrs) {
+        return '';
+      }
+      const smartLinkClass = `${linkClass} message-smart-link`;
+      const textHtml = attrs.textType === 'image'
+        ? `<img src="${escapeHtml(resolveRenderableSmartLinkValue(attrs.textValue, options, baseUrl))}" alt="链接图片" class="${imageClass} message-smart-link__image" ${SMART_LINK_IMAGE_ROLE_ATTR}="${SMART_LINK_TEXT_IMAGE_ROLE}" />`
+        : escapeHtml(attrs.textValue);
+      const dataset = `${SMART_LINK_DATA_ATTR}="true" data-text-type="${escapeHtml(attrs.textType)}" data-text-value="${escapeHtml(attrs.textValue)}" data-url-type="${escapeHtml(attrs.urlType)}" data-url-value="${escapeHtml(attrs.urlValue)}" data-target="${escapeHtml(attrs.target)}"`;
+      if (attrs.urlType === 'url') {
+        return `<a href="${escapeHtml(attrs.urlValue)}" class="${smartLinkClass}" target="${escapeHtml(attrs.target)}" rel="noopener noreferrer" ${dataset}>${textHtml}</a>`;
+      }
+      return `<span class="${smartLinkClass}" role="button" tabindex="0" ${dataset}>${textHtml}</span>`;
+    }
     case 'doc':
       return childrenHtml;
 
@@ -333,6 +379,7 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
       return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" ${title ? `title="${escapeHtml(title)}"` : ''} class="${imageClass}" />`;
 
     case 'mention':
+    case 'satoriMention':
       const mentionId = String(node.attrs?.id || '').trim();
       const mentionName = String(node.attrs?.name || '').trim();
       const mentionDisplay = mentionName || mentionId || '用户';
@@ -435,10 +482,14 @@ function extractText(node: TipTapNode): string {
     return '\n';
   }
 
-  if (node.type === 'mention') {
+  if (node.type === 'mention' || node.type === 'satoriMention') {
     const mentionId = String(node.attrs?.id || '').trim();
     const mentionName = String(node.attrs?.name || '').trim();
     return `@${mentionName || mentionId || '用户'}`;
+  }
+
+  if (node.type === SMART_LINK_NODE_TYPE) {
+    return smartLinkToPlainText(node.attrs);
   }
 
   if (node.content && node.content.length > 0) {

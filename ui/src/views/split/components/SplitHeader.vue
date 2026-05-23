@@ -69,6 +69,7 @@ const emit = defineEmits<{
   (e: 'toggle-search'): void;
   (e: 'open-embed-panel'): void;
   (e: 'toggle-action-ribbon'): void;
+  (e: 'open-display-settings'): void;
 }>();
 
 const router = useRouter();
@@ -106,6 +107,7 @@ const options = computed(() => {
   const items: DropdownOption[] = [
     { label: t('headerMenu.profile'), key: 'profile' },
     { label: t('headerMenu.inputStats'), key: 'inputStats' },
+    { label: t('headerMenu.display'), key: 'display' },
     {
       label: t('headerMenu.lang'),
       key: 'lang',
@@ -163,6 +165,13 @@ const handleSelect = async (key: string | number) => {
       break;
     case 'inputStats':
       await toggleInputStats();
+      break;
+    case 'display':
+      notifShow.value = false;
+      userProfileShow.value = false;
+      adminShow.value = false;
+      inputStatsShow.value = false;
+      emit('open-display-settings');
       break;
     case 'admin':
       notifShow.value = false;

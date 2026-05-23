@@ -219,6 +219,7 @@ export const usePushNotificationStore = defineStore('pushNotification', () => {
         permission,
         supported,
         canNotify,
+        embedNotifyOwnerEnabled,
         requestPermission,
         toggle,
         setEmbedNotifyOwner,

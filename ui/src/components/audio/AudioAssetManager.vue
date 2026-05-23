@@ -65,7 +65,7 @@
           </template>
           刷新列表
         </n-button>
-        <n-button size="small" secondary @click="scrollToUpload" v-if="audio.canManage">
+        <n-button size="small" secondary @click="openUploadPanel" v-if="audio.canManage">
           <template #icon>
             <n-icon size="16">
               <CloudUploadOutline />
@@ -119,11 +119,16 @@
       </n-space>
     </section>
 
-    <section class="audio-library__content">
-      <aside class="audio-library__folders">
-        <div class="audio-library__folder-header">
-          <span>文件夹</span>
-          <div class="audio-library__folder-actions" v-if="audio.canManage">
+    <section class="audio-library__content" :class="contentClassNames">
+      <aside v-if="!isMobileLayout" class="audio-library__folders" :class="{ 'is-collapsed': folderPanelCollapsed }">
+        <div class="audio-library__panel-top">
+          <div class="audio-library__panel-title">
+            <span v-if="!folderPanelCollapsed">文件夹</span>
+            <n-button quaternary size="tiny" @click="toggleFolderPanel">
+              {{ folderPanelCollapsed ? '展开' : '收起' }}
+            </n-button>
+          </div>
+          <div class="audio-library__folder-actions" v-if="audio.canManage && !folderPanelCollapsed">
             <n-button quaternary size="tiny" @click="openCreateFolder">新建</n-button>
             <n-button quaternary size="tiny" :disabled="!currentFolder" @click="openRenameFolder">重命名</n-button>
             <n-button
@@ -138,16 +143,60 @@
           </div>
         </div>
         <n-tree
+          v-if="!folderPanelCollapsed"
           block-line
           :data="folderTreeData"
+          :default-expanded-keys="['all']"
           selectable
           :selected-keys="folderKeys"
           :node-props="treeNodeProps"
           @update:selected-keys="handleFolderSelect"
         />
+        <div v-else class="audio-library__panel-collapsed">
+          <n-button quaternary circle size="large" @click="toggleFolderPanel">
+            <template #icon>
+              <n-icon size="18">
+                <MenuOutline />
+              </n-icon>
+            </template>
+          </n-button>
+          <span class="audio-library__panel-collapsed-label">文件夹</span>
+        </div>
       </aside>
 
-      <section class="audio-library__table">
+      <section
+        class="audio-library__table"
+        :class="{ 'is-drag-over': dragUploadActive }"
+        @dragenter.prevent="handleListDragEnter"
+        @dragover.prevent="handleListDragOver"
+        @dragleave.prevent="handleListDragLeave"
+        @drop.prevent="handleListDrop"
+      >
+        <div class="audio-library__table-top">
+          <div class="audio-library__table-summary">
+            <strong>{{ audio.assetPagination.total || tableData.length }}</strong>
+            <span>条素材</span>
+          </div>
+          <div class="audio-library__table-actions">
+            <n-button quaternary size="small" @click="toggleFolderPanel">
+              {{ isMobileLayout ? '文件夹' : folderPanelCollapsed ? '展开文件夹' : '收起文件夹' }}
+            </n-button>
+            <n-button quaternary size="small" @click="toggleDetailPanel" v-if="!isMobileLayout">
+              {{ detailPanelCollapsed ? '展开详情' : '收起详情' }}
+            </n-button>
+            <n-button quaternary size="small" @click="openDetailPanel" v-else>
+              查看详情
+            </n-button>
+          </div>
+        </div>
+
+        <div v-if="dragUploadActive" class="audio-library__drop-overlay">
+          <div class="audio-library__drop-overlay-card">
+            <strong>释放文件以上传素材</strong>
+            <span>支持 OGG / MP3 / WAV，上传后自动进入当前文件夹</span>
+          </div>
+        </div>
+
         <n-data-table
           size="small"
           :columns="columns"
@@ -174,96 +223,133 @@
         </div>
       </section>
 
-      <section class="audio-library__detail">
-        <template v-if="selectedAsset">
-          <header class="audio-library__detail-header">
-            <div>
-              <h3>{{ selectedAsset.name }}</h3>
-              <p class="audio-library__detail-subtitle">{{ folderLabel(selectedAsset.folderId) }}</p>
-            </div>
-            <div class="audio-library__detail-tags">
-              <n-tag size="small" :type="selectedAsset.scope === 'common' ? 'info' : 'warning'">
-                {{ selectedAsset.scope === 'common' ? '通用级' : '世界级' }}
-              </n-tag>
-              <n-tag size="small" :type="selectedAsset.visibility === 'public' ? 'success' : 'warning'">
-                {{ selectedAsset.visibility === 'public' ? '公开' : '受限' }}
-              </n-tag>
-            </div>
-          </header>
-          <ul class="audio-library__detail-list">
-            <li>时长：{{ formatDuration(selectedAsset.duration) }}</li>
-            <li>上传者：{{ formatUserLabel(selectedAsset.createdBy) }}</li>
-            <li>所属世界：{{ assetWorldLabel }}</li>
-            <li>更新时间：{{ formatDate(selectedAsset.updatedAt) }}</li>
-            <li>素材级别：{{ selectedAsset.scope === 'common' ? '通用级' : '世界级' }}</li>
-            <li>存储：{{ selectedAsset.storageType === 's3' ? '对象存储 (支持跳转)' : '本地文件' }}</li>
-            <li>比特率：{{ selectedAsset.bitrate }} kbps · 大小：{{ formatFileSize(selectedAsset.size) }}</li>
-          </ul>
-          <div class="audio-library__tags">
-            <strong>标签：</strong>
-            <template v-if="selectedAssetTags.length">
-              <n-tag v-for="tag in selectedAssetTags" :key="tag" size="small" class="audio-library__tag" bordered>
-                {{ tag }}
-              </n-tag>
-            </template>
-            <span v-else>未设置</span>
-          </div>
-          <div class="audio-library__description">
-            <strong>备注：</strong>
-            <p>{{ selectedAsset.description || '暂无备注' }}</p>
-          </div>
-          <div class="audio-library__detail-actions">
-            <n-button quaternary size="small" @click="copyStream(selectedAsset.id)">复制播放链接</n-button>
-            <n-button v-if="canEditSelectedAsset" secondary size="small" @click="openAssetEditor(selectedAsset)">
-              编辑元数据
-            </n-button>
-          </div>
-        </template>
-        <template v-else-if="currentFolder">
-          <header class="audio-library__detail-header">
-            <div>
-              <h3>{{ currentFolder.name }}</h3>
-              <p class="audio-library__detail-subtitle">{{ currentFolder.path || '' }}</p>
-            </div>
-            <div class="audio-library__detail-tags">
-              <n-tag size="small" :type="currentFolder.scope === 'common' ? 'info' : 'warning'">
-                {{ currentFolder.scope === 'common' ? '通用级' : '世界级' }}
-              </n-tag>
-            </div>
-          </header>
-          <ul class="audio-library__detail-list">
-            <li>所属世界：{{ folderWorldLabel }}</li>
-            <li>文件夹级别：{{ currentFolder.scope === 'common' ? '通用级' : '世界级' }}</li>
-            <li>创建者：{{ formatUserLabel(currentFolder.createdBy) }}</li>
-            <li>创建时间：{{ formatDate(currentFolder.createdAt) }}</li>
-            <li>更新时间：{{ formatDate(currentFolder.updatedAt) }}</li>
-          </ul>
-          <div class="audio-library__detail-actions" v-if="audio.canManage">
-            <n-button quaternary size="small" @click="openEditFolderMeta">编辑元数据</n-button>
-          </div>
-        </template>
-        <n-empty description="选择一条素材或文件夹以查看详情" v-else />
+      <section v-if="!isMobileLayout && !detailPanelCollapsed" class="audio-library__detail">
+        <component :is="detailContent" />
       </section>
     </section>
 
-    <div ref="uploadAnchor" class="audio-library__upload">
-      <UploadPanel />
-    </div>
+    <n-drawer
+      :show="folderDrawerVisible"
+      placement="left"
+      :width="folderDrawerWidth"
+      @update:show="folderDrawerVisible = $event"
+    >
+      <n-drawer-content>
+        <template #header>
+          <div class="audio-library__drawer-header">
+            <n-button v-if="isMobileLayout" quaternary size="tiny" @click="folderDrawerVisible = false">返回</n-button>
+            <span>文件夹</span>
+            <n-button quaternary size="tiny" @click="folderDrawerVisible = false">关闭</n-button>
+          </div>
+        </template>
+          <div class="audio-library__drawer-panel">
+          <p v-if="isMobileLayout" class="audio-library__mobile-tip">
+            点击文件夹进入内容，开启“编辑文件夹”后点击查看详情
+          </p>
+          <div class="audio-library__panel-top">
+            <div class="audio-library__panel-title">
+              <span>文件夹</span>
+            </div>
+            <div class="audio-library__folder-actions" v-if="audio.canManage">
+              <n-button quaternary size="tiny" @click="openCreateFolder">新建</n-button>
+              <n-button quaternary size="tiny" :disabled="!currentFolder" @click="openRenameFolder">重命名</n-button>
+              <n-button
+                quaternary
+                size="tiny"
+                :disabled="!currentFolder"
+                type="error"
+                @click="confirmDeleteFolder"
+              >
+                删除
+              </n-button>
+              <n-button
+                quaternary
+                size="tiny"
+                :type="folderEditMode ? 'primary' : 'default'"
+                @click="folderEditMode = !folderEditMode"
+              >
+                {{ folderEditMode ? '完成编辑' : '编辑文件夹' }}
+              </n-button>
+            </div>
+          </div>
+          <n-tree
+            block-line
+            :data="folderTreeData"
+            :default-expanded-keys="['all']"
+            selectable
+            :selected-keys="folderKeys"
+            :node-props="treeNodeProps"
+            @update:selected-keys="handleFolderSelect"
+          />
+        </div>
+      </n-drawer-content>
+    </n-drawer>
+
+    <n-drawer
+      :show="detailDrawerVisible"
+      placement="right"
+      :width="detailDrawerWidth"
+      @update:show="detailDrawerVisible = $event"
+    >
+      <n-drawer-content>
+        <template #header>
+          <div class="audio-library__drawer-header">
+            <n-button v-if="isMobileLayout" quaternary size="tiny" @click="detailDrawerVisible = false">返回</n-button>
+            <span>素材详情</span>
+            <n-button v-if="isMobileLayout" quaternary size="tiny" @click="detailDrawerVisible = false">关闭</n-button>
+          </div>
+        </template>
+        <component :is="detailContent" />
+      </n-drawer-content>
+    </n-drawer>
+
+    <n-drawer
+      :show="uploadDrawerVisible"
+      placement="right"
+      :width="uploadDrawerWidth"
+      @update:show="uploadDrawerVisible = $event"
+    >
+      <n-drawer-content>
+        <template #header>
+          <div class="audio-asset-drawer__header">
+            <n-button v-if="isMobileLayout" size="tiny" quaternary @click="uploadDrawerVisible = false">
+              退出
+            </n-button>
+            <span>上传素材</span>
+            <n-button v-if="isMobileLayout" size="tiny" quaternary @click="uploadDrawerVisible = false">
+              <template #icon>
+                <n-icon size="16">
+                  <CloseOutline />
+                </n-icon>
+              </template>
+            </n-button>
+          </div>
+        </template>
+        <UploadPanel compact />
+      </n-drawer-content>
+    </n-drawer>
 
     <n-drawer
       :show="assetDrawerVisible"
       placement="right"
       :width="assetDrawerWidth"
-      :mask-closable="false"
+      :mask-closable="true"
       @update:show="assetDrawerVisible = $event"
     >
       <n-drawer-content>
         <template #header>
           <div class="audio-asset-drawer__header">
             <n-button v-if="isMobileLayout" size="tiny" quaternary @click="assetDrawerVisible = false">
-              返回
+              退出
             </n-button>
             <span>编辑素材</span>
+            <n-button v-if="isMobileLayout" size="tiny" quaternary @click="assetDrawerVisible = false">
+              <template #icon>
+                <n-icon size="16">
+                  <CloseOutline />
+                </n-icon>
+              </template>
+            </n-button>
           </div>
         </template>
         <n-form ref="assetFormRef" :model="assetForm" :rules="assetFormRules" label-placement="top">
@@ -409,8 +495,8 @@
 </template>
 
 <script setup lang="ts">
-import { SearchOutline, CloudUploadOutline, FolderOpenOutline, ReloadOutline } from '@vicons/ionicons5';
-import { computed, h, onMounted, reactive, ref, watch } from 'vue';
+import { SearchOutline, CloudUploadOutline, FolderOpenOutline, ReloadOutline, TrashOutline, CreateOutline, CopyOutline, MenuOutline, CloseOutline } from '@vicons/ionicons5';
+import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue';
 import {
   NButton,
   NSpace,
@@ -423,7 +509,17 @@ import {
   type TreeOption,
 } from 'naive-ui';
 import { useWindowSize } from '@vueuse/core';
-import type { AudioAsset, AudioAssetMutationPayload, AudioAssetScope, AudioFolder, AudioFolderPayload } from '@/types/audio';
+import type {
+  AudioAsset,
+  AudioAssetMutationPayload,
+  AudioAssetScope,
+  AudioBulkDeleteFailure,
+  AudioDeleteConflictPayload,
+  AudioDeleteImpact,
+  AudioAssetUsageSummary,
+  AudioFolder,
+  AudioFolderPayload,
+} from '@/types/audio';
 import { api } from '@/stores/_config';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { useChatStore } from '@/stores/chat';
@@ -444,7 +540,6 @@ const selectedCreators = ref<string[]>([...audio.filters.creatorIds]);
 const selectedScope = ref<AudioAssetScope | 'all'>(audio.filters.scope ?? 'all');
 const durationRange = ref<[number, number]>(audio.filters.durationRange ?? [0, durationMax]);
 const folderKeys = ref<string[]>(audio.filters.folderId ? [audio.filters.folderId] : ['all']);
-const uploadAnchor = ref<HTMLElement | null>(null);
 const folderModalVisible = ref(false);
 const folderModalMode = ref<'create' | 'rename' | 'edit'>('create');
 const folderModalTitle = computed(() => {
@@ -496,10 +591,21 @@ const assetFormRules: FormRules = {
 const detailFocus = ref<'asset' | 'folder'>('asset');
 const userLabelCache = reactive<Record<string, string>>({});
 const userLookupPending = new Set<string>();
+const folderPanelCollapsed = ref(false);
+const detailPanelCollapsed = ref(false);
+const detailDrawerVisible = ref(false);
+const folderDrawerVisible = ref(false);
+const uploadDrawerVisible = ref(false);
+const dragUploadActive = ref(false);
+const dragUploadDepth = ref(0);
+const folderEditMode = ref(false);
 
 const { width: viewportWidth } = useWindowSize();
 const isMobileLayout = computed(() => viewportWidth.value > 0 && viewportWidth.value < 640);
 const assetDrawerWidth = computed(() => (isMobileLayout.value ? '100%' : 360));
+const folderDrawerWidth = computed(() => (isMobileLayout.value ? '88vw' : 320));
+const detailDrawerWidth = computed(() => (isMobileLayout.value ? '100%' : 380));
+const uploadDrawerWidth = computed(() => (isMobileLayout.value ? '100%' : 460));
 
 const tableData = computed(() => audio.filteredAssets);
 const selectedAsset = computed(() => audio.selectedAsset);
@@ -603,6 +709,148 @@ const selectedAssetTags = computed(() => {
   return selectedAsset.value.tags;
 });
 
+const dragUploadScope = computed<AudioAssetScope>(() => {
+  if (!audio.isSystemAdmin) return 'world';
+  if (currentFolder.value?.scope) return currentFolder.value.scope;
+  if (selectedScope.value !== 'all') return selectedScope.value;
+  if (audio.filters.scope) return audio.filters.scope;
+  return audio.currentWorldId ? 'world' : 'common';
+});
+
+const contentClassNames = computed(() => ({
+  'is-folder-collapsed': folderPanelCollapsed.value,
+  'is-detail-collapsed': detailPanelCollapsed.value,
+}));
+
+const detailContent = defineComponent({
+  name: 'AudioLibraryDetailContent',
+  setup() {
+    return () => {
+      const asset = selectedAsset.value;
+      const folder = currentFolder.value;
+
+      if (asset) {
+        return h('div', { class: 'audio-library__detail-body' }, [
+          h('header', { class: 'audio-library__detail-header' }, [
+            h('div', [
+              h('h3', asset.name),
+              h('p', { class: 'audio-library__detail-subtitle' }, folderLabel(asset.folderId) || '未分类'),
+            ]),
+            h('div', { class: 'audio-library__detail-tags' }, [
+              h(
+                NTag,
+                { size: 'small', type: asset.scope === 'common' ? 'info' : 'warning' },
+                { default: () => (asset.scope === 'common' ? '通用级' : '世界级') }
+              ),
+              h(
+                NTag,
+                { size: 'small', type: asset.visibility === 'public' ? 'success' : 'warning' },
+                { default: () => (asset.visibility === 'public' ? '公开' : '受限') }
+              ),
+            ]),
+          ]),
+          h('div', { class: 'audio-library__detail-actions audio-library__detail-actions--stacked' }, [
+            h(
+              NButton,
+              { size: 'small', quaternary: true, onClick: () => copyStream(asset.id) },
+              { default: () => '复制播放链接' }
+            ),
+            canEditSelectedAsset.value
+              ? h(
+                  NButton,
+                  { size: 'small', secondary: true, onClick: () => openAssetEditor(asset) },
+                  { default: () => '编辑元数据' }
+                )
+              : null,
+            audio.canDeleteAsset(asset)
+              ? h(
+                  NButton,
+                  { size: 'small', type: 'error', ghost: true, onClick: () => confirmDeleteAsset(asset) },
+                  { default: () => '删除素材' }
+                )
+              : null,
+          ]),
+          h('ul', { class: 'audio-library__detail-list' }, [
+            h('li', `时长：${formatDuration(asset.duration)}`),
+            h('li', `上传者：${formatUserLabel(asset.createdBy)}`),
+            h('li', `所属世界：${assetWorldLabel.value}`),
+            h('li', `更新时间：${formatDate(asset.updatedAt)}`),
+            h('li', `素材级别：${asset.scope === 'common' ? '通用级' : '世界级'}`),
+            h('li', `存储：${asset.storageType === 's3' ? '对象存储 (支持跳转)' : '本地文件'}`),
+            h('li', `比特率：${asset.bitrate} kbps · 大小：${formatFileSize(asset.size)}`),
+          ]),
+          h('div', { class: 'audio-library__tags' }, [
+            h('strong', '标签：'),
+            selectedAssetTags.value.length
+              ? h(
+                  'div',
+                  { class: 'audio-library__tag-list' },
+                  selectedAssetTags.value.map((tag) =>
+                    h(
+                      NTag,
+                      { key: tag, size: 'small', class: 'audio-library__tag', bordered: true },
+                      { default: () => tag }
+                    )
+                  )
+                )
+              : h('span', '未设置'),
+          ]),
+            h('div', { class: 'audio-library__description' }, [
+            h('strong', '备注：'),
+            h('p', asset.description || '暂无备注'),
+          ]),
+        ]);
+      }
+
+      if (folder) {
+        return h('div', { class: 'audio-library__detail-body' }, [
+          h('header', { class: 'audio-library__detail-header' }, [
+            h('div', [
+              h('h3', folder.name),
+              h('p', { class: 'audio-library__detail-subtitle' }, folder.path || '根目录'),
+            ]),
+            h('div', { class: 'audio-library__detail-tags' }, [
+              h(
+                NTag,
+                { size: 'small', type: folder.scope === 'common' ? 'info' : 'warning' },
+                { default: () => (folder.scope === 'common' ? '通用级' : '世界级') }
+              ),
+            ]),
+          ]),
+          audio.canManage
+            ? h('div', { class: 'audio-library__detail-actions audio-library__detail-actions--stacked' }, [
+                h(
+                  NButton,
+                  { size: 'small', secondary: true, onClick: openEditFolderMeta },
+                  { default: () => '编辑元数据' }
+                ),
+                h(
+                  NButton,
+                  { size: 'small', quaternary: true, disabled: !folder, onClick: openRenameFolder },
+                  { default: () => '重命名文件夹' }
+                ),
+                h(
+                  NButton,
+                  { size: 'small', type: 'error', ghost: true, disabled: !folder, onClick: confirmDeleteFolder },
+                  { default: () => '删除文件夹' }
+                ),
+              ])
+            : null,
+          h('ul', { class: 'audio-library__detail-list' }, [
+            h('li', `所属世界：${folderWorldLabel.value}`),
+            h('li', `文件夹级别：${folder.scope === 'common' ? '通用级' : '世界级'}`),
+            h('li', `创建者：${formatUserLabel(folder.createdBy)}`),
+            h('li', `创建时间：${formatDate(folder.createdAt)}`),
+            h('li', `更新时间：${formatDate(folder.updatedAt)}`),
+          ]),
+        ]);
+      }
+
+      return h('div', { class: 'audio-library__detail-empty' }, [h('span', '选择一条素材或文件夹以查看详情')]);
+    };
+  },
+});
+
 const columns = computed<DataTableColumns<AudioAsset>>(() => [
   {
     type: 'selection',
@@ -613,35 +861,87 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
   {
     title: '名称',
     key: 'name',
-    minWidth: 200,
+    minWidth: 320,
     render: (row) =>
-      h('div', { class: 'audio-table__name' }, [
-        h('span', row.name),
-        row.description ? h('p', { class: 'audio-table__desc' }, row.description) : null,
+      h('div', { class: 'audio-table__name-wrap' }, [
+        h('div', { class: 'audio-table__name' }, [
+          h('span', { class: 'audio-table__title' }, row.name),
+          h(
+            'p',
+            { class: 'audio-table__meta' },
+            [
+              folderLabel(row.folderId) || '未分类',
+              row.createdBy ? formatUserLabel(row.createdBy) : '未知上传者',
+              row.visibility === 'public' ? '公开' : '受限',
+            ].join(' · ')
+          ),
+          row.description ? h('p', { class: 'audio-table__desc' }, row.description) : null,
+        ]),
+        h('div', { class: 'audio-table__inline-actions' }, [
+          h(
+            NButton,
+            {
+              size: 'tiny',
+              quaternary: true,
+              onClick: (event: MouseEvent) => {
+                event.stopPropagation();
+                copyStream(row.id);
+              },
+            },
+            {
+              icon: () => h(CopyOutline),
+            }
+          ),
+          h(
+            NButton,
+            {
+              size: 'tiny',
+              quaternary: true,
+              disabled: !audio.canEditAsset(row),
+              onClick: (event: MouseEvent) => {
+                event.stopPropagation();
+                openAssetEditor(row);
+              },
+            },
+            {
+              icon: () => h(CreateOutline),
+            }
+          ),
+          h(
+            NButton,
+            {
+              size: 'tiny',
+              quaternary: true,
+              type: 'error',
+              disabled: !audio.canDeleteAsset(row),
+              onClick: (event: MouseEvent) => {
+                event.stopPropagation();
+                confirmDeleteAsset(row);
+              },
+            },
+            {
+              icon: () => h(TrashOutline),
+            }
+          ),
+        ]),
       ]),
-  },
-  {
-    title: '文件夹',
-    key: 'folder',
-    minWidth: 120,
-    render: (row) => folderLabel(row.folderId) || '未分类',
   },
   {
     title: '级别',
     key: 'scope',
-    width: 90,
+    width: 84,
     render: (row) => (row.scope === 'common' ? '通用级' : '世界级'),
   },
   {
     title: '时长',
     key: 'duration',
-    width: 90,
+    width: 76,
     render: (row) => formatDuration(row.duration),
   },
   {
     title: '标签',
     key: 'tags',
-    minWidth: 160,
+    minWidth: 140,
     render: (row) => {
       const tags = Array.isArray(row.tags) ? row.tags : [];
       return tags.length
@@ -663,57 +963,10 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
     },
   },
   {
-    title: '上传者',
-    key: 'createdBy',
-    width: 120,
-    render: (row) => row.createdBy,
-  },
-  {
     title: '更新时间',
     key: 'updatedAt',
-    width: 150,
+    width: 148,
     render: (row) => formatDate(row.updatedAt),
-  },
-  {
-    title: '可见性',
-    key: 'visibility',
-    width: 90,
-    render: (row) => (row.visibility === 'public' ? '公开' : '受限'),
-  },
-  {
-    title: '操作',
-    key: 'actions',
-    width: 180,
-    render: (row) =>
-      h(
-        NSpace,
-        { size: 4 },
-        {
-          default: () => [
-            h(
-              NButton,
-              {
-                size: 'tiny',
-                quaternary: true,
-                disabled: !audio.canEditAsset(row),
-                onClick: () => openAssetEditor(row),
-              },
-              { default: () => '编辑' }
-            ),
-            h(
-              NButton,
-              {
-                size: 'tiny',
-                quaternary: true,
-                type: 'error',
-                disabled: !audio.canDeleteAsset(row),
-                onClick: () => confirmDeleteAsset(row),
-              },
-              { default: () => '删除' }
-            ),
-          ],
-        }
-      ),
   },
 ]);
 
@@ -723,6 +976,9 @@ const rowProps = (row: AudioAsset) => ({
   onClick: () => {
     detailFocus.value = 'asset';
     audio.setSelectedAsset(row.id);
+    if (isMobileLayout.value) {
+      detailDrawerVisible.value = true;
+    }
   },
 });
 
@@ -750,6 +1006,10 @@ function folderLabel(folderId: string | null) {
   return audio.folderPathLookup[folderId] || folderMap.value.get(folderId)?.name || '';
 }
 
+function getPreferredWorldId(fallback?: string | null) {
+  return audio.currentWorldId ?? audio.filters.worldId ?? fallback ?? null;
+}
+
 function formatDuration(value: number) {
   if (!value && value !== 0) return '00:00';
   const minutes = Math.floor(value / 60);
@@ -767,10 +1027,9 @@ function formatUserLabel(userId?: string | null) {
   const trimmed = (userId ?? '').trim();
   if (!trimmed) return '未知';
   if (user.info?.id === trimmed) {
-    const name = user.info.username || trimmed;
-    return `${name} (${trimmed})`;
+    return user.info.username || trimmed;
   }
-  return userLabelCache[trimmed] || `${trimmed} (${trimmed})`;
+  return userLabelCache[trimmed] || trimmed;
 }
 
 async function ensureUserLabel(userId?: string | null) {
@@ -784,7 +1043,7 @@ async function ensureUserLabel(userId?: string | null) {
     const resp = await api.get('/api/v1/user-lookup', { params: { userId: trimmed } });
     const data = resp.data?.user;
     const username = data?.username || data?.nick || trimmed;
-    userLabelCache[trimmed] = `${username} (${trimmed})`;
+    userLabelCache[trimmed] = username;
   } catch (err) {
     console.warn('user lookup failed', err);
   } finally {
@@ -798,6 +1057,75 @@ function formatFileSize(value: number) {
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
   return `${(value / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function resolveUsageSummaryText(usage?: AudioAssetUsageSummary | null) {
+  if (!usage) return '引用信息未知';
+  const parts: string[] = [];
+  if (usage.sceneRefCount) {
+    const names = usage.sceneNames?.length ? `：${usage.sceneNames.join('、')}` : '';
+    parts.push(`${usage.sceneRefCount} 个场景引用${names}`);
+  }
+  if (usage.playbackStateRefCount) {
+    parts.push(`${usage.playbackStateRefCount} 个播放状态正在使用`);
+  }
+  return parts.length ? parts.join('；') : '当前无引用';
+}
+
+function describeDeleteImpact(impact?: AudioDeleteImpact | null) {
+  if (!impact) return '';
+  const parts: string[] = [];
+  if (impact.detachedSceneCount) {
+    parts.push(`已解除 ${impact.detachedSceneCount} 个场景引用`);
+  }
+  if (impact.detachedPlaybackStateCount) {
+    parts.push(`已停止并解除 ${impact.detachedPlaybackStateCount} 个播放状态`);
+  }
+  return parts.join('，');
+}
+
+function extractDeleteConflict(error: any): AudioDeleteConflictPayload | null {
+  const status = error?.response?.status;
+  const data = error?.response?.data as AudioDeleteConflictPayload | undefined;
+  if (status !== 409 || !data) {
+    return null;
+  }
+  return data;
+}
+
+function extractErrorMessage(error: any, fallback: string) {
+  return error?.response?.data?.message || error?.response?.data?.error || error?.message || fallback;
+}
+
+function summarizeBatchDeleteFailures(failures: AudioBulkDeleteFailure[]) {
+  const grouped = new Map<string, number>();
+  failures.forEach((item) => {
+    const key = item.reason || '删除失败';
+    grouped.set(key, (grouped.get(key) || 0) + 1);
+  });
+  return Array.from(grouped.entries())
+    .map(([reason, count]) => `${count} 条因为${reason}不能删除`)
+    .join('；');
+}
+
+function openBatchDeleteFailureDialog(failures: AudioBulkDeleteFailure[]) {
+  dialog.warning({
+    title: '批量删除失败详情',
+    positiveText: '知道了',
+    showIcon: false,
+    content: () =>
+      h(
+        'div',
+        { style: 'display:flex;flex-direction:column;gap:8px;max-width:520px;' },
+        failures.map((item) =>
+          h(
+            'div',
+            { key: item.assetId, style: 'font-size:13px;line-height:1.5;' },
+            `${item.assetId}：${item.reason}${item.usageSummary ? `（${resolveUsageSummaryText(item.usageSummary)}）` : ''}`
+          )
+        )
+      ),
+  });
 }
 
 function handleSearch() {
@@ -842,8 +1170,8 @@ async function handleRefresh() {
   message.success('素材列表已刷新');
 }
 
-function scrollToUpload() {
-  uploadAnchor.value?.scrollIntoView({ behavior: 'smooth' });
+function openUploadPanel() {
+  uploadDrawerVisible.value = true;
 }
 
 function treeNodeProps() {
@@ -856,21 +1184,33 @@ async function handleFolderSelect(keys: Array<string | number>) {
   const target = keys.length ? String(keys[0]) : 'all';
   folderKeys.value = target ? [target] : [];
   clearSelection();
+  if (isMobileLayout.value && folderEditMode.value && target !== 'all') {
+    detailFocus.value = 'folder';
+    audio.setSelectedAsset(null);
+    await audio.applyFilters({ folderId: target });
+    detailDrawerVisible.value = true;
+    return;
+  }
+  detailFocus.value = 'asset';
   if (target === 'all') {
-    detailFocus.value = 'asset';
     if (!audio.selectedAsset && audio.filteredAssets.length) {
       audio.setSelectedAsset(audio.filteredAssets[0].id);
     }
   } else {
-    detailFocus.value = 'folder';
     audio.setSelectedAsset(null);
   }
   if (target === 'all') {
+    if (isMobileLayout.value) {
+      folderDrawerVisible.value = false;
+    }
     await audio.applyFilters({ folderId: null });
     return;
   }
   await audio.applyFilters({ folderId: target });
   audio.setSelectedAsset(null);
+  if (isMobileLayout.value) {
+    folderDrawerVisible.value = false;
+  }
 }
 
 function openCreateFolder() {
@@ -880,14 +1220,14 @@ function openCreateFolder() {
   folderForm.parentId = currentFolder.value?.id ?? null;
   if (currentFolder.value) {
     folderForm.scope = currentFolder.value.scope;
-    folderForm.worldId = currentFolder.value.worldId ?? null;
+    folderForm.worldId = folderForm.scope === 'world' ? getPreferredWorldId(currentFolder.value.worldId) : null;
   } else if (audio.isSystemAdmin) {
     const preferredScope = selectedScope.value === 'all' ? audio.filters.scope : selectedScope.value;
     folderForm.scope = preferredScope ?? (audio.currentWorldId ? 'world' : 'common');
-    folderForm.worldId = folderForm.scope === 'world' ? (audio.currentWorldId ?? audio.filters.worldId ?? null) : null;
+    folderForm.worldId = folderForm.scope === 'world' ? getPreferredWorldId() : null;
   } else {
     folderForm.scope = 'world';
-    folderForm.worldId = audio.currentWorldId ?? audio.filters.worldId ?? null;
+    folderForm.worldId = getPreferredWorldId();
   }
   folderModalVisible.value = true;
 }
@@ -899,7 +1239,7 @@ function openRenameFolder() {
   folderForm.name = currentFolder.value.name;
   folderForm.parentId = currentFolder.value.parentId;
   folderForm.scope = currentFolder.value.scope;
-  folderForm.worldId = currentFolder.value.worldId ?? null;
+  folderForm.worldId = currentFolder.value.scope === 'world' ? getPreferredWorldId(currentFolder.value.worldId) : null;
   folderModalVisible.value = true;
 }
 
@@ -910,7 +1250,7 @@ function openEditFolderMeta() {
   folderForm.name = currentFolder.value.name;
   folderForm.parentId = currentFolder.value.parentId;
   folderForm.scope = currentFolder.value.scope;
-  folderForm.worldId = currentFolder.value.worldId ?? null;
+  folderForm.worldId = currentFolder.value.scope === 'world' ? getPreferredWorldId(currentFolder.value.worldId) : null;
   folderModalVisible.value = true;
 }
 
@@ -1002,7 +1342,7 @@ function openAssetEditor(asset: AudioAsset) {
   assetForm.folderId = asset.folderId;
   assetForm.visibility = asset.visibility;
   assetForm.scope = asset.scope;
-  assetForm.worldId = asset.worldId ?? null;
+  assetForm.worldId = asset.scope === 'world' ? getPreferredWorldId(asset.worldId) : null;
   assetDrawerVisible.value = true;
 }
 
@@ -1047,11 +1387,32 @@ function confirmDeleteAsset(asset: AudioAsset) {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        await audio.deleteAsset(asset.id);
-        message.success('素材已删除');
-      } catch (err) {
-        console.warn(err);
-        message.error('删除失败，请稍后重试');
+        const result = await audio.deleteAsset(asset.id);
+        const impactText = describeDeleteImpact(result?.impact);
+        message.success(impactText ? `素材已删除，${impactText}` : '素材已删除');
+      } catch (error) {
+        const conflict = extractDeleteConflict(error);
+        if (conflict?.usage) {
+          dialog.warning({
+            title: '素材仍被引用',
+            content: `当前无法直接删除“${asset.name}”。原因：${resolveUsageSummaryText(conflict.usage)}。若继续，系统会停止相关播放、解除引用并删除素材。`,
+            positiveText: '解除引用并删除',
+            negativeText: '取消',
+            onPositiveClick: async () => {
+              try {
+                const result = await audio.deleteAsset(asset.id, { forceDetach: true });
+                const impactText = describeDeleteImpact(result?.impact);
+                message.success(impactText ? `素材已删除，${impactText}` : '素材已删除');
+              } catch (forceError) {
+                console.warn(forceError);
+                message.error(extractErrorMessage(forceError, '删除失败，请稍后重试'));
+              }
+            },
+          });
+          return;
+        }
+        console.warn(error);
+        message.error(extractErrorMessage(error, '删除失败，请稍后重试'));
       }
     },
   });
@@ -1066,6 +1427,63 @@ function copyStream(id: string) {
     onFailure: () => {
       message.error('复制失败');
     },
+  });
+}
+
+function toggleFolderPanel() {
+  if (isMobileLayout.value) {
+    folderDrawerVisible.value = !folderDrawerVisible.value;
+    return;
+  }
+  folderPanelCollapsed.value = !folderPanelCollapsed.value;
+}
+
+function toggleDetailPanel() {
+  if (isMobileLayout.value) {
+    detailDrawerVisible.value = !detailDrawerVisible.value;
+    return;
+  }
+  detailPanelCollapsed.value = !detailPanelCollapsed.value;
+}
+
+function openDetailPanel() {
+  if (isMobileLayout.value) {
+    detailDrawerVisible.value = true;
+    return;
+  }
+  detailPanelCollapsed.value = false;
+}
+
+function handleListDragEnter(event: DragEvent) {
+  if (!audio.canManage || !event.dataTransfer?.files?.length) return;
+  dragUploadDepth.value += 1;
+  dragUploadActive.value = true;
+}
+
+function handleListDragOver(event: DragEvent) {
+  if (!audio.canManage || !event.dataTransfer?.files?.length) return;
+  event.dataTransfer.dropEffect = 'copy';
+  dragUploadActive.value = true;
+}
+
+function handleListDragLeave() {
+  if (!audio.canManage) return;
+  dragUploadDepth.value = Math.max(0, dragUploadDepth.value - 1);
+  if (dragUploadDepth.value === 0) {
+    dragUploadActive.value = false;
+  }
+}
+
+function handleListDrop(event: DragEvent) {
+  dragUploadDepth.value = 0;
+  dragUploadActive.value = false;
+  if (!audio.canManage || !event.dataTransfer?.files?.length) return;
+  uploadDrawerVisible.value = true;
+  const scope = dragUploadScope.value;
+  audio.handleUpload(event.dataTransfer.files, {
+    scope,
+    worldId: scope === 'world' ? audio.currentWorldId ?? undefined : undefined,
+    folderId: audio.filters.folderId ?? undefined,
   });
 }
 
@@ -1166,7 +1584,8 @@ function confirmBatchDelete() {
           message.success(`已删除 ${summary.success} 条素材`);
         }
         if (summary.failed) {
-          message.warning(`${summary.failed} 条素材未能删除`);
+          message.warning(summarizeBatchDeleteFailures(summary.failures));
+          openBatchDeleteFailureDialog(summary.failures);
         }
         clearSelection();
       } catch (err) {
@@ -1208,15 +1627,41 @@ watch(
 );
 
 watch(
+  isMobileLayout,
+  (mobile) => {
+    if (mobile) {
+      detailPanelCollapsed.value = true;
+      folderPanelCollapsed.value = true;
+      folderDrawerVisible.value = false;
+      return;
+    }
+    folderEditMode.value = false;
+    if (detailPanelCollapsed.value) {
+      detailPanelCollapsed.value = false;
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => folderForm.scope,
+  (scope) => {
+    if (scope === 'common') {
+      folderForm.worldId = null;
+      return;
+    }
+    folderForm.worldId = getPreferredWorldId(folderForm.worldId);
+  }
+);
+
+watch(
   () => assetForm.scope,
   (scope) => {
     if (scope === 'common') {
       assetForm.worldId = null;
       return;
     }
-    if (!assetForm.worldId) {
-      assetForm.worldId = audio.currentWorldId ?? audio.filters.worldId ?? null;
-    }
+    assetForm.worldId = getPreferredWorldId(assetForm.worldId);
   }
 );
 
@@ -1311,6 +1756,7 @@ onMounted(() => {
   display: flex;
   gap: 0.5rem;
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .audio-library__alert {
@@ -1319,9 +1765,21 @@ onMounted(() => {
 
 .audio-library__content {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 260px;
+  grid-template-columns: 240px minmax(0, 1fr) 320px;
   gap: 0.75rem;
   min-height: 420px;
+}
+
+.audio-library__content.is-folder-collapsed {
+  grid-template-columns: 72px minmax(0, 1fr) 320px;
+}
+
+.audio-library__content.is-detail-collapsed {
+  grid-template-columns: 240px minmax(0, 1fr);
+}
+
+.audio-library__content.is-folder-collapsed.is-detail-collapsed {
+  grid-template-columns: 72px minmax(0, 1fr);
 }
 
 .audio-library__selection {
@@ -1343,6 +1801,10 @@ onMounted(() => {
   background: var(--audio-card-surface, var(--sc-bg-elevated));
 }
 
+.audio-library__folders.is-collapsed {
+  padding: 0.5rem;
+}
+
 .audio-library__folder-header {
   display: flex;
   justify-content: space-between;
@@ -1350,15 +1812,101 @@ onMounted(() => {
   margin-bottom: 0.5rem;
 }
 
+.audio-library__panel-top {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.audio-library__panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
 .audio-library__folder-actions {
   display: flex;
   gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.audio-library__panel-collapsed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  min-height: 320px;
+}
+
+.audio-library__panel-collapsed-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 0.78rem;
+  color: var(--sc-text-secondary);
+  letter-spacing: 0.08em;
 }
 
 .audio-library__table {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  position: relative;
+  min-width: 0;
+}
+
+.audio-library__table-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.audio-library__table-summary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  color: var(--sc-text-secondary);
+}
+
+.audio-library__table-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.audio-library__drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: rgba(15, 23, 42, 0.45);
+  border: 1px dashed rgba(99, 179, 237, 0.9);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  pointer-events: none;
+}
+
+.audio-library__drop-overlay-card {
+  min-width: min(100%, 340px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 1rem 1.25rem;
+  border-radius: 14px;
+  background: rgba(17, 24, 39, 0.88);
+  color: #fff;
+}
+
+.audio-library__table.is-drag-over {
+  border-color: rgba(99, 179, 237, 0.9);
 }
 
 .audio-library__pagination {
@@ -1372,10 +1920,17 @@ onMounted(() => {
   gap: 0.5rem;
 }
 
+.audio-library__detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
 .audio-library__detail-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 0.75rem;
 }
 
 .audio-library__detail-tags {
@@ -1414,8 +1969,35 @@ onMounted(() => {
   gap: 0.5rem;
 }
 
-.audio-library__upload {
-  margin-top: 0.5rem;
+.audio-library__detail-actions--stacked {
+  flex-wrap: wrap;
+}
+
+.audio-library__drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.audio-library__drawer-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.audio-library__mobile-tip {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--sc-text-secondary);
+}
+
+.audio-library__detail-empty {
+  min-height: 240px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sc-text-secondary);
 }
 
 .audio-library__modal-tip {
@@ -1428,17 +2010,59 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  justify-content: space-between;
 }
 
 .audio-table__name {
   display: flex;
   flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.audio-table__name-wrap {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.audio-table__title {
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.audio-table__meta {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--sc-text-secondary);
 }
 
 .audio-table__desc {
   margin: 0;
   font-size: 0.75rem;
   color: var(--sc-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-table__inline-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+:deep(.n-data-table-tr:hover .audio-table__inline-actions),
+:deep(.is-selected-row .audio-table__inline-actions) {
+  opacity: 1;
+}
+
+.audio-library__tag-list {
+  display: flex;
+  flex-wrap: wrap;
 }
 
 :deep(.is-selected-row td) {
@@ -1448,6 +2072,41 @@ onMounted(() => {
 @media (max-width: 960px) {
   .audio-library__content {
     grid-template-columns: 1fr;
+  }
+
+  .audio-library__content.is-folder-collapsed,
+  .audio-library__content.is-detail-collapsed,
+  .audio-library__content.is-folder-collapsed.is-detail-collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  .audio-library__detail {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .audio-library__filters {
+    grid-template-columns: 1fr;
+  }
+
+  .audio-library__selection {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .audio-library__table-top {
+    align-items: stretch;
+  }
+
+  .audio-asset-drawer__header {
+    gap: 0.35rem;
+  }
+
+  .audio-asset-drawer__header > span {
+    flex: 1 1 auto;
+    text-align: center;
   }
 }
 </style>

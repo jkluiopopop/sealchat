@@ -61,3 +61,5 @@ backup_settings.patch
 .codex
 ui/tsconfig.app.tsbuildinfo
 config yun.yaml
+/.mindfs
+/bin/cn-font-split

@@ -1,8 +1,8 @@
 <template>
-  <div class="upload-panel" v-if="audio.canManage">
+  <div :class="['upload-panel', { 'upload-panel--compact': props.compact }]" v-if="audio.canManage">
     <header>
       <h4>上传音频</h4>
-      <p>支持 OGG/MP3/WAV（建议 OGG/Opus 以降低带宽）</p>
+      <p>支持 OGG/MP3/WAV</p>
     </header>
 
     <div class="upload-panel__scope" v-if="audio.isSystemAdmin">
@@ -126,10 +126,14 @@ import { useMessage } from 'naive-ui';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import type { AudioAssetScope, UploadTaskState } from '@/types/audio';
 
+const props = defineProps<{
+  compact?: boolean;
+}>();
+
 const audio = useAudioStudioStore();
 const message = useMessage();
 
-const uploadScope = ref<AudioAssetScope>(audio.isSystemAdmin ? 'common' : 'world');
+const uploadScope = ref<AudioAssetScope>('world');
 const importDialogVisible = ref(false);
 const importSelection = ref<string[]>([]);
 
@@ -228,24 +232,23 @@ function getStatusType(status: UploadTaskState['status']): 'default' | 'info' | 
 function handleChange(event: Event) {
   const target = event.target as HTMLInputElement;
   if (target.files) {
-    if (!canUpload.value) {
-      message.warning('请先进入一个世界后再上传世界级音频');
-      target.value = '';
-      return;
-    }
-    audio.handleUpload(target.files, uploadOptions.value);
+    uploadFiles(target.files);
     target.value = '';
   }
 }
 
 function handleDrop(event: DragEvent) {
   if (event.dataTransfer?.files?.length) {
-    if (!canUpload.value) {
-      message.warning('请先进入一个世界后再上传世界级音频');
-      return;
-    }
-    audio.handleUpload(event.dataTransfer.files, uploadOptions.value);
+    uploadFiles(event.dataTransfer.files);
   }
+}
+
+function uploadFiles(files: FileList) {
+  if (!canUpload.value) {
+    message.warning('请先进入一个世界后再上传世界级音频');
+    return;
+  }
+  audio.handleUpload(files, uploadOptions.value);
 }
 
 function formatFileSize(value: number) {
@@ -344,6 +347,11 @@ function clearAll() {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.upload-panel--compact {
+  border-style: solid;
+  padding: 0.25rem 0;
 }
 
 .upload-panel__scope {

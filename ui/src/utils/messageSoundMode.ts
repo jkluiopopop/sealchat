@@ -20,6 +20,7 @@ interface ShouldPlayMessageSoundInput {
   messageChannelId: string
   currentChannelId: string
   currentWorldChannels: ChannelTreeNode[]
+  embedNotifyOwnerEnabled?: boolean
 }
 
 const isChannelInTree = (tree: ChannelTreeNode[], channelId: string): boolean => {
@@ -41,8 +42,9 @@ export const shouldPlayMessageSound = ({
   messageChannelId,
   currentChannelId,
   currentWorldChannels,
+  embedNotifyOwnerEnabled = true,
 }: ShouldPlayMessageSoundInput): boolean => {
-  if (isSelf || !messageChannelId) {
+  if (isSelf || !messageChannelId || !embedNotifyOwnerEnabled) {
     return false
   }
 

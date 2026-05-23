@@ -3,6 +3,7 @@ import { useChatStore } from './chat'
 import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack, sanitizeFontFamilyName } from '@/services/font/fontUtils'
 import type { FontSourceType } from '@/services/font/types'
 import { restoreCachedFontById } from '@/services/font/fontLoader'
+import { ensurePlatformFontLoaded } from '@/services/font/platformFontRegistry'
 import {
   normalizeAvatarVisibilityScope,
   normalizeMessageVisibilityScope,
@@ -245,7 +246,7 @@ const coerceMessageSoundMode = (value: unknown): MessageSoundMode => {
 }
 const TIMESTAMP_FORMAT_VALUES: TimestampFormat[] = ['relative', 'time', 'datetime', 'datetimeSeconds']
 const TIMESTAMP_FORMAT_DEFAULT: TimestampFormat = 'datetimeSeconds'
-const FONT_SOURCE_TYPES: FontSourceType[] = ['default', 'system', 'manual', 'upload', 'url']
+const FONT_SOURCE_TYPES: FontSourceType[] = ['default', 'system', 'manual', 'upload', 'url', 'platform']
 const coerceTimestampFormat = (value?: string): TimestampFormat => {
   if (typeof value === 'string') {
     const normalized = value.trim() as TimestampFormat
@@ -606,15 +607,12 @@ const normalizePlatformThemes = (value: any): PlatformTheme[] => {
   }
   return result
 }
-const loadSettings = (): DisplaySettings => {
-  if (typeof window === 'undefined') {
+
+const parseStoredSettings = (raw: string | null | undefined): DisplaySettings => {
+  if (!raw) {
     return defaultSettings()
   }
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) {
-      return defaultSettings()
-    }
     const parsed = JSON.parse(raw) as Partial<DisplaySettings>
     const favoriteChannelIdsByWorld = normalizeFavoriteMap((parsed as any)?.favoriteChannelIdsByWorld)
     const favoriteChannelHotkeysByWorld = normalizeFavoriteHotkeyMap(
@@ -793,6 +791,15 @@ const loadSettings = (): DisplaySettings => {
     return defaultSettings()
   }
 }
+
+const loadSettings = (): DisplaySettings => {
+  if (typeof window === 'undefined') {
+    return defaultSettings()
+  }
+  return parseStoredSettings(window.localStorage.getItem(STORAGE_KEY))
+}
+
+let storageSyncBound = false
 
 const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>): DisplaySettings => ({
   layout: patch && patch.layout ? coerceLayout(patch.layout) : base.layout,
@@ -1272,7 +1279,7 @@ export const useDisplayStore = defineStore('display', {
       let normalizedSourceType = coerceFontSourceType(payload.sourceType)
       let normalizedAssetId = normalizeFontAssetId(payload.assetId)
 
-      if (normalizedSourceType === 'upload' || normalizedSourceType === 'url') {
+      if (normalizedSourceType === 'upload' || normalizedSourceType === 'url' || normalizedSourceType === 'platform') {
         if (!normalizedAssetId) {
           normalizedSourceType = normalizedFamily ? 'manual' : 'default'
         }
@@ -1291,10 +1298,20 @@ export const useDisplayStore = defineStore('display', {
     },
     async restoreGlobalFontAsset() {
       const sourceType = this.settings.globalFontSourceType
-      if (sourceType !== 'upload' && sourceType !== 'url') return
+      if (sourceType !== 'upload' && sourceType !== 'url' && sourceType !== 'platform') return
       const assetId = normalizeFontAssetId(this.settings.globalFontAssetId)
       if (!assetId) return
       try {
+        if (sourceType === 'platform') {
+          const family = await ensurePlatformFontLoaded(assetId, this.settings.globalFontFamily)
+          const normalizedFamily = sanitizeFontFamilyName(family)
+          if (normalizedFamily && normalizedFamily !== this.settings.globalFontFamily) {
+            this.settings.globalFontFamily = normalizedFamily
+            this.persist()
+          }
+          this.applyTheme()
+          return
+        }
         const restored = await restoreCachedFontById(assetId)
         if (!restored) {
           this.settings.globalFontAssetId = null
@@ -1317,6 +1334,23 @@ export const useDisplayStore = defineStore('display', {
       this.settings = normalizeWith(this.settings, patch)
       this.persist()
       this.applyTheme()
+    },
+    bindStorageSync() {
+      if (typeof window === 'undefined' || storageSyncBound) return
+      storageSyncBound = true
+      window.addEventListener('storage', (event) => {
+        if (event.storageArea !== window.localStorage) return
+        if (event.key !== STORAGE_KEY) return
+        const nextSettings = parseStoredSettings(event.newValue)
+        const currentSnapshot = JSON.stringify(this.settings)
+        const nextSnapshot = JSON.stringify(nextSettings)
+        if (currentSnapshot === nextSnapshot) return
+        this.settings = nextSettings
+        this.applyTheme()
+        void this.restoreGlobalFontAsset().catch((error) => {
+          console.warn('同步外部常规设置字体资源失败，继续使用当前字体设置', error)
+        })
+      })
     },
     async replaceSettings(snapshot: Partial<DisplaySettings>, options?: { restoreFontAsset?: boolean }) {
       this.settings = normalizeWith(defaultSettings(), snapshot)

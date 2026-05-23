@@ -18,9 +18,12 @@ import type { DisplaySettings } from './display';
 import { useDisplayStore } from './display';
 import { normalizeAttachmentId } from '@/composables/useAttachmentResolver';
 import { getCategoriesKey as getBgCategoriesKey, getStorageKey as getBgStorageKey } from '@/utils/backgroundPreset';
-import { resolveNextUnreadCountForMessageNotice } from './chatUnreadNotice';
+import { resolveNextMentionStateForMessageNotice, resolveNextUnreadCountForMessageNotice } from './chatUnreadNotice';
+import { mergeCharacterApiRuntimeStateIntoChannels } from './chatChannelRuntimeState';
 import { findChannelByIdFromTree, findFirstEnterableChannel, isDeletedChannelForAccess } from './chatChannelSelection';
+import { addWhisperTargetUnique } from './whisperTargetSelection';
 import { parseLastChannelByWorldMap, resolvePreferredChannelForWorld, updateLastChannelByWorldMap } from './chatWorldChannelSession';
+import { resolveWindowFocusState } from '@/utils/windowFocusState';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
 const inFlightChannelIdentityVariantLoads = new Map<string, Promise<Record<string, ChannelIdentityVariant[]>>>();
@@ -64,6 +67,42 @@ const notifyNormalDrain = () => {
   const waiters = normalDrainWaiters.splice(0);
   waiters.forEach((resolve) => resolve());
 };
+
+type ChannelUnreadStatePayload = {
+  counts: Record<string, number>;
+  mentions: Record<string, boolean>;
+};
+
+const normalizeChannelUnreadStatePayload = (data: unknown): ChannelUnreadStatePayload => {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { counts: {}, mentions: {} };
+  }
+  const raw = data as Record<string, unknown>;
+  const countsSource = raw.counts && typeof raw.counts === 'object' && !Array.isArray(raw.counts)
+    ? raw.counts as Record<string, unknown>
+    : raw as Record<string, unknown>;
+  const mentionsSource = raw.mentions && typeof raw.mentions === 'object' && !Array.isArray(raw.mentions)
+    ? raw.mentions as Record<string, unknown>
+    : {};
+
+  const counts: Record<string, number> = {};
+  Object.entries(countsSource).forEach(([channelId, value]) => {
+    const count = Number(value);
+    if (channelId && Number.isFinite(count) && count > 0) {
+      counts[channelId] = Math.trunc(count);
+    }
+  });
+
+  const mentions: Record<string, boolean> = {};
+  Object.entries(mentionsSource).forEach(([channelId, value]) => {
+    if (channelId && value === true) {
+      mentions[channelId] = true;
+    }
+  });
+
+  return { counts, mentions };
+};
+
 const enqueueBotApi = async <T>(fn: () => Promise<T>): Promise<T> => {
   botApiPending += 1;
   const run = botApiChain.then(async () => {
@@ -125,6 +164,8 @@ interface ChatState {
 
   // 频道未读: id - 数量
   unreadCountMap: { [key: string]: number },
+  // 频道未处理 @ 提醒: id - 是否存在
+  channelMentionMap: { [key: string]: boolean },
 
   whisperTargets: User[],
 
@@ -1029,6 +1070,7 @@ export const useChatStore = defineStore({
 
     sidebarTab: 'channels',
     unreadCountMap: {},
+    channelMentionMap: {},
 
     // 太遮挡视线，先关闭了
     atOptionsOn: false,
@@ -1376,8 +1418,7 @@ export const useChatStore = defineStore({
           focusListenersBound = true;
           const store = this;
           const updateFocusState = () => {
-            const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
-            const isVisible = document.visibilityState !== 'hidden';
+            const { hasFocus, isVisible } = resolveWindowFocusState();
             store.setFocusState(hasFocus && isVisible);
           };
           const triggerForegroundRecover = (reason: string) => {
@@ -2128,7 +2169,12 @@ export const useChatStore = defineStore({
     },
 
     applyChannelTree(worldId: string, channels: Channel[]) {
-      const groupedData = groupBy(channels, 'parentId');
+      const previousTree = (this.channelTreeByWorld?.[worldId] || []) as SChannel[];
+      const normalizedChannels = mergeCharacterApiRuntimeStateIntoChannels(
+        channels as SChannel[],
+        previousTree,
+      );
+      const groupedData = groupBy(normalizedChannels, 'parentId');
       const buildTree = (parentId: string): any => {
         const children = groupedData[parentId] || [];
         return children.map((child: Channel) => ({
@@ -2225,6 +2271,20 @@ export const useChatStore = defineStore({
       this.unreadCountMap = {
         ...this.unreadCountMap,
         [channelId]: count,
+      };
+    },
+
+    setChannelMentionState(channelId: string, mentioned: boolean) {
+      if (!channelId) {
+        return;
+      }
+      const normalized = mentioned === true;
+      if (this.channelMentionMap[channelId] === normalized && channelId in this.channelMentionMap) {
+        return;
+      }
+      this.channelMentionMap = {
+        ...this.channelMentionMap,
+        [channelId]: normalized,
       };
     },
 
@@ -2386,6 +2446,7 @@ export const useChatStore = defineStore({
 
       persistLastChannelForWorld(this.currentWorldId, id);
       this.setChannelUnreadCount(id, 0);
+      this.setChannelMentionState(id, false);
       this.curChannelUsers = [];
       this.whisperTargets = [];
 
@@ -3669,8 +3730,12 @@ export const useChatStore = defineStore({
       }
 
       if (!this.observerMode) {
-        const countMap = await this.channelUnreadCount(finalWorld);
-        this.unreadCountMap = countMap;
+        const unreadState = await this.channelUnreadCount(finalWorld);
+        this.unreadCountMap = unreadState.counts;
+        this.channelMentionMap = unreadState.mentions;
+        if (this.curChannel?.id) {
+          this.setChannelMentionState(this.curChannel.id, false);
+        }
       }
       // console.log('countMap', countMap);
 
@@ -4425,6 +4490,22 @@ export const useChatStore = defineStore({
       return resp.data;
     },
 
+    async messageReorderBatch(channel_id: string, payload: { messageIds: string[]; clientOpId?: string }) {
+      if (!this.curChannel?.id || !Array.isArray(payload.messageIds) || payload.messageIds.length === 0) {
+        return;
+      }
+      const resp = await this.sendAPI('message.reorder.batch', {
+        channel_id,
+        message_ids: payload.messageIds,
+        client_op_id: payload.clientOpId || '',
+      });
+      const data = resp?.data as { message_ids?: string[] } | undefined;
+      if (!data || !Array.isArray(data.message_ids) || data.message_ids.length === 0) {
+        throw new Error('置底失败：未找到目标消息或无权限操作');
+      }
+      return data;
+    },
+
     async messageCreate(
       content: string,
       quote_id?: string,
@@ -4576,6 +4657,10 @@ export const useChatStore = defineStore({
         return;
       }
       this.whisperTargets.push(target);
+    },
+
+    addWhisperTarget(target: User) {
+      this.whisperTargets = addWhisperTargetUnique(this.whisperTargets, target);
     },
 
     removeWhisperTarget(target: User) {
@@ -4732,14 +4817,14 @@ export const useChatStore = defineStore({
     // 获取未读信息
     async channelUnreadCount(worldId?: string) {
       if (this.observerMode) {
-        return {};
+        return { counts: {}, mentions: {} };
       }
       const payload: { world_id?: string } = {};
       if (worldId) {
         payload.world_id = worldId;
       }
-      const resp = await this.sendAPI<{ data: { [key: string]: number } }>('unread.count', payload);
-      return resp?.data;
+      const resp = await this.sendAPI<{ data: ChannelUnreadStatePayload | Record<string, number> }>('unread.count', payload);
+      return normalizeChannelUnreadStatePayload(resp?.data);
     },
 
     async friendRequestCreate(senderId: string, receiverId: string, note: string = '') {
@@ -6088,6 +6173,17 @@ chatEvent.on('message-created-notice', (data: any) => {
   });
   if (nextCount !== null) {
     chat.setChannelUnreadCount(chId, nextCount);
+  }
+  const nextMentionState = resolveNextMentionStateForMessageNotice({
+    channelId: chId,
+    currentChannelId: chat.curChannel?.id || '',
+    mentioned: data?.mentioned === true,
+    mentionMap: chat.channelMentionMap,
+    channelTree: chat.channelTree,
+    channelTreePrivate: chat.channelTreePrivate,
+  });
+  if (nextMentionState !== null) {
+    chat.setChannelMentionState(chId, nextMentionState);
   }
 });
 

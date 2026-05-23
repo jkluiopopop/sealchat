@@ -4,7 +4,11 @@ import { useCharacterCardStore } from '@/stores/characterCard';
 import { useDisplayStore } from '@/stores/display';
 import { useChatStore } from '@/stores/chat';
 import { messageVisibilityScopeMatches } from '@/stores/displayAvatarVisibility';
-import { renderCardTemplate, getWorldCardTemplate } from '@/utils/characterCardTemplate';
+import {
+  renderCardTemplate,
+  getWorldCardTemplate,
+  hasRenderableBadgeData,
+} from '@/utils/characterCardTemplate';
 import { resolveIdentityMetaStyle } from '@/utils/identityMetaContrast';
 
 const props = defineProps<{
@@ -18,25 +22,10 @@ const cardStore = useCharacterCardStore();
 const displayStore = useDisplayStore();
 const chatStore = useChatStore();
 
-const boundCardId = computed(() => {
-  if (!props.identityId) return '';
-  return cardStore.getBoundCardId(props.identityId) || '';
-});
-
-const card = computed(() => {
-  if (!boundCardId.value) return null;
-  return cardStore.getCardById(boundCardId.value);
-});
-
 const badgeEntry = computed(() => {
-  if (!props.identityId) return null;
-  const entry = cardStore.getBadgeByIdentity(props.identityId);
-  if (!entry) return null;
   const channelId = chatStore.curChannel?.id || '';
-  if (entry.channelId && channelId && entry.channelId !== channelId) {
-    return null;
-  }
-  return entry;
+  const identityId = props.identityId || '';
+  return cardStore.getBadgeByIdentity(channelId, identityId);
 });
 
 const worldTemplate = computed(() => {
@@ -59,26 +48,20 @@ const template = computed(() => {
     || getWorldCardTemplate(worldId);
 });
 
-const renderedContent = computed(() => {
+const resolvedAttrs = computed<Record<string, any> | undefined>(() => {
+  if (badgeEntry.value?.attrs) return badgeEntry.value.attrs;
   const channelId = chatStore.curChannel?.id || '';
-  let attrs: Record<string, any> | undefined;
-  if (channelId && boundCardId.value) {
-    const activeIdentityId = chatStore.getActiveIdentityId(channelId);
-    if (activeIdentityId && props.identityId && activeIdentityId === props.identityId) {
-      attrs = cardStore.activeCards[channelId]?.attrs;
-    } else {
-      const activeId = cardStore.getActiveCardId(channelId);
-      if (activeId && activeId === boundCardId.value) {
-        attrs = cardStore.activeCards[channelId]?.attrs;
-      }
-    }
+  const activeIdentityId = chatStore.getActiveIdentityId(channelId);
+  const activeBoundCardId = props.identityId ? (cardStore.getBoundCardId(props.identityId) || '') : '';
+  if (channelId && activeIdentityId && props.identityId === activeIdentityId && activeBoundCardId) {
+    return cardStore.activeCards[channelId]?.attrs;
   }
-  attrs = attrs || card.value?.attrs;
-  if (!attrs && badgeEntry.value?.attrs) {
-    attrs = badgeEntry.value.attrs;
-  }
-  if (!attrs) return '';
-  return renderCardTemplate(template.value, attrs);
+  return undefined;
+});
+
+const renderedContent = computed(() => {
+  if (!resolvedAttrs.value) return '';
+  return renderCardTemplate(template.value, resolvedAttrs.value);
 });
 
 const isVisible = computed(() => {
@@ -87,6 +70,7 @@ const isVisible = computed(() => {
       displayStore.settings.characterCardBadgeVisibilityScope,
       props.messageTone,
     )
+    && hasRenderableBadgeData(template.value, resolvedAttrs.value)
     && !!renderedContent.value;
 });
 

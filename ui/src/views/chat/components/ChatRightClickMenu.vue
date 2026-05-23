@@ -681,8 +681,7 @@ const clickWhisper = () => {
     discriminator: targetAuthor.discriminator || '',
     is_bot: !!targetAuthor.is_bot,
   };
-  chat.clearWhisperTargets();
-  chat.toggleWhisperTarget(targetUser);
+  chat.addWhisperTarget(targetUser);
   chat.confirmWhisperTargets();
   chat.messageMenu.show = false;
 };

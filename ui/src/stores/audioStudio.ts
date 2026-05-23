@@ -1,16 +1,21 @@
 import { defineStore } from 'pinia';
 import { Howl, Howler } from 'howler';
 import { nanoid } from 'nanoid';
-import { api, urlBase } from './_config';
+import { api, buildAuthorizedJsonRequestInit, urlBase } from './_config';
 import { useUserStore } from './user';
 import { useUtilsStore } from './utils';
 import { chatEvent, useChatStore } from './chat';
 import { audioDb, toCachedMeta } from '@/models/audio-cache';
 import { ensurePinyinLoaded, matchText } from '@/utils/pinyinMatch';
+import { detectEmbeddedRuntime, type EmbeddedRuntimeInfo } from '@/utils/embeddedRuntime';
 import { hasAnyActivePlayback, isTrackPlaybackActive, normalizeTrackStatus } from './audioPlaybackState';
 import { upsertAudioAssetCollections } from './audioStudioAssetCollections';
 import type {
   AudioAsset,
+  AudioAssetBatchDeleteSummary,
+  AudioBulkDeleteFailure,
+  AudioDeleteConflictPayload,
+  AudioDeleteResult,
   AudioAssetListResult,
   AudioAssetMutationPayload,
   AudioQuotaSummary,
@@ -25,6 +30,7 @@ import type {
   AudioTrackType,
   AudioImportPreview,
   AudioImportResult,
+  AudioPlayableStreamResponse,
   AudioPlaybackStatePayload,
   AudioTrackStatePayload,
   PaginatedResult,
@@ -95,6 +101,8 @@ interface AudioStudioState {
   error: string | null;
   currentChannelId: string | null;
   currentWorldId: string | null;
+  runtimeKind: EmbeddedRuntimeInfo['runtimeKind'];
+  thirdPartyFrameLikely: boolean;
   playbackAuthority: 'active' | 'standby';
   remoteState: AudioPlaybackStatePayload | null;
   isApplyingRemoteState: boolean;
@@ -105,6 +113,7 @@ interface AudioStudioState {
   retrySyncHandle: number | null;
   syncRetryAttempt: number;
   pendingCommitPayload: PlaybackSyncPayload | null;
+  playableStreamCacheByAsset: Record<string, PlayableStreamCacheEntry>;
   lastAppliedRevisionByScope: Record<string, number>;
   lastAppliedCapturedAtByScope: Record<string, number>;
   lastSnapshotFetchedAtByScope: Record<string, number>;
@@ -137,6 +146,11 @@ interface PlaybackFetchOptions {
 interface RemotePlaybackApplyOptions {
   source?: 'push' | 'pull' | 'ack';
   reason?: string;
+}
+
+interface PlayableStreamCacheEntry {
+  streamUrl: string;
+  expiresAt: number;
 }
 
 export const DEFAULT_TRACK_TYPES: AudioTrackType[] = ['music', 'ambience', 'sfx'];
@@ -208,12 +222,11 @@ const SNAPSHOT_FETCH_MIN_INTERVAL_MS = 1200;
 const SYNC_RETRY_BASE_MS = 600;
 const SYNC_RETRY_MAX_MS = 10_000;
 const DEFAULT_WORLD_PLAYBACK_ENABLED = true;
+const PLAYABLE_STREAM_REFRESH_SKEW_MS = 15_000;
+const initialEmbeddedRuntime = detectEmbeddedRuntime();
 const isDebugEnabled = () => typeof window !== 'undefined' && (window as any).__SC_DEBUG__ === true;
-const logAudioSync = (...args: unknown[]) => {
-  if (isDebugEnabled()) {
-    console.log(...args);
-  }
-};
+const useRawProtectedStreamMode = () =>
+  typeof window !== 'undefined' && (window as any).__SC_AUDIO_RAW_STREAM__ === true;
 const warnAudioSync = (...args: unknown[]) => {
   if (isDebugEnabled()) {
     console.warn(...args);
@@ -463,6 +476,8 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     error: null,
     currentChannelId: null,
     currentWorldId: null,
+    runtimeKind: initialEmbeddedRuntime.runtimeKind,
+    thirdPartyFrameLikely: initialEmbeddedRuntime.thirdPartyFrameLikely,
     playbackAuthority: 'active',
     remoteState: null,
     isApplyingRemoteState: false,
@@ -473,6 +488,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
     retrySyncHandle: null,
     syncRetryAttempt: 0,
     pendingCommitPayload: null,
+    playableStreamCacheByAsset: {},
     lastAppliedRevisionByScope: {},
     lastAppliedCapturedAtByScope: {},
     lastSnapshotFetchedAtByScope: {},
@@ -612,10 +628,43 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
     },
 
+    refreshEmbeddedRuntimeSnapshot() {
+      const runtime = detectEmbeddedRuntime();
+      this.runtimeKind = runtime.runtimeKind;
+      this.thirdPartyFrameLikely = runtime.thirdPartyFrameLikely;
+      return runtime;
+    },
+
+    async postPlaybackStateKeepalive(payload: PlaybackSyncPayload, reason: string) {
+      if (typeof fetch !== 'function') {
+        return false;
+      }
+      try {
+        const endpoint = `${urlBase}/api/v1/audio/state`;
+        const requestInit = buildAuthorizedJsonRequestInit({
+          method: 'POST',
+          keepalive: true,
+          body: JSON.stringify(payload),
+        });
+        const resp = await fetch(endpoint, requestInit);
+        return resp.ok;
+      } catch (error) {
+        warnAudioSync('[AudioSync] keepalive fetch failed', {
+          runtime: this.runtimeKind,
+          thirdPartyFrameLikely: this.thirdPartyFrameLikely,
+          syncReason: reason,
+          syncPath: 'keepalive-fetch',
+          error,
+        });
+        return false;
+      }
+    },
+
     flushPlaybackStateOnExit(reason: string) {
       if (!this.hasPlaybackAuthority || !this.canManage || this.isApplyingRemoteState || !this.currentChannelId) {
         return;
       }
+      this.refreshEmbeddedRuntimeSnapshot();
       if (typeof window !== 'undefined' && this.pendingSyncHandle) {
         window.clearTimeout(this.pendingSyncHandle);
         this.pendingSyncHandle = null;
@@ -624,19 +673,37 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!payload) {
         return;
       }
-      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
-        try {
-          const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
-          const endpoint = `${urlBase}/api/v1/audio/state`;
-          if (navigator.sendBeacon(endpoint, blob)) {
-            return;
-          }
-        } catch {
-          // ignore and fallback to async request
+      void (async () => {
+        const keepaliveCommitted = await this.postPlaybackStateKeepalive(payload, reason);
+        if (keepaliveCommitted) {
+          return;
         }
-      }
-      this.pendingCommitPayload = payload;
-      void this.flushPendingPlaybackSync('commit');
+        if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+          try {
+            const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+            const endpoint = `${urlBase}/api/v1/audio/state`;
+            if (navigator.sendBeacon(endpoint, blob)) {
+              warnAudioSync('[AudioSync] fallback sendBeacon used', {
+                runtime: this.runtimeKind,
+                thirdPartyFrameLikely: this.thirdPartyFrameLikely,
+                syncReason: reason,
+                syncPath: 'sendBeacon',
+              });
+              return;
+            }
+          } catch (error) {
+            warnAudioSync('[AudioSync] sendBeacon fallback failed', {
+              runtime: this.runtimeKind,
+              thirdPartyFrameLikely: this.thirdPartyFrameLikely,
+              syncReason: reason,
+              syncPath: 'sendBeacon',
+              error,
+            });
+          }
+        }
+        this.pendingCommitPayload = payload;
+        void this.flushPendingPlaybackSync('commit');
+      })();
     },
 
     deactivatePlaybackRuntime() {
@@ -752,7 +819,6 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           const scopeKey = this.getScopeKeyFromPayload(state);
           this.markAppliedState(scopeKey, this.getRevisionFromPayload(state), this.getCapturedAtFromPayload(state));
         }
-        logAudioSync('[AudioSync] sync committed', { source });
       } catch (err: any) {
         const status = Number(err?.response?.status || 0);
         if (status === 409) {
@@ -978,11 +1044,6 @@ export const useAudioStudioStore = defineStore('audioStudio', {
           reason === 'visible') &&
         this.allTracksIdle();
       if (!allowReplayOnSnapshotPull && incomingRevision > 0 && incomingRevision < lastAppliedRevision) {
-        logAudioSync('[AudioSync] Skip stale remote state by revision', {
-          scopeKey,
-          incomingRevision,
-          lastAppliedRevision,
-        });
         return;
       }
       if (
@@ -992,12 +1053,6 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         incomingCapturedAt > 0 &&
         incomingCapturedAt <= lastCapturedAt
       ) {
-        logAudioSync('[AudioSync] Skip stale remote state by capturedAt', {
-          scopeKey,
-          incomingRevision,
-          incomingCapturedAt,
-          lastCapturedAt,
-        });
         return;
       }
       const hasRevisionGap = incomingRevision > 0 && lastAppliedRevision > 0 && incomingRevision > lastAppliedRevision + 1;
@@ -1006,18 +1061,6 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         this.markAppliedState(scopeKey, incomingRevision, incomingCapturedAt);
         return;
       }
-
-      logAudioSync('[AudioSync] Received remote state:', {
-        isPlaying: payload?.isPlaying,
-        tracks: payload?.tracks?.map(t => ({
-          type: t.type,
-          assetId: t.assetId,
-          isPlaying: t.isPlaying,
-          loopEnabled: t.loopEnabled,
-          playbackRate: t.playbackRate,
-          muted: t.muted,
-        })),
-      });
 
       this.remoteState = payload;
       if (!payload?.isPlaying) {
@@ -1076,8 +1119,6 @@ export const useAudioStudioStore = defineStore('audioStudio', {
             const trackIsPlaying = typeof incoming.isPlaying === 'boolean' ? incoming.isPlaying : payload.isPlaying;
             const shouldPlay = trackIsPlaying && !incoming.muted;
 
-            logAudioSync(`[AudioSync] Track ${type} - shouldPlay: ${shouldPlay} (isPlaying: ${trackIsPlaying}, muted: ${incoming.muted})`);
-
             // 资源相同 -> 仅更新状态
             if (current?.assetId === incoming.assetId && current.howl) {
               current.volume = typeof incoming.volume === 'number' ? incoming.volume : current.volume;
@@ -1109,7 +1150,6 @@ export const useAudioStudioStore = defineStore('audioStudio', {
                 }
                 try {
                   current.howl.play();
-                  logAudioSync(`[AudioSync] Track ${type} playing (same asset)`);
                 } catch (e) {
                   warnAudioSync(`[AudioSync] Autoplay blocked for track ${type}. Click anywhere to start.`, e);
                   current.status = 'paused';
@@ -1166,7 +1206,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
               }
             }
             track.asset = asset;
-            track.howl = this.createHowlInstance(track, asset, { initialSeek: targetPosition });
+            track.howl = await this.createHowlInstance(track, asset, { initialSeek: targetPosition });
             track.status = 'ready';
 
             if (shouldPlay && track.howl) {
@@ -1179,7 +1219,6 @@ export const useAudioStudioStore = defineStore('audioStudio', {
               }
               try {
                 track.howl.play();
-                logAudioSync(`[AudioSync] Track ${type} playing (new asset)`);
               } catch (e) {
                 warnAudioSync(`[AudioSync] Autoplay blocked for new track ${type}. Click anywhere to start.`, e);
                 track.status = 'paused';
@@ -1273,17 +1312,6 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       if (!payload) return;
 
       this.pendingCommitPayload = payload;
-      logAudioSync('[AudioSync] Sending state:', {
-        isPlaying: payload.isPlaying,
-        tracks: payload.tracks.map(t => ({
-          type: t.type,
-          assetId: t.assetId,
-          isPlaying: t.isPlaying,
-          loopEnabled: t.loopEnabled,
-          playbackRate: t.playbackRate,
-        })),
-      });
-
       await this.flushPendingPlaybackSync('commit');
     },
 
@@ -1370,6 +1398,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     async ensureInitialized() {
       if (this.initialized) return;
+      this.refreshEmbeddedRuntimeSnapshot();
       await Promise.all([this.fetchScenes(), this.fetchFolders(), this.fetchTrackSelectableAssets()]);
       await this.fetchAssets();
       this.initialized = true;
@@ -1893,10 +1922,16 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       syncTrackPlaylistIndex(track, asset.id);
       track.status = 'loading';
       track.pendingSeek = options?.initialSeek ?? track.pendingSeek ?? null;
-      track.howl = this.createHowlInstance(track, asset, { initialSeek: track.pendingSeek ?? undefined });
-      track.status = 'ready';
-      if (this.isPlaying && track.howl && !track.muted) {
-        track.howl.play();
+      try {
+        track.howl = await this.createHowlInstance(track, asset, { initialSeek: track.pendingSeek ?? undefined });
+        track.status = 'ready';
+        if (this.isPlaying && track.howl && !track.muted) {
+          track.howl.play();
+        }
+      } catch (err) {
+        console.error('assignAssetToTrack error', err);
+        track.status = 'error';
+        track.error = '资源加载失败';
       }
       if (!options?.force) {
         this.queuePlaybackSync();
@@ -1917,7 +1952,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         track.assetId = asset.id;
         syncTrackPlaylistIndex(track, asset.id);
         track.pendingSeek = options?.initialSeek ?? track.pendingSeek ?? null;
-        track.howl = this.createHowlInstance(track, asset, { initialSeek: track.pendingSeek ?? undefined });
+        track.howl = await this.createHowlInstance(track, asset, { initialSeek: track.pendingSeek ?? undefined });
         track.status = 'ready';
       } catch (err) {
         console.error('loadTrackAsset error', err);
@@ -1937,13 +1972,50 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       return asset;
     },
 
-    buildStreamUrl(assetId: string) {
+    buildRawStreamUrl(assetId: string) {
       return `${urlBase}/api/v1/audio/stream/${assetId}`;
     },
 
-    createHowlInstance(track: TrackRuntime, asset: AudioAsset, options?: { initialSeek?: number }) {
+    async fetchPlayableStreamUrl(assetId: string) {
+      const normalizedAssetId = String(assetId || '').trim();
+      if (!normalizedAssetId) {
+        throw new Error('assetId is empty');
+      }
+      if (useRawProtectedStreamMode()) {
+        warnAudioSync('[AudioPlayback] raw stream fallback enabled', {
+          runtime: this.runtimeKind,
+          thirdPartyFrameLikely: this.thirdPartyFrameLikely,
+          playSource: 'raw-stream',
+          assetId: normalizedAssetId,
+        });
+        return this.buildRawStreamUrl(normalizedAssetId);
+      }
+      const now = Date.now();
+      const cached = this.playableStreamCacheByAsset[normalizedAssetId];
+      if (cached && cached.expiresAt - now > PLAYABLE_STREAM_REFRESH_SKEW_MS) {
+        return cached.streamUrl;
+      }
+      this.refreshEmbeddedRuntimeSnapshot();
+      const resp = await api.post(`/api/v1/audio/assets/${normalizedAssetId}/play-token`);
+      const data = resp.data as AudioPlayableStreamResponse;
+      const streamUrl = String(data?.streamUrl || '').trim();
+      if (!streamUrl) {
+        throw new Error('play token response missing streamUrl');
+      }
+      const expiresAt = Number(data?.expiresAt || 0);
+      this.playableStreamCacheByAsset = {
+        ...this.playableStreamCacheByAsset,
+        [normalizedAssetId]: {
+          streamUrl,
+          expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : now + PLAYABLE_STREAM_REFRESH_SKEW_MS,
+        },
+      };
+      return streamUrl;
+    },
+
+    async createHowlInstance(track: TrackRuntime, asset: AudioAsset, options?: { initialSeek?: number }) {
       applyMasterVolume(this.masterVolume);
-      const src = this.buildStreamUrl(asset.id);
+      const src = await this.fetchPlayableStreamUrl(asset.id);
       const howl = new Howl({
         src: [src],
         html5: true,
@@ -1991,12 +2063,28 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         onloaderror: (_, err) => {
           track.status = 'error';
           track.error = String(err);
+          warnAudioSync('[AudioPlayback] stream load failed', {
+            runtime: this.runtimeKind,
+            thirdPartyFrameLikely: this.thirdPartyFrameLikely,
+            assetId: asset.id,
+            playSource: useRawProtectedStreamMode() ? 'raw-stream' : 'signed-stream',
+            status: 'load-error',
+            error: String(err),
+          });
           this.refreshPlaybackFlags();
         },
         onplayerror: (_, err) => {
           // 自动播放被阻止时，设置为暂停状态而非错误状态
           // 用户可以通过点击播放按钮手动触发
           console.warn('Play error (likely autoplay blocked):', err);
+          warnAudioSync('[AudioPlayback] play error', {
+            runtime: this.runtimeKind,
+            thirdPartyFrameLikely: this.thirdPartyFrameLikely,
+            assetId: asset.id,
+            playSource: useRawProtectedStreamMode() ? 'raw-stream' : 'signed-stream',
+            status: 'play-error',
+            error: String(err),
+          });
           track.status = 'paused';
           this.refreshPlaybackFlags();
           if (!this.canManage && this.remoteState?.isPlaying) {
@@ -2456,17 +2544,20 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
     },
 
-    async deleteAsset(assetId: string) {
+    async deleteAsset(assetId: string, options?: { forceDetach?: boolean }) {
       if (!assetId) return;
       this.assetMutationLoading = true;
       try {
-        await api.delete(`/api/v1/audio/assets/${assetId}`);
+        const resp = await api.delete<AudioDeleteResult>(`/api/v1/audio/assets/${assetId}`, {
+          params: options?.forceDetach ? { forceDetach: true } : undefined,
+        });
         this.removeAssetLocally(assetId);
         this.assetPagination.total = Math.max(0, this.assetPagination.total - 1);
         const nextPage = this.filteredAssets.length
           ? this.assetPagination.page
           : Math.max(1, this.assetPagination.page - 1);
         await this.fetchAssets({ pagination: { page: nextPage }, silent: false });
+        return resp.data;
       } catch (err) {
         console.error('deleteAsset failed', err);
         throw err;
@@ -2511,26 +2602,34 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       }
     },
 
-    async batchDeleteAssets(assetIds: string[]) {
+    async batchDeleteAssets(assetIds: string[]): Promise<AudioAssetBatchDeleteSummary> {
       if (!assetIds?.length) {
-        return { success: 0, failed: 0 };
+        return { success: 0, failed: 0, failures: [] };
       }
       this.assetBulkLoading = true;
       try {
         const tasks = assetIds.map((id) => api.delete(`/api/v1/audio/assets/${id}`));
         const results = await Promise.allSettled(tasks);
         let success = 0;
+        const failures: AudioBulkDeleteFailure[] = [];
         results.forEach((result, index) => {
           if (result.status === 'fulfilled') {
             success += 1;
             this.removeAssetLocally(assetIds[index]);
+            return;
           }
+          const payload = result.reason?.response?.data as AudioDeleteConflictPayload | undefined;
+          failures.push({
+            assetId: assetIds[index],
+            reason: payload?.message || result.reason?.response?.data?.error || result.reason?.message || '删除失败',
+            usageSummary: payload?.usage,
+          });
         });
         if (success) {
           this.assetPagination.total = Math.max(0, this.assetPagination.total - success);
         }
         await this.fetchAssets({ pagination: { page: this.assetPagination.page }, silent: false });
-        return { success, failed: assetIds.length - success };
+        return { success, failed: failures.length, failures };
       } finally {
         this.assetBulkLoading = false;
       }

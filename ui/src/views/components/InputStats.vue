@@ -5,6 +5,12 @@ import { api } from '@/stores/_config'
 import { useUserStore } from '@/stores/user'
 import { useDisplayStore } from '@/stores/display'
 import { useECharts } from '@/composables/useECharts'
+import {
+  buildInputStatSessions,
+  calcOccupiedWindowMinutes,
+  calcOccupiedWindowSummary,
+  calcSessionSummary,
+} from './inputStatsSessionMetrics'
 import * as echarts from 'echarts/core'
 import { LineChart, BarChart, ScatterChart } from 'echarts/charts'
 import {
@@ -56,9 +62,6 @@ const sessionThreshold = ref(30)
 // Session chart metric toggle: 'chars', 'speed', or 'duration'
 const sessionMetric = ref<'chars' | 'speed' | 'duration'>('chars')
 
-// Session IC/OOC mode (independent of global activeTab)
-const sessionIcMode = ref<'all' | 'ic' | 'ooc'>('all')
-
 // === localStorage persistence ===
 const PREFS_KEY = 'sc-input-stats-prefs'
 
@@ -67,7 +70,6 @@ function savePrefs() {
     const prefs = {
       sessionThreshold: sessionThreshold.value,
       sessionMetric: sessionMetric.value,
-      sessionIcMode: sessionIcMode.value,
       filterChannelMode: filterChannelMode.value,
       selectedChannelIds: selectedChannelIds.value,
       includeImported: includeImported.value,
@@ -85,7 +87,6 @@ function loadPrefs() {
     if (['chars', 'speed', 'duration'].includes(prefs.sessionMetric)) {
       sessionMetric.value = prefs.sessionMetric
     }
-    if (prefs.sessionIcMode) sessionIcMode.value = prefs.sessionIcMode
     if (prefs.filterChannelMode) filterChannelMode.value = prefs.filterChannelMode
     if (prefs.selectedChannelIds) selectedChannelIds.value = prefs.selectedChannelIds
     if (prefs.includeImported != null) includeImported.value = !!prefs.includeImported
@@ -102,6 +103,7 @@ const channelStats = ref<Record<string, any[]>>({})
 const timelineData = ref<any[]>([])
 const sessionMessages = ref<any[]>([])
 const expandedWorldId = ref<string | null>(null)
+const runningTimeValueRef = ref<HTMLElement | null>(null)
 
 // Chart
 const chartRef = ref<HTMLDivElement | null>(null)
@@ -110,6 +112,7 @@ const sessionChartRef = ref<HTMLDivElement | null>(null)
 let fetchAllRequestSeq = 0
 let sessionDataRequestSeq = 0
 let channelRequestSeq = 0
+let runningTimeResizeObserver: ResizeObserver | null = null
 
 const timelineChart = useECharts(chartRef, isDark, echarts)
 const sessionChart = useECharts(sessionChartRef, isDark, echarts)
@@ -158,81 +161,14 @@ const queryParams = computed(() => {
 
 // === Session analysis (computed on frontend) ===
 const sessions = computed(() => {
-  const msgs = sessionMessages.value
-  if (!msgs || msgs.length === 0) return []
-
-  const thresholdMs = sessionThreshold.value * 60 * 1000
-  const result: Array<{
-    index: number
-    startTime: string
-    endTime: string
-    duration: number
-    totalChars: number
-    totalMessages: number
-    typingSpeed: number
-  }> = []
-
-  let sessionStart = 0
-  let sessionChars = 0
-  let sessionMsgs = 0
-
-  for (let i = 0; i < msgs.length; i++) {
-    const curTime = new Date(msgs[i].createdAt).getTime()
-
-    if (i === 0) {
-      sessionStart = curTime
-      sessionChars = msgs[i].charCount || 0
-      sessionMsgs = 1
-      continue
-    }
-
-    const prevTime = new Date(msgs[i - 1].createdAt).getTime()
-    const gap = curTime - prevTime
-
-    if (gap > thresholdMs) {
-      // End previous session
-      const endTime = prevTime
-      const durationMin = (endTime - sessionStart) / 60000
-      result.push({
-        index: result.length + 1,
-        startTime: new Date(sessionStart).toLocaleString(),
-        endTime: new Date(endTime).toLocaleString(),
-        duration: Math.round(durationMin * 10) / 10,
-        totalChars: sessionChars,
-        totalMessages: sessionMsgs,
-        typingSpeed: durationMin > 0 ? Math.round(sessionChars / durationMin * 10) / 10 : 0,
-      })
-      // Start new session
-      sessionStart = curTime
-      sessionChars = msgs[i].charCount || 0
-      sessionMsgs = 1
-    } else {
-      sessionChars += msgs[i].charCount || 0
-      sessionMsgs++
-    }
-  }
-
-  // last session
-  if (sessionMsgs > 0) {
-    const endTime = new Date(msgs[msgs.length - 1].createdAt).getTime()
-    const durationMin = (endTime - sessionStart) / 60000
-    result.push({
-      index: result.length + 1,
-      startTime: new Date(sessionStart).toLocaleString(),
-      endTime: new Date(endTime).toLocaleString(),
-      duration: Math.round(durationMin * 10) / 10,
-      totalChars: sessionChars,
-      totalMessages: sessionMsgs,
-      typingSpeed: durationMin > 0 ? Math.round(sessionChars / durationMin * 10) / 10 : 0,
-    })
-  }
-
-  // Only keep sessions with at least 3 messages
-  // Only keep sessions with at least 3 messages, then re-index
-  const filtered = result.filter(s => s.totalMessages >= 3)
-  filtered.forEach((s, i) => { s.index = i + 1 })
-  return filtered
+  return buildInputStatSessions(sessionMessages.value, sessionThreshold.value)
 })
+
+const sessionSummary = computed(() => calcOccupiedWindowSummary(sessionMessages.value, sessionThreshold.value))
+
+const sessionChartSummary = computed(() => calcSessionSummary(sessions.value))
+
+const overviewRunningMinutes = computed(() => calcOccupiedWindowMinutes(sessionMessages.value, sessionThreshold.value))
 
 // === API calls ===
 async function fetchAll() {
@@ -245,17 +181,11 @@ async function fetchAll() {
     const headers = { Authorization: user.token }
     const params = queryParams.value
 
-    // Build session-specific params with its own icMode
-    const sessionParams = { ...params }
-    delete sessionParams.icMode
-    if (sessionIcMode.value === 'ic') sessionParams.icMode = 'ic'
-    else if (sessionIcMode.value === 'ooc') sessionParams.icMode = 'ooc'
-
     const [ovRes, wRes, tlRes, ssRes] = await Promise.all([
       api.get('api/v1/user/input-stats/overview', { headers, params }),
       api.get('api/v1/user/input-stats/by-world', { headers, params }),
       api.get('api/v1/user/input-stats/timeline', { headers, params }),
-      api.get('api/v1/user/input-stats/sessions', { headers, params: sessionParams }),
+      api.get('api/v1/user/input-stats/sessions', { headers, params }),
     ])
 
     if (requestId !== fetchAllRequestSeq) {
@@ -305,33 +235,6 @@ async function fetchAll() {
   } finally {
     if (requestId === fetchAllRequestSeq) {
       loading.value = false
-    }
-  }
-}
-
-// Fetch only session messages (for session IC/OOC changes)
-async function fetchSessionMessages() {
-  const requestId = ++sessionDataRequestSeq
-  try {
-    const headers = { Authorization: user.token }
-    const params = { ...queryParams.value }
-    delete params.icMode
-    if (sessionIcMode.value === 'ic') params.icMode = 'ic'
-    else if (sessionIcMode.value === 'ooc') params.icMode = 'ooc'
-
-    const res = await api.get('api/v1/user/input-stats/sessions', { headers, params })
-    if (requestId !== sessionDataRequestSeq) {
-      return
-    }
-    sessionMessages.value = res.data || []
-    await nextTick()
-    if (requestId !== sessionDataRequestSeq) {
-      return
-    }
-    renderSessionChart()
-  } catch (err) {
-    if (requestId === sessionDataRequestSeq) {
-      console.error('fetch session messages failed', err)
     }
   }
 }
@@ -524,7 +427,7 @@ function renderSessionChart() {
         barStart: 'rgba(246,173,85,0.82)',
         barEnd: 'rgba(246,173,85,0.24)',
         yAxisName: `${t('inputStats.sessionTime')} (${t('inputStats.minutes')})`,
-        getValue: (s: typeof data[number]) => s.duration,
+        getValue: (s: typeof data[number]) => s.occupiedDuration,
       }
 
   // X axis: session labels (团次 #1, #2, #3...)
@@ -559,7 +462,8 @@ function renderSessionChart() {
           `<div style="font-weight:700;color:${metricConfig.color};margin-bottom:4px">${t('inputStats.sessionNo')} #${s.index}</div>`,
           `<div style="font-size:11px;opacity:0.7;margin-bottom:6px">${s.startTime} ~ ${s.endTime}</div>`,
           `<div style="display:grid;grid-template-columns:auto auto;gap:2px 12px;font-size:12px">`,
-          `<span style="opacity:0.6">⏱ ${t('inputStats.duration')}:</span><span>${formatDuration(s.duration)}</span>`,
+          `<span style="opacity:0.6">⏱ ${t('inputStats.sessionTime')}:</span><span>${formatDuration(s.occupiedDuration)}</span>`,
+          `<span style="opacity:0.6">↔ ${t('inputStats.duration')}:</span><span>${formatDuration(s.duration)}</span>`,
           `<span style="opacity:0.6">✏ ${t('inputStats.totalChars')}:</span><span>${formatNum(s.totalChars)}</span>`,
           `<span style="opacity:0.6">💬 ${t('inputStats.totalMessages')}:</span><span>${s.totalMessages} ${t('inputStats.messages')}</span>`,
           `<span style="opacity:0.6">⚡ ${t('inputStats.typingSpeed')}:</span><span>${formatSpeed(s.typingSpeed)} ${t('inputStats.charsPerMin')}</span>`,
@@ -666,6 +570,29 @@ function formatDuration(min: number) {
   return `${Math.round(min)} ${t('inputStats.minutes')}`
 }
 
+function formatRunningTime(min: number | undefined) {
+  const totalMinutes = Math.max(0, Math.round(Number(min) || 0))
+  const days = Math.floor(totalMinutes / (24 * 60))
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60)
+  const minutes = totalMinutes % 60
+  return `${days}d ${hours}h ${minutes}m`
+}
+
+function fitRunningTimeText() {
+  const el = runningTimeValueRef.value
+  if (!el) return
+
+  const maxFontSize = 24
+  const minFontSize = 12
+  let fontSize = maxFontSize
+
+  el.style.fontSize = `${maxFontSize}px`
+  while (fontSize > minFontSize && el.scrollWidth > el.clientWidth) {
+    fontSize -= 1
+    el.style.fontSize = `${fontSize}px`
+  }
+}
+
 // === Channel filter toggle ===
 function getChannelFilterState(channelId: string): 'none' | 'include' | 'exclude' {
   if (!selectedChannelIds.value.includes(channelId)) return 'none'
@@ -729,15 +656,32 @@ onMounted(() => {
 
   fetchAll()
   window.addEventListener('resize', handleResize)
+  nextTick(() => {
+    fitRunningTimeText()
+    if (typeof ResizeObserver !== 'undefined' && runningTimeValueRef.value) {
+      runningTimeResizeObserver = new ResizeObserver(() => {
+        fitRunningTimeText()
+      })
+      runningTimeResizeObserver.observe(runningTimeValueRef.value)
+      if (runningTimeValueRef.value.parentElement) {
+        runningTimeResizeObserver.observe(runningTimeValueRef.value.parentElement)
+      }
+    }
+  })
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
+  if (runningTimeResizeObserver) {
+    runningTimeResizeObserver.disconnect()
+    runningTimeResizeObserver = null
+  }
 })
 
 function handleResize() {
   timelineChart.resize()
   sessionChart.resize()
+  fitRunningTimeText()
 }
 
 watch([activeTab, timeRange, customStart, customEnd], () => {
@@ -749,6 +693,10 @@ watch(includeImported, () => {
   fetchAll()
 })
 
+watch(overviewRunningMinutes, () => {
+  nextTick(() => fitRunningTimeText())
+})
+
 // Re-render chart when hideZeroAxis changes
 watch(hideZeroAxis, () => {
   renderChart()
@@ -757,13 +705,10 @@ watch(hideZeroAxis, () => {
 // Re-render session chart when threshold or metric changes, and persist
 watch([sessionThreshold, sessionMetric], () => {
   savePrefs()
-  nextTick(() => renderSessionChart())
-})
-
-// Re-fetch session messages when session IC/OOC changes
-watch(sessionIcMode, () => {
-  savePrefs()
-  fetchSessionMessages()
+  nextTick(() => {
+    fitRunningTimeText()
+    renderSessionChart()
+  })
 })
 
 // Re-render chart when theme changes
@@ -915,6 +860,10 @@ const currentWorldName = computed(() => {
           <div class="stat-value">{{ formatSpeed(overview.avgCharsPerMsg) }}</div>
           <div class="stat-label">{{ t('inputStats.avgCharsPerMsg') }}</div>
         </div>
+        <div class="stat-card stat-card--running-time">
+          <div ref="runningTimeValueRef" class="stat-value stat-value--running-time">{{ formatRunningTime(overviewRunningMinutes) }}</div>
+          <div class="stat-label">{{ t('inputStats.runningTime') }}</div>
+        </div>
       </div>
 
       <!-- Chart -->
@@ -1019,26 +968,12 @@ const currentWorldName = computed(() => {
               {{ t('inputStats.sessionTime') }}
             </n-button>
           </n-button-group>
-          <n-button-group size="small">
-            <n-button
-              :type="sessionIcMode === 'all' ? 'primary' : 'default'"
-              @click="sessionIcMode = 'all'"
-            >
-              {{ t('inputStats.all') }}
-            </n-button>
-            <n-button
-              :type="sessionIcMode === 'ic' ? 'primary' : 'default'"
-              @click="sessionIcMode = 'ic'"
-            >
-              {{ t('inputStats.ic') }}
-            </n-button>
-            <n-button
-              :type="sessionIcMode === 'ooc' ? 'primary' : 'default'"
-              @click="sessionIcMode = 'ooc'"
-            >
-              {{ t('inputStats.ooc') }}
-            </n-button>
-          </n-button-group>
+        </div>
+        <div v-if="sessions.length > 0" class="session-summary-row">
+          <span>{{ t('inputStats.sessionSummary') }}</span>
+          <span>{{ t('inputStats.sessionTime') }}: {{ formatRunningTime(sessionSummary.duration) }}</span>
+          <span>{{ t('inputStats.totalChars') }}: {{ formatNum(sessionSummary.totalChars) }}</span>
+          <span>{{ t('inputStats.totalMessages') }}: {{ formatNum(sessionSummary.totalMessages) }}</span>
         </div>
         <div v-if="sessions.length === 0" class="empty-hint">{{ t('inputStats.noData') }}</div>
         <div ref="sessionChartRef" v-else class="session-chart-container"></div>
@@ -1195,7 +1130,7 @@ const currentWorldName = computed(() => {
 /* ===== Overview cards ===== */
 .overview-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   padding: 16px 20px;
 }
@@ -1215,12 +1150,25 @@ const currentWorldName = computed(() => {
   transform: translateY(-2px);
   box-shadow: 0 4px 16px rgba(91,143,249,0.15);
 }
+
+.stat-card--running-time {
+  overflow: hidden;
+}
+
 .stat-value {
   font-size: 24px;
   font-weight: 800;
   color: var(--sc-text-primary, #fff);
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
+}
+
+.stat-value--running-time {
+  font-size: clamp(18px, 1.7vw, 24px);
+  white-space: nowrap;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .stat-label {
   font-size: 11px;
@@ -1386,5 +1334,31 @@ const currentWorldName = computed(() => {
   border-radius: 8px;
   background: color-mix(in srgb, var(--sc-bg-surface, #000) 60%, transparent);
   transition: background 0.25s ease;
+}
+
+.session-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--sc-chip-bg, rgba(255, 255, 255, 0.03));
+  color: var(--sc-text-secondary, #aaa);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .overview-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .overview-cards {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

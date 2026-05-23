@@ -318,6 +318,7 @@ const isHighlighted = ref(false)
 let highlightTimer: ReturnType<typeof setTimeout> | null = null
 const lastInternalPointerDownAt = ref(0)
 const filePickerPending = ref(false)
+const filePickerPendingSource = ref<'rich-editor' | 'smart-link-text-image' | 'smart-link-url-image'>('rich-editor')
 const isReleasingEditing = ref(false)
 
 type StickyNoteRichImagePayload = {
@@ -587,8 +588,9 @@ const handleRichImageTransfer = (payload: StickyNoteRichImagePayload) => {
   void handleRichImageInsert(payload.files)
 }
 
-const handleRichUploadButtonClick = () => {
+const handleRichUploadButtonClick = (source: 'rich-editor' | 'smart-link-text-image' | 'smart-link-url-image' = 'rich-editor') => {
   filePickerPending.value = true
+  filePickerPendingSource.value = source
   markEditingActivity()
   inlineImageInputRef.value?.click()
 }
@@ -597,9 +599,35 @@ const handleInlineImageInputChange = (event: Event) => {
   filePickerPending.value = false
   const input = event.target as HTMLInputElement | null
   const files = Array.from(input?.files || [])
+  const activeSource = filePickerPendingSource.value
   if (files.length > 0) {
-    void handleRichImageInsert(files)
+    if (activeSource === 'smart-link-text-image' || activeSource === 'smart-link-url-image') {
+      const file = files.find((item) => item.type.startsWith('image/'))
+      if (file) {
+        void (async () => {
+          try {
+            const result = await uploadImageAttachment(file, {
+              channelId: note.value?.channelId,
+            })
+            const normalizedId = normalizeAttachmentId(result.attachmentId)
+            const finalUrl = normalizedId ? `/api/v1/attachment/${normalizedId}` : String(result.attachmentId || '')
+            if (!finalUrl) {
+              throw new Error('图片上传成功但未获取到可用地址')
+            }
+            editorRef.value?.applySmartLinkImage?.(activeSource, {
+              url: finalUrl,
+              label: file.name || '已选图片',
+            })
+          } catch (error: any) {
+            message.error(error?.message || '图片上传失败')
+          }
+        })()
+      }
+    } else {
+      void handleRichImageInsert(files)
+    }
   }
+  filePickerPendingSource.value = 'rich-editor'
   if (input) {
     input.value = ''
   }

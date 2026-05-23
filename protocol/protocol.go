@@ -646,6 +646,7 @@ type CharacterCardBadgeEventPayload struct {
 	Template   string         `json:"template,omitempty"`
 	Attrs      map[string]any `json:"attrs,omitempty"`
 	Action     string         `json:"action,omitempty"` // update/clear
+	UpdatedAt  int64          `json:"updatedAt,omitempty"`
 }
 
 // CharacterCardBadgeSnapshotPayload 角色徽章快照载荷

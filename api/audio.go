@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,6 +23,11 @@ import (
 	"sealchat/service/storage"
 	"sealchat/utils"
 )
+
+type audioPlayTokenResponse struct {
+	StreamURL string `json:"streamUrl"`
+	ExpiresAt int64  `json:"expiresAt"`
+}
 
 func AudioAssetList(c *fiber.Ctx) error {
 	filters := service.AudioAssetFilters{
@@ -469,6 +475,18 @@ func AudioAssetDelete(c *fiber.Ctx) error {
 		}
 	}
 	hard := c.QueryBool("hard")
+	forceDetach := c.QueryBool("forceDetach")
+	if forceDetach {
+		impact, err := service.AdminAudioDeleteAsset(id, hard)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return wrapErrorStatus(c, fiber.StatusNotFound, err, "素材不存在")
+			}
+			return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "删除素材失败")
+		}
+		broadcastAdminAudioDetachedScopes(getCurUser(c), impact)
+		return c.JSON(fiber.Map{"message": "已删除", "impact": impact})
+	}
 	if err := service.AudioSafeDeleteAsset(id, hard); err != nil {
 		var referencedErr *service.AudioAssetReferencedError
 		if errors.As(err, &referencedErr) {
@@ -831,25 +849,33 @@ func AudioAssetStream(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少资源ID")
 	}
 	user := getCurUser(c)
+	authSource := detectAudioStreamAuthSource(c)
+	playToken := strings.TrimSpace(c.Query("playToken"))
+	playTokenSummary := summarizeAudioPlayToken(playToken)
 	if user == nil {
-		return wrapErrorStatus(c, fiber.StatusUnauthorized, nil, "未登录")
+		claims, err := service.ResolveAudioPlayToken(playToken, id)
+		if err != nil {
+			logAudioStreamAuth(id, authSource, "", "reject", fmt.Sprintf("%s token=%s", err.Error(), playTokenSummary))
+			return wrapErrorStatus(c, fiber.StatusUnauthorized, nil, "未登录")
+		}
+		user, err = loadAudioStreamTokenUser(claims.UserID)
+		if err != nil {
+			logAudioStreamAuth(id, "playToken", claims.UserID, "reject", fmt.Sprintf("%s token=%s", err.Error(), playTokenSummary))
+			return wrapErrorStatus(c, fiber.StatusUnauthorized, err, "登录态已失效")
+		}
+		authSource = "playToken"
 	}
 	asset, err := service.AudioGetAsset(id)
 	if err != nil {
+		logAudioStreamAuth(id, authSource, user.ID, "asset-load-failed", err.Error())
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return wrapErrorStatus(c, fiber.StatusNotFound, err, "素材不存在")
 		}
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取素材失败")
 	}
-	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
-	if asset.Scope == model.AudioScopeWorld {
-		worldID := strings.TrimSpace(normalizeOptionalString(asset.WorldID))
-		if worldID == "" {
-			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "世界级素材缺少 worldId")
-		}
-		if !isSystemAdmin && !service.IsWorldMember(worldID, user.ID) {
-			return wrapErrorStatus(c, fiber.StatusForbidden, nil, "仅世界成员可播放此素材")
-		}
+	if err := ensureAudioStreamAllowed(user, asset); err != nil {
+		logAudioStreamAuth(id, authSource, user.ID, "forbidden", err.Error())
+		return wrapErrorStatus(c, fiber.StatusForbidden, err, err.Error())
 	}
 	variantLabel := c.Query("variant")
 	variant := service.AudioVariantFor(asset, variantLabel)
@@ -870,6 +896,7 @@ func AudioAssetStream(c *fiber.Ctx) error {
 	}
 	file, info, resolved, err := service.AudioOpenLocalVariant(asset, variantLabel)
 	if err != nil {
+		logAudioStreamAuth(asset.ID, authSource, user.ID, "open-failed", err.Error())
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "打开音频文件失败")
 	}
 
@@ -884,6 +911,37 @@ func AudioAssetStream(c *fiber.Ctx) error {
 	c.Set("X-Asset-Duration", fmt.Sprintf("%.3f", variant.Duration))
 	c.Set("X-Asset-Size", strconv.FormatInt(variant.Size, 10))
 	return streamFileWithRange(c, file, info.Size(), contentType)
+}
+
+func AudioAssetPlayToken(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少资源ID")
+	}
+	user := getCurUser(c)
+	if user == nil {
+		return wrapErrorStatus(c, fiber.StatusUnauthorized, nil, "未登录")
+	}
+	asset, err := service.AudioGetAsset(id)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "素材不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取素材失败")
+	}
+	if err := ensureAudioStreamAllowed(user, asset); err != nil {
+		return wrapErrorStatus(c, fiber.StatusForbidden, err, err.Error())
+	}
+	grant, err := service.IssueAudioPlayToken(user.ID, asset.ID)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "签发播放令牌失败")
+	}
+	streamPath := joinWebPath(appConfig.WebUrl, fmt.Sprintf("api/v1/audio/stream/%s", asset.ID))
+	streamURL := strings.TrimRight(c.BaseURL(), "/") + streamPath + "?playToken=" + url.QueryEscape(grant.Token)
+	return c.JSON(audioPlayTokenResponse{
+		StreamURL: streamURL,
+		ExpiresAt: grant.ExpiresAt.UnixMilli(),
+	})
 }
 
 func AudioPlaybackStateGet(c *fiber.Ctx) error {
@@ -1359,6 +1417,77 @@ func ensureChannelMembership(userID, channelID string) error {
 		return fmt.Errorf("channel membership required")
 	}
 	return nil
+}
+
+func ensureAudioStreamAllowed(user *model.UserModel, asset *model.AudioAsset) error {
+	if user == nil {
+		return errors.New("未登录")
+	}
+	if asset == nil {
+		return errors.New("素材不存在")
+	}
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	if asset.Scope != model.AudioScopeWorld {
+		return nil
+	}
+	worldID := strings.TrimSpace(normalizeOptionalString(asset.WorldID))
+	if worldID == "" {
+		return errors.New("世界级素材缺少 worldId")
+	}
+	if !isSystemAdmin && !service.IsWorldMember(worldID, user.ID) {
+		return errors.New("仅世界成员可播放此素材")
+	}
+	return nil
+}
+
+func detectAudioStreamAuthSource(c *fiber.Ctx) string {
+	token := strings.TrimSpace(c.Get("Authorization"))
+	if token == "" {
+		headers := c.GetReqHeaders()["Authorization"]
+		if len(headers) > 0 {
+			token = strings.TrimSpace(headers[0])
+		}
+	}
+	if token != "" {
+		return "header"
+	}
+	if strings.TrimSpace(c.Cookies("Authorization")) != "" {
+		return "cookie"
+	}
+	if strings.TrimSpace(c.Query("playToken")) != "" {
+		return "playToken"
+	}
+	return "none"
+}
+
+func loadAudioStreamTokenUser(userID string) (*model.UserModel, error) {
+	trimmed := strings.TrimSpace(userID)
+	if trimmed == "" {
+		return nil, errors.New("play token user is empty")
+	}
+	var user model.UserModel
+	if err := model.GetDB().Where("id = ?", trimmed).First(&user).Error; err != nil {
+		return nil, err
+	}
+	if user.Disabled {
+		return nil, errors.New("user disabled")
+	}
+	return &user, nil
+}
+
+func logAudioStreamAuth(assetID, authSource, userID, result, detail string) {
+	log.Printf("[audio] stream auth asset=%s authSource=%s user=%s result=%s detail=%s", assetID, authSource, userID, result, detail)
+}
+
+func summarizeAudioPlayToken(token string) string {
+	trimmed := strings.TrimSpace(token)
+	if trimmed == "" {
+		return "none"
+	}
+	if len(trimmed) <= 8 {
+		return fmt.Sprintf("len=%d:%s", len(trimmed), trimmed)
+	}
+	return fmt.Sprintf("len=%d:%s...%s", len(trimmed), trimmed[:4], trimmed[len(trimmed)-4:])
 }
 
 func buildAudioPlaybackResponse(state *service.AudioPlaybackStateSnapshot) interface{} {

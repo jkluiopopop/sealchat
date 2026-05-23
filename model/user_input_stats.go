@@ -27,6 +27,7 @@ type InputStatsOverview struct {
 	TotalMessages  int64   `json:"totalMessages"`
 	AvgCharsPerMsg float64 `json:"avgCharsPerMsg"`
 	TypingSpeed    float64 `json:"typingSpeed"` // 字数/活跃分钟数
+	RunningMinutes int64   `json:"runningMinutes"`
 }
 
 // InputStatsWorldItem 按世界分组的统计数据
@@ -230,6 +231,10 @@ func UserInputStatsOverall(userID string, f InputStatsFilter) (*InputStatsOvervi
 	if err == nil {
 		overview.TypingSpeed = speed
 	}
+	runningMinutes, err := calcRunningMinutes(userID, f, 30*time.Minute)
+	if err == nil {
+		overview.RunningMinutes = runningMinutes
+	}
 
 	return overview, nil
 }
@@ -271,6 +276,48 @@ func calcTypingSpeed(userID string, f InputStatsFilter) (float64, error) {
 	}
 
 	return float64(totalChars) / activeMinutes, nil
+}
+
+func calcRunningMinutes(userID string, f InputStatsFilter, gapThreshold time.Duration) (int64, error) {
+	var totalMinutes float64
+	var sessionStart *time.Time
+	var prevMsg *inputStatsMessageRow
+
+	err := scanInputStatsMessages(userID, f, func(batch []inputStatsMessageRow) error {
+		for _, msg := range batch {
+			msgTime := msg.CreatedAt
+			if sessionStart == nil {
+				start := msgTime
+				sessionStart = &start
+				msgCopy := msg
+				prevMsg = &msgCopy
+				continue
+			}
+
+			gap := msgTime.Sub(prevMsg.CreatedAt)
+			if gap > gapThreshold {
+				totalMinutes += prevMsg.CreatedAt.Sub(*sessionStart).Minutes()
+				start := msgTime
+				sessionStart = &start
+			}
+
+			msgCopy := msg
+			prevMsg = &msgCopy
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	if sessionStart != nil && prevMsg != nil {
+		totalMinutes += prevMsg.CreatedAt.Sub(*sessionStart).Minutes()
+	}
+
+	if totalMinutes <= 0 {
+		return 0, nil
+	}
+	return int64(totalMinutes + 0.5), nil
 }
 
 // UserInputStatsByWorld 按世界分组统计

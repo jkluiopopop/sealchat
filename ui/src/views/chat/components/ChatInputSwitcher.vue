@@ -53,7 +53,7 @@ const emit = defineEmits<{
   (event: 'paste-image', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
   (event: 'drop-files', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
   (event: 'drop-gallery-item', payload: { attachmentId: string; selectionStart: number; selectionEnd: number }): void
-  (event: 'upload-button-click'): void
+  (event: 'upload-button-click', source?: 'rich-editor' | 'smart-link-text-image' | 'smart-link-url-image'): void
   (event: 'remove-image', markerId: string): void
 }>();
 
@@ -122,8 +122,8 @@ const handleDropGalleryItem = (payload: { attachmentId: string; selectionStart: 
   emit('drop-gallery-item', payload);
 };
 
-const handleUploadButtonClick = () => {
-  emit('upload-button-click');
+const handleUploadButtonClick = (source?: 'rich-editor' | 'smart-link-text-image' | 'smart-link-url-image') => {
+  emit('upload-button-click', source);
 };
 
 const handleRemoveImage = (markerId: string) => {
@@ -169,6 +169,13 @@ const getJson = () => {
   return null;
 };
 
+const applySmartLinkImage = (
+  source: 'smart-link-text-image' | 'smart-link-url-image',
+  payload: { url: string; label?: string },
+) => {
+  richRef.value?.applySmartLinkImage?.(source, payload);
+};
+
 const getSelectionRange = () => {
   if (modeRef.value === 'plain') {
     return plainRef.value?.getSelectionRange?.();
@@ -198,6 +205,7 @@ defineExpose({
   getTextarea,
   getEditor,
   getJson,
+  applySmartLinkImage,
   getSelectionRange,
   setSelectionRange,
   moveCursorToEnd,

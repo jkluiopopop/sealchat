@@ -269,6 +269,7 @@ func ChannelMentionableMembersAll(c *fiber.Ctx) error {
 	}
 
 	// 按用户分组身份卡
+	identityMap := make(map[string]*model.ChannelIdentityModel, len(identities))
 	userIdentities := make(map[string][]*model.ChannelIdentityModel)
 	for _, identity := range identities {
 		if identity == nil || identity.UserID == "" {
@@ -277,33 +278,42 @@ func ChannelMentionableMembersAll(c *fiber.Ctx) error {
 		if !allowedUserIDs[identity.UserID] {
 			continue
 		}
+		identityMap[identity.ID] = identity
 		userIdentities[identity.UserID] = append(userIdentities[identity.UserID], identity)
 	}
 
-	// 获取各用户的 IC/OOC 配置
-	// 暂时简化处理：第一个身份视为 IC，后续身份视为 OOC
+	modeConfigs, err := model.ChannelIdentityModeConfigListByChannelTx(model.GetDB(), channelID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "internal_error",
+			"message": "获取身份映射失败",
+		})
+	}
+	configMap := make(map[string]model.ChannelIdentityModeConfigModel, len(modeConfigs))
+	for _, config := range modeConfigs {
+		if config.UserID == "" || !allowedUserIDs[config.UserID] {
+			continue
+		}
+		configMap[config.UserID] = config
+	}
+
 	items := make([]MentionableMemberItem, 0)
 
 	for userID, userIdents := range userIdentities {
-		for idx, identity := range userIdents {
-			identityType := "ic"
-			if idx > 0 {
-				identityType = "ooc"
-			}
-
-			// 根据 icMode 过滤
-			if icMode != "" && icMode != identityType {
+		pair := resolveWhisperIdentityPair(userIdents, identityMap, configMap[userID])
+		currentICIdentityID := ""
+		if pair.IC != nil {
+			currentICIdentityID = strings.TrimSpace(pair.IC.ID)
+		}
+		for _, identity := range userIdents {
+			if identity == nil || strings.TrimSpace(identity.ID) == "" {
 				continue
 			}
-
-			items = append(items, MentionableMemberItem{
-				UserID:       userID,
-				DisplayName:  identity.DisplayName,
-				Color:        identity.Color,
-				Avatar:       identity.AvatarAttachmentID,
-				IdentityID:   identity.ID,
-				IdentityType: identityType,
-			})
+			identityType := "ooc"
+			if identity.ID == currentICIdentityID {
+				identityType = "ic"
+			}
+			items = appendMentionableIdentityItem(items, userID, identity, identityType, icMode)
 		}
 	}
 
@@ -622,6 +632,29 @@ func resolveWhisperIdentityPair(
 		}
 	}
 	return pair
+}
+
+func appendMentionableIdentityItem(
+	items []MentionableMemberItem,
+	userID string,
+	identity *model.ChannelIdentityModel,
+	identityType string,
+	icMode string,
+) []MentionableMemberItem {
+	if identity == nil {
+		return items
+	}
+	if icMode != "" && icMode != identityType {
+		return items
+	}
+	return append(items, MentionableMemberItem{
+		UserID:       userID,
+		DisplayName:  identity.DisplayName,
+		Color:        identity.Color,
+		Avatar:       identity.AvatarAttachmentID,
+		IdentityID:   identity.ID,
+		IdentityType: identityType,
+	})
 }
 
 func sortWhisperCandidateUsers(items []WhisperCandidateUserItem) {
