@@ -39,6 +39,12 @@ import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } fr
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
 import { normalizeAvatarDecorations } from '@/utils/avatarDecorations'
+import {
+  SMART_LINK_DATA_ATTR,
+  SMART_LINK_IMAGE_ROLE_ATTR,
+  SMART_LINK_TEXT_IMAGE_ROLE,
+  normalizeSmartLinkAttrs,
+} from '@/utils/tiptapSmartLink'
 import { shouldRenderWhisperLabel } from '../messageMerge'
 import IdentityMetaInlineRow from './IdentityMetaInlineRow.vue'
 import MessageReactions from './MessageReactions.vue'
@@ -117,6 +123,7 @@ type InlineImageViewerInstance = Viewer & {
 };
 
 let inlineImageViewer: InlineImageViewerInstance | null = null;
+let detachedSmartLinkViewer: Viewer | null = null;
 
 const IMAGE_LAYOUT_MIN_SIZE = 48;
 const IMAGE_LAYOUT_MAX_SIZE = 4096;
@@ -876,6 +883,116 @@ const handleViewerImageEdit = () => {
   } satisfies InlineImageEditPayload);
 };
 
+const destroyDetachedSmartLinkViewer = () => {
+  if (detachedSmartLinkViewer) {
+    detachedSmartLinkViewer.destroy();
+    detachedSmartLinkViewer = null;
+  }
+};
+
+const openDetachedSmartLinkViewer = (src: string) => {
+  const resolvedUrl = resolveAttachmentUrl(src) || src;
+  if (!resolvedUrl) {
+    return;
+  }
+
+  const tempImg = document.createElement('img');
+  tempImg.src = resolvedUrl;
+  tempImg.style.display = 'none';
+  document.body.appendChild(tempImg);
+
+  destroyDetachedSmartLinkViewer();
+
+  detachedSmartLinkViewer = new Viewer(tempImg, {
+    className: 'chat-inline-image-viewer',
+    navbar: false,
+    title: false,
+    toolbar: {
+      zoomIn: true,
+      zoomOut: true,
+      oneToOne: true,
+      reset: true,
+      prev: false,
+      play: false,
+      next: false,
+      rotateLeft: true,
+      rotateRight: true,
+      flipHorizontal: false,
+      flipVertical: false,
+    },
+    tooltip: true,
+    movable: true,
+    zoomable: true,
+    scalable: true,
+    rotatable: true,
+    transition: true,
+    fullscreen: true,
+    keyboard: true,
+    zIndex: 2600,
+    viewed() {
+      try {
+        const viewer = detachedSmartLinkViewer as any;
+        const containerData = viewer?.containerData;
+        const imageData = viewer?.imageData;
+        if (!containerData || !imageData?.naturalWidth || !imageData?.naturalHeight) {
+          return;
+        }
+        const ratio = Math.min(
+          (containerData.width * 0.75) / imageData.naturalWidth,
+          (containerData.height * 0.75) / imageData.naturalHeight,
+          1,
+        );
+        if (Number.isFinite(ratio) && ratio > 0 && ratio < 1) {
+          viewer.zoomTo(ratio);
+        }
+      } catch (error) {
+        console.warn('初始化 smart link 图片查看器尺寸失败', error);
+      }
+    },
+    hidden: () => {
+      tempImg.remove();
+      const viewer = detachedSmartLinkViewer;
+      detachedSmartLinkViewer = null;
+      viewer?.destroy();
+    },
+  });
+
+  detachedSmartLinkViewer.show();
+};
+
+const handleSmartLinkClick = (event: MouseEvent, host: HTMLElement, target: HTMLElement) => {
+  const smartLink = target.closest<HTMLElement>(`[${SMART_LINK_DATA_ATTR}="true"]`);
+  if (!smartLink || !host.contains(smartLink)) {
+    return false;
+  }
+
+  const attrs = normalizeSmartLinkAttrs({
+    textType: smartLink.dataset.textType,
+    textValue: smartLink.dataset.textValue,
+    urlType: smartLink.dataset.urlType,
+    urlValue: smartLink.dataset.urlValue,
+    target: smartLink.dataset.target,
+  });
+  if (!attrs) {
+    return true;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (attrs.urlType === 'image') {
+    openDetachedSmartLinkViewer(attrs.urlValue);
+    return true;
+  }
+
+  if (attrs.target === '_self') {
+    window.location.href = attrs.urlValue;
+  } else {
+    window.open(attrs.urlValue, attrs.target, 'noopener,noreferrer');
+  }
+  return true;
+};
+
 const setupImageViewer = async () => {
   await nextTick();
   if (imageResizeMode.value) {
@@ -888,7 +1005,7 @@ const setupImageViewer = async () => {
     return;
   }
 
-  const inlineImages = host.querySelectorAll<HTMLImageElement>('img');
+  const inlineImages = host.querySelectorAll<HTMLImageElement>(`img:not([${SMART_LINK_IMAGE_ROLE_ATTR}="${SMART_LINK_TEXT_IMAGE_ROLE}"])`);
   if (!inlineImages.length) {
     destroyImageViewer();
     return;
@@ -900,6 +1017,7 @@ const setupImageViewer = async () => {
   const hasMultiple = inlineImages.length > 1;
   inlineImageViewer = new Viewer(host, {
     className: 'chat-inline-image-viewer',
+    filter: (image: HTMLImageElement) => !image.closest(`[${SMART_LINK_DATA_ATTR}="true"]`),
     navbar: hasMultiple,  // 多图时显示缩略图导航
     title: false,
     toolbar: {
@@ -945,6 +1063,11 @@ const handleContentDblclick = async (event: MouseEvent) => {
   if (!host) return;
   const target = event.target as HTMLElement | null;
   if (!target) return;
+  if (target.closest(`[${SMART_LINK_DATA_ATTR}="true"]`)) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   const image = target.closest<HTMLImageElement>('img');
   if (!image || !host.contains(image)) {
     return;
@@ -955,7 +1078,7 @@ const handleContentDblclick = async (event: MouseEvent) => {
   if (!inlineImageViewer) {
     return;
   }
-  const imageList = Array.from(host.querySelectorAll<HTMLImageElement>('img'));
+  const imageList = Array.from(host.querySelectorAll<HTMLImageElement>(`img:not([${SMART_LINK_IMAGE_ROLE_ATTR}="${SMART_LINK_TEXT_IMAGE_ROLE}"])`));
   const imageIndex = imageList.indexOf(image);
   inlineImageViewer.view(imageIndex >= 0 ? imageIndex : 0);
 };
@@ -964,6 +1087,9 @@ const handleContentClick = (event: MouseEvent) => {
   const target = event.target as HTMLElement | null;
   if (!target) return;
   const host = messageContentRef.value;
+  if (host && handleSmartLinkClick(event, host, target)) {
+    return;
+  }
   if (imageResizeMode.value && host) {
     const image = target.closest<HTMLImageElement>('img');
     if (image && host.contains(image)) {
@@ -3111,6 +3237,7 @@ onBeforeUnmount(() => {
   cleanupMessageIFormResizeSync();
   clearImageResizePointerState();
   destroyImageViewer();
+  destroyDetachedSmartLinkViewer();
   keywordTooltipInstance.hideAll()
   keywordTooltipInstance.destroy()
 });
@@ -4290,6 +4417,23 @@ const handleRetrySend = () => {
 .content.typo a:hover {
   color: var(--message-link-hover-color);
   border-bottom-color: color-mix(in srgb, var(--message-link-hover-color) 78%, transparent);
+  text-decoration: none;
+}
+
+.content.typo .message-smart-link {
+  color: var(--message-link-color);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--message-link-underline-color);
+  text-underline-offset: 0.12em;
+}
+
+.content.typo .message-smart-link:hover {
+  color: var(--message-link-hover-color);
+  text-decoration-color: color-mix(in srgb, var(--message-link-hover-color) 78%, transparent);
+}
+
+.content.typo .message-smart-link__image {
   text-decoration: none;
 }
 

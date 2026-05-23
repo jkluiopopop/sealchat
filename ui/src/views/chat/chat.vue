@@ -78,6 +78,7 @@ import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
 import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
+import { isSmartLinkNode, smartLinkToPlainText } from '@/utils/tiptapSmartLink';
 import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
 import { shouldAttemptCharacterApiReconnectBeforeBotCommand } from '@/utils/characterApiReconnectGuard';
 import { buildOptimisticMessageIcModeFields } from '@/utils/optimisticMessageIcMode';
@@ -2237,7 +2238,12 @@ const icHotkeyEnabled = computed(() => {
 });
 
 type SelectionRange = { start: number; end: number };
-type InlineUploadSource = 'default' | 'rich-toolbar' | 'rich-editor';
+type InlineUploadSource =
+  | 'default'
+  | 'rich-toolbar'
+  | 'rich-editor'
+  | 'smart-link-text-image'
+  | 'smart-link-url-image';
 
 interface InlineImageDraft {
   id: string;
@@ -2336,6 +2342,9 @@ const extractRichTextWithImages = (node: any, drafts: Map<string, InlineImageDra
       drafts.set(markerId, existing ?? buildInlineImageDraftFromRich(markerId, src));
     }
     return token;
+  }
+  if (isSmartLinkNode(node)) {
+    return smartLinkToPlainText(node.attrs);
   }
   if (node.content && node.content.length > 0) {
     const childTexts = node.content.map((child: any) => extractRichTextWithImages(child, drafts));
@@ -2515,9 +2524,33 @@ const handleMessageInlineImageEdit = async (payload: { attachmentId: string; mes
 };
 
 const handleRichInlineImageEditorConfirm = async (file: File) => {
-  const shouldInsertIntoRichEditor = activeInlineEditorSource === 'rich-editor' || inputMode.value === 'rich';
+  const activeSource = activeInlineEditorSource;
+  const isSmartLinkUpload = activeSource === 'smart-link-text-image'
+    || activeSource === 'smart-link-url-image';
+  const shouldInsertIntoRichEditor = activeSource === 'rich-editor' || inputMode.value === 'rich';
   const targetSelection = activeInlineEditorSelection ? { ...activeInlineEditorSelection } : undefined;
   closeRichInlineImageEditor();
+  if (isSmartLinkUpload) {
+    try {
+      const result = await uploadImageAttachment(file, {
+        channelId: chat.curChannel?.id,
+        skipCompression: true,
+      });
+      const normalizedId = normalizeAttachmentId(result.attachmentId);
+      const finalUrl = normalizedId ? `/api/v1/attachment/${normalizedId}` : String(result.attachmentId || '');
+      if (!finalUrl) {
+        throw new Error('图片上传成功但未获取到可用地址');
+      }
+      textInputRef.value?.applySmartLinkImage?.(activeSource, {
+        url: finalUrl,
+        label: file.name || '已选图片',
+      });
+    } catch (error: any) {
+      console.error('上传 smart link 图片失败', error);
+      message.error(error?.message || '图片上传失败');
+    }
+    return;
+  }
   if (shouldInsertIntoRichEditor) {
     await handleRichImageInsert([file], { skipCompression: true });
     return;
@@ -12286,9 +12319,9 @@ const handleToolbarUploadClick = () => {
   doUpload('rich-toolbar');
 }
 
-const handleRichUploadButtonClick = () => {
+const handleRichUploadButtonClick = (source: InlineUploadSource = 'rich-editor') => {
   // 富文本编辑器内的上传按钮点击事件
-  doUpload('rich-editor');
+  doUpload(source);
 }
 
 const clearInputModeCache = () => {

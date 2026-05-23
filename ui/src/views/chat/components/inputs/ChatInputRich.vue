@@ -14,6 +14,16 @@ import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 import { matchText } from '@/utils/pinyinMatch';
 import { contentUnescape } from '@/utils/tools';
 import type { PlatformFontAsset } from '@/services/font/platformFontTypes';
+import {
+  SMART_LINK_DATA_ATTR,
+  SMART_LINK_IMAGE_ROLE_ATTR,
+  SMART_LINK_NODE_TYPE,
+  SMART_LINK_TEXT_IMAGE_ROLE,
+  normalizeSmartLinkAttrs,
+  resolveSmartLinkDisplayText,
+  type SmartLinkTextType,
+  type SmartLinkUrlType,
+} from '@/utils/tiptapSmartLink';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -44,6 +54,8 @@ const props = withDefaults(defineProps<{
   defaultIFormEmbedLink: '',
 });
 
+type SmartLinkUploadSource = 'smart-link-text-image' | 'smart-link-url-image';
+
 const emit = defineEmits<{
   (event: 'update:modelValue', value: string): void
   (event: 'mention-search', value: string, prefix: string): void
@@ -54,7 +66,7 @@ const emit = defineEmits<{
   (event: 'paste-image', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
   (event: 'drop-files', payload: { files: File[]; selectionStart: number; selectionEnd: number }): void
   (event: 'drop-gallery-item', payload: { attachmentId: string; selectionStart: number; selectionEnd: number }): void
-  (event: 'upload-button-click'): void
+  (event: 'upload-button-click', source?: 'rich-editor' | SmartLinkUploadSource): void
   (event: 'composition-start'): void
   (event: 'composition-end'): void
 }>();
@@ -544,6 +556,68 @@ const linkModalShow = ref(false);
 const linkText = ref('');
 const linkUrl = ref('');
 const linkOpenInNewTab = ref(false);
+const linkTextType = ref<SmartLinkTextType>('text');
+const linkUrlType = ref<SmartLinkUrlType>('url');
+const linkTextImage = ref('');
+const linkUrlImage = ref('');
+const linkTextImageLabel = ref('');
+const linkUrlImageLabel = ref('');
+
+watch(linkModalShow, (visible) => {
+  if (!visible) {
+    resetLinkModalState();
+  }
+});
+
+const resetLinkModalState = () => {
+  linkText.value = '';
+  linkUrl.value = '';
+  linkOpenInNewTab.value = false;
+  linkTextType.value = 'text';
+  linkUrlType.value = 'url';
+  linkTextImage.value = '';
+  linkUrlImage.value = '';
+  linkTextImageLabel.value = '';
+  linkUrlImageLabel.value = '';
+};
+
+const applySmartLinkImage = (
+  source: SmartLinkUploadSource,
+  payload: { url: string; label?: string },
+) => {
+  const url = String(payload.url || '').trim();
+  if (!url) {
+    return;
+  }
+  const label = String(payload.label || '').trim();
+  if (source === 'smart-link-text-image') {
+    linkTextType.value = 'image';
+    linkText.value = '';
+    linkTextImage.value = url;
+    linkTextImageLabel.value = label;
+    return;
+  }
+  linkUrlType.value = 'image';
+  linkUrl.value = '';
+  linkUrlImage.value = url;
+  linkUrlImageLabel.value = label;
+};
+
+const clearSmartLinkImage = (side: 'text' | 'url') => {
+  if (side === 'text') {
+    linkTextType.value = 'text';
+    linkTextImage.value = '';
+    linkTextImageLabel.value = '';
+    return;
+  }
+  linkUrlType.value = 'url';
+  linkUrlImage.value = '';
+  linkUrlImageLabel.value = '';
+};
+
+const requestSmartLinkImageUpload = (source: SmartLinkUploadSource) => {
+  emit('upload-button-click', source);
+};
 
 const quickIFormModalShow = ref(false);
 const creatingIForm = ref(false);
@@ -877,11 +951,83 @@ const initEditor = async () => {
       },
     });
 
+    const SmartLinkNode = TiptapNodeClass.create({
+      name: SMART_LINK_NODE_TYPE,
+      inline: true,
+      group: 'inline',
+      atom: true,
+      selectable: true,
+      draggable: false,
+      addAttributes() {
+        return {
+          textType: { default: 'text' },
+          textValue: { default: '' },
+          urlType: { default: 'url' },
+          urlValue: { default: '' },
+          target: { default: '_self' },
+        };
+      },
+      parseHTML() {
+        return [{ tag: `span[${SMART_LINK_DATA_ATTR}="true"]` }, { tag: `a[${SMART_LINK_DATA_ATTR}="true"]` }];
+      },
+      renderHTML({ node, HTMLAttributes }: any) {
+        const attrs = normalizeSmartLinkAttrs(node.attrs);
+        if (!attrs) {
+          return ['span', mergeAttributes(HTMLAttributes), ''];
+        }
+
+        const dataset = {
+          [SMART_LINK_DATA_ATTR]: 'true',
+          'data-text-type': attrs.textType,
+          'data-text-value': attrs.textValue,
+          'data-url-type': attrs.urlType,
+          'data-url-value': attrs.urlValue,
+          'data-target': attrs.target,
+          class: 'smart-link-node',
+          contenteditable: 'false',
+        };
+
+        const content = attrs.textType === 'image'
+          ? ['img', {
+            src: attrs.textValue,
+            alt: attrs.textValue,
+            class: 'rich-inline-image smart-link-node__image',
+            [SMART_LINK_IMAGE_ROLE_ATTR]: SMART_LINK_TEXT_IMAGE_ROLE,
+          }]
+          : ['span', { class: 'smart-link-node__text' }, resolveSmartLinkDisplayText(attrs)];
+
+        if (attrs.urlType === 'url') {
+          return [
+            'a',
+            mergeAttributes(HTMLAttributes, dataset, {
+              href: attrs.urlValue,
+              target: attrs.target,
+              rel: 'noopener noreferrer',
+            }),
+            content,
+          ];
+        }
+
+        return [
+          'span',
+          mergeAttributes(HTMLAttributes, dataset, {
+            role: 'button',
+            tabindex: '0',
+          }),
+          content,
+        ];
+      },
+      renderText({ node }: any) {
+        return resolveSmartLinkDisplayText(node.attrs);
+      },
+    });
+
     // 创建编辑器实例
     editor.value = new EditorClass({
       content: props.modelValue || '<p></p>',
       extensions: [
         SatoriMention,
+        SmartLinkNode,
         StarterKit.configure({
           heading: {
             levels: [1, 2, 3],
@@ -1239,50 +1385,150 @@ const getActiveTextColor = () => {
   return attrs?.color || null;
 };
 
-const setLink = () => {
-  const { from, to } = editor.value?.state.selection || { from: 0, to: 0 };
-  const hasSelection = from !== to;
-
-  if (hasSelection) {
-    // 有选中文本，获取选中内容作为默认链接文本
-    const selectedText = editor.value?.state.doc.textBetween(from, to, ' ') || '';
-    linkText.value = selectedText;
-  } else {
-    linkText.value = '';
+const findSelectedSmartLink = () => {
+  const ed = editor.value;
+  if (!ed) {
+    return null as { node: any; pos: number } | null;
   }
-  linkUrl.value = '';
-  linkOpenInNewTab.value = false;
-  linkModalShow.value = true;
+  const { from, to } = ed.state.selection;
+  let result: { node: any; pos: number } | null = null;
+  ed.state.doc.descendants((node: any, pos: number) => {
+    if (node.type?.name !== SMART_LINK_NODE_TYPE) {
+      return true;
+    }
+    const end = pos + node.nodeSize;
+    const overlaps = (pos <= from && from < end)
+      || (pos < to && to <= end)
+      || (from <= pos && end <= to);
+    if (overlaps) {
+      result = { node, pos };
+      return false;
+    }
+    return true;
+  });
+  return result;
 };
 
-const confirmLink = () => {
-  if (!linkUrl.value.trim()) {
-    linkModalShow.value = false;
+const setLink = () => {
+  const selectedSmartLink = findSelectedSmartLink();
+  resetLinkModalState();
+
+  if (selectedSmartLink) {
+    const attrs = normalizeSmartLinkAttrs(selectedSmartLink.node.attrs);
+    if (attrs) {
+      linkTextType.value = attrs.textType;
+      linkUrlType.value = attrs.urlType;
+      linkText.value = attrs.textType === 'text' ? attrs.textValue : '';
+      linkUrl.value = attrs.urlType === 'url' ? attrs.urlValue : '';
+      linkTextImage.value = attrs.textType === 'image' ? attrs.textValue : '';
+      linkUrlImage.value = attrs.urlType === 'image' ? attrs.urlValue : '';
+      linkTextImageLabel.value = attrs.textType === 'image' ? '已选文本图片' : '';
+      linkUrlImageLabel.value = attrs.urlType === 'image' ? '已选目标图片' : '';
+      linkOpenInNewTab.value = attrs.target === '_blank';
+    }
+    linkModalShow.value = true;
     return;
   }
 
-  const url = linkUrl.value.trim();
-  const target = linkOpenInNewTab.value ? '_blank' : '_self';
   const { from, to } = editor.value?.state.selection || { from: 0, to: 0 };
   const hasSelection = from !== to;
-
   if (hasSelection) {
-    // 有选中文本，直接设置链接
-    editor.value?.chain().focus().setLink({ href: url, target }).run();
-  } else {
-    // 没有选中文本，插入带链接的文本
-    const text = linkText.value.trim() || url;
-    editor.value?.chain().focus().insertContent({
-      type: 'text',
-      text: text,
-      marks: [{ type: 'link', attrs: { href: url, target } }],
-    }).run();
+    linkText.value = editor.value?.state.doc.textBetween(from, to, ' ') || '';
+  }
+  linkModalShow.value = true;
+};
+
+const closeLinkModal = () => {
+  linkModalShow.value = false;
+  resetLinkModalState();
+};
+
+const confirmLink = () => {
+  const ed = editor.value;
+  if (!ed) {
+    closeLinkModal();
+    return;
   }
 
-  linkModalShow.value = false;
-  linkText.value = '';
-  linkUrl.value = '';
-  linkOpenInNewTab.value = false;
+  const selectedSmartLink = findSelectedSmartLink();
+  const { from, to } = ed.state.selection;
+  const hasSelection = from !== to;
+  const selectedText = hasSelection ? ed.state.doc.textBetween(from, to, ' ').trim() : '';
+
+  const textType = linkTextType.value;
+  const urlType = linkUrlType.value;
+  const target = linkOpenInNewTab.value ? '_blank' : '_self';
+  const textValue = textType === 'image'
+    ? linkTextImage.value.trim()
+    : (linkText.value.trim() || selectedText);
+  const urlValue = urlType === 'image'
+    ? linkUrlImage.value.trim()
+    : linkUrl.value.trim();
+
+  if (!urlValue) {
+    message.warning(urlType === 'image' ? '请先选择目标图片' : '请输入链接地址');
+    return;
+  }
+
+  if ((textType === 'image' || urlType === 'image') && !textValue) {
+    message.warning(textType === 'image' ? '请先选择链接文本图片' : '请输入链接文本');
+    return;
+  }
+
+  if (textType === 'text' && urlType === 'url') {
+    if (selectedSmartLink) {
+      const tr = ed.state.tr.delete(selectedSmartLink.pos, selectedSmartLink.pos + selectedSmartLink.node.nodeSize);
+      ed.view.dispatch(tr);
+      ed.chain().focus().insertContent({
+        type: 'text',
+        text: textValue || urlValue,
+        marks: [{ type: 'link', attrs: { href: urlValue, target } }],
+      }).run();
+      closeLinkModal();
+      return;
+    }
+
+    if (hasSelection) {
+      ed.chain().focus().setLink({ href: urlValue, target }).run();
+    } else {
+      ed.chain().focus().insertContent({
+        type: 'text',
+        text: textValue || urlValue,
+        marks: [{ type: 'link', attrs: { href: urlValue, target } }],
+      }).run();
+    }
+    closeLinkModal();
+    return;
+  }
+
+  const attrs = normalizeSmartLinkAttrs({
+    textType,
+    textValue,
+    urlType,
+    urlValue,
+    target,
+  });
+  if (!attrs) {
+    message.warning('链接配置不完整');
+    return;
+  }
+
+  if (selectedSmartLink) {
+    const tr = ed.state.tr.setNodeMarkup(selectedSmartLink.pos, undefined, attrs);
+    ed.view.dispatch(tr);
+    closeLinkModal();
+    return;
+  }
+
+  const chain = ed.chain().focus();
+  if (hasSelection) {
+    chain.deleteSelection();
+  }
+  chain.insertContent({
+    type: SMART_LINK_NODE_TYPE,
+    attrs,
+  }).run();
+  closeLinkModal();
 };
 
 const unsetLink = () => {
@@ -1362,6 +1608,7 @@ defineExpose({
   getEditor: () => editor.value,
   getJson: () => editor.value?.getJSON(),
   insertImagePlaceholder,
+  applySmartLinkImage,
   hasOpenOverlay,
   hasRecentOverlayInteraction,
 });
@@ -1678,7 +1925,7 @@ defineExpose({
           <n-button
             size="small"
             text
-            @click="emit('upload-button-click')"
+            @click="emit('upload-button-click', 'rich-editor')"
             title="插入图片"
           >
             🖼
@@ -1870,26 +2117,75 @@ defineExpose({
     >
       <n-form label-placement="top">
         <n-form-item label="链接文本">
-          <n-input
-            v-model:value="linkText"
-            placeholder="显示的文字（可选，留空则显示链接地址）"
-          />
+          <div class="smart-link-modal__field">
+            <n-input
+              v-model:value="linkText"
+              :disabled="linkTextType === 'image'"
+              placeholder="显示的文字（可选，留空则显示链接地址）"
+            />
+            <div class="smart-link-modal__actions">
+              <n-button size="tiny" secondary @click="requestSmartLinkImageUpload('smart-link-text-image')">
+                上传文本图片
+              </n-button>
+              <n-button
+                v-if="linkTextType === 'image'"
+                size="tiny"
+                quaternary
+                @click="clearSmartLinkImage('text')"
+              >
+                改用文字
+              </n-button>
+            </div>
+            <div v-if="linkTextType === 'image' && linkTextImage" class="smart-link-modal__preview">
+              <img :src="linkTextImage" alt="链接文本图片" class="smart-link-modal__preview-image">
+            </div>
+          </div>
         </n-form-item>
         <n-form-item label="链接地址">
-          <n-input
-            v-model:value="linkUrl"
-            placeholder="https://example.com"
-            @keydown.enter="confirmLink"
-          />
+          <div class="smart-link-modal__field">
+            <n-input
+              v-model:value="linkUrl"
+              :disabled="linkUrlType === 'image'"
+              placeholder="https://example.com"
+              @keydown.enter="confirmLink"
+            />
+            <div class="smart-link-modal__actions">
+              <n-button size="tiny" secondary @click="requestSmartLinkImageUpload('smart-link-url-image')">
+                上传目标图片
+              </n-button>
+              <n-button
+                v-if="linkUrlType === 'image'"
+                size="tiny"
+                quaternary
+                @click="clearSmartLinkImage('url')"
+              >
+                改用网址
+              </n-button>
+            </div>
+            <div v-if="linkUrlType === 'image' && linkUrlImage" class="smart-link-modal__preview">
+              <img :src="linkUrlImage" alt="链接目标图片" class="smart-link-modal__preview-image">
+            </div>
+          </div>
         </n-form-item>
-        <n-form-item label="打开方式">
+        <n-form-item v-if="linkUrlType === 'url'" label="打开方式">
           <n-checkbox v-model:checked="linkOpenInNewTab">在新标签页中打开</n-checkbox>
         </n-form-item>
+        <div class="smart-link-modal__note">
+          <div>图片文本 + 普通链接：点击图片打开链接</div>
+          <div>文字文本 + 图片链接：点击文字查看大图</div>
+          <div>图片文本 + 图片链接：点击图片查看目标图</div>
+        </div>
       </n-form>
       <template #footer>
         <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
-          <n-button @click="linkModalShow = false">取消</n-button>
-          <n-button type="primary" @click="confirmLink" :disabled="!linkUrl.trim()">确定</n-button>
+          <n-button @click="closeLinkModal">取消</n-button>
+          <n-button
+            type="primary"
+            @click="confirmLink"
+            :disabled="linkUrlType === 'url' ? !linkUrl.trim() : !linkUrlImage.trim()"
+          >
+            确定
+          </n-button>
         </div>
       </template>
     </n-modal>
@@ -2536,6 +2832,17 @@ defineExpose({
     object-fit: contain;
   }
 
+  .smart-link-node {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .smart-link-node__text {
+    color: #2563eb;
+    text-decoration: underline;
+  }
+
   /* 对齐样式 */
   [style*="text-align: center"] {
     text-align: center;
@@ -2548,6 +2855,57 @@ defineExpose({
   [style*="text-align: justify"] {
     text-align: justify;
   }
+}
+
+.smart-link-modal__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.smart-link-modal__field {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+}
+
+.smart-link-modal__preview {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-width: 0;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--sc-border-secondary, rgba(148, 163, 184, 0.28));
+  border-radius: 0.625rem;
+  background: color-mix(in srgb, var(--sc-bg-elevated, #f8fafc) 90%, var(--primary-color, #3b82f6) 10%);
+}
+
+.smart-link-modal__preview-image {
+  width: 3.25rem;
+  height: 3.25rem;
+  min-width: 3.25rem;
+  min-height: 3.25rem;
+  max-width: 3.25rem;
+  max-height: 3.25rem;
+  object-fit: contain;
+  border-radius: 0.5rem;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+.smart-link-modal__note {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--primary-color, #3b82f6) 8%, transparent);
+  color: var(--sc-text-secondary, #475569);
+  font-size: 0.8125rem;
+  line-height: 1.45;
 }
 
 /* ===== 夜间模式适配 ===== */
@@ -2566,6 +2924,16 @@ defineExpose({
 :root[data-display-palette='night'] .tiptap-editor.whisper-mode {
   background-color: var(--chat-whisper-bg, rgba(76, 29, 149, 0.25));
   border-color: var(--chat-whisper-border, rgba(167, 139, 250, 0.85));
+}
+
+:root[data-display-palette='night'] .smart-link-modal__preview {
+  border-color: var(--sc-border-strong, rgba(82, 82, 91, 0.9));
+  background: color-mix(in srgb, var(--sc-bg-elevated, #27272a) 88%, var(--primary-color, #60a5fa) 12%);
+}
+
+:root[data-display-palette='night'] .smart-link-modal__note {
+  color: var(--sc-text-secondary, #cbd5e1);
+  background: color-mix(in srgb, var(--sc-bg-elevated, #27272a) 86%, var(--primary-color, #60a5fa) 14%);
 }
 
 /* 工具栏夜间模式 */
