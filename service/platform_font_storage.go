@@ -81,12 +81,7 @@ func uploadPlatformFontByBackend(
 	targetBackend storage.BackendType,
 	input storage.UploadInput,
 ) (*storage.UploadResult, error) {
-	switch targetBackend {
-	case storage.BackendS3:
-		return manager.UploadToS3(ctx, input)
-	default:
-		return manager.Upload(ctx, input)
-	}
+	return manager.UploadWithBackend(ctx, targetBackend, input)
 }
 
 func convertFontBackendToModel(backend storage.BackendType) model.StorageType {
