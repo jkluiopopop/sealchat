@@ -18607,21 +18607,21 @@ onBeforeUnmount(() => {
 
   /* 标题样式 */
   h1, h2, h3 {
-    margin: 0.5rem 0 0.25rem;
+    margin: 0.75rem 0 0.45rem;
     font-weight: 600;
     line-height: 1.3;
   }
 
   h1 {
-    font-size: 1.25rem;
+    font-size: 1.75rem;
   }
 
   h2 {
-    font-size: 1.1rem;
+    font-size: 1.5rem;
   }
 
   h3 {
-    font-size: 1rem;
+    font-size: 1.25rem;
   }
 
   /* 列表样式 */
@@ -18682,7 +18682,11 @@ onBeforeUnmount(() => {
   /* 高亮样式 */
   mark {
     background-color: #fef08a;
-    padding: 0.1rem 0.2rem;
+    display: inline;
+    line-height: inherit;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    padding: 0.08em 0.18em;
     border-radius: 0.125rem;
   }
 
@@ -18733,10 +18737,11 @@ onBeforeUnmount(() => {
 
 .preview-content {
   max-width: 100%;
+  line-height: var(--chat-line-height, 1.6);
 
   p {
     margin: 0;
-    line-height: 1.5;
+    line-height: inherit;
   }
 
   p + p {
