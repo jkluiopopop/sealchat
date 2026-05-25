@@ -286,6 +286,10 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
                 : '';
               text = `<span data-platform-font-id="${platformFontId}" data-platform-font-family="${platformFontFamily}"${extraStyle}>${text}</span>`;
             }
+            if (mark.attrs?.fontSize) {
+              const fontSize = escapeHtml(String(mark.attrs.fontSize));
+              text = `<span data-font-size="${fontSize}" style="font-size: ${fontSize} !important">${text}</span>`;
+            }
             if (mark.attrs?.color) {
               const normalizedColor = normalizeCssColor(String(mark.attrs.color));
               if (normalizedColor && !shouldFilterTextColor(normalizedColor)) {
