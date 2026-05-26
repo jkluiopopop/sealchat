@@ -12,6 +12,13 @@ import { useChatStore } from "./chat";
 import { useDisplayStore } from "./display";
 import { useUserStore } from "./user";
 import { applyUITextReplaceConfig } from '@/utils/uiTextReplace';
+import {
+  clearUnreadTitleState,
+  createPageTitleState,
+  replaceChannelTitleState,
+  setChannelTitleState,
+  updateUnreadTitleState,
+} from '@/utils/pageTitleNotificationState';
 
 const resolveDefaultPageTitle = () => {
   if (typeof document === 'undefined') {
@@ -57,37 +64,31 @@ export const applyPageFavicon = (attachmentId?: string | null) => {
   upsertFaviconLink('shortcut icon', href);
 };
 
-// 未读消息数量标题通知
-let _unreadCount = 0;
-let _currentChannelName = ''; // 当前频道名字（作为默认标题）
+let pageTitleState = createPageTitleState(DEFAULT_PAGE_TITLE);
 
 // 设置当前频道名字作为默认标题
 export const setChannelTitle = (channelName: string) => {
   if (typeof document === 'undefined') return;
-  _currentChannelName = channelName;
-  // 只有在没有未读消息时才更新标题
-  if (_unreadCount === 0) {
-    document.title = channelName || DEFAULT_PAGE_TITLE;
-  }
+  pageTitleState = setChannelTitleState(pageTitleState, channelName, DEFAULT_PAGE_TITLE);
+  document.title = pageTitleState.displayedTitle;
+};
+
+export const replaceChannelTitle = (channelName: string) => {
+  if (typeof document === 'undefined') return;
+  pageTitleState = replaceChannelTitleState(pageTitleState, channelName, DEFAULT_PAGE_TITLE);
+  document.title = pageTitleState.displayedTitle;
 };
 
 export const updateUnreadTitleNotification = (count: number, channelName: string) => {
   if (typeof document === 'undefined') return;
-  _unreadCount = count;
-
-  if (count > 0 && channelName) {
-    document.title = `有${count}条新消息 | ${channelName}`;
-  } else {
-    // 恢复为当前频道名字
-    document.title = _currentChannelName || DEFAULT_PAGE_TITLE;
-  }
+  pageTitleState = updateUnreadTitleState(pageTitleState, count, channelName, DEFAULT_PAGE_TITLE);
+  document.title = pageTitleState.displayedTitle;
 };
 
 export const clearUnreadTitleNotification = () => {
   if (typeof document === 'undefined') return;
-  _unreadCount = 0;
-  // 恢复为当前频道名字
-  document.title = _currentChannelName || DEFAULT_PAGE_TITLE;
+  pageTitleState = clearUnreadTitleState(pageTitleState, DEFAULT_PAGE_TITLE);
+  document.title = pageTitleState.displayedTitle;
 };
 
 interface SoundItem {

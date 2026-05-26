@@ -7,7 +7,7 @@ import { debounce } from 'lodash-es';
 import ChatActionRibbon from '@/views/chat/components/ChatActionRibbon.vue';
 import SplitHeader from '@/views/split/components/SplitHeader.vue';
 import SplitChannelSidebar, { type PaneId, type SplitChannelNode } from '@/views/split/components/SplitChannelSidebar.vue';
-import { setChannelTitle } from '@/stores/utils';
+import { replaceChannelTitle } from '@/stores/utils';
 import { useChatStore } from '@/stores/chat';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import { characterApiUnsupportedText } from '@/stores/characterCard';
@@ -352,7 +352,7 @@ const activePaneEmbedPanelHasAttention = computed(() => activePane.value.mode ==
 watch(
   () => [activePaneId.value, activePane.value.channelName] as const,
   () => {
-    setChannelTitle(activePane.value.channelName || '');
+    replaceChannelTitle(activePane.value.channelName || '');
   },
   { immediate: true },
 );
