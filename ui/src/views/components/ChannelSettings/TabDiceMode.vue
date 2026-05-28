@@ -360,40 +360,56 @@ onUnmounted(() => {
               </n-radio>
             </n-space>
           </n-radio-group>
-          <n-select
-            v-if="currentMode === 'bot'"
-            v-model:value="currentBotIds"
-            :options="botSelectOptions"
-            :loading="botOptionsLoading || channelBotsLoading"
-            :disabled="channelSectionDisabled || channelSaving || !hasBotOptions"
-            placeholder="选择要绑定到当前频道的 BOT"
-            clearable
-            multiple
-          />
-          <n-select
-            v-if="currentMode === 'bot' && currentBotIds.length > 0"
-            v-model:value="currentPrimaryBotId"
-            :options="primaryBotSelectOptions"
-            :loading="botOptionsLoading || channelBotsLoading"
-            :disabled="channelSectionDisabled || channelSaving"
-            placeholder="选择主控 BOT"
-            clearable
-          />
-          <n-select
-            v-if="currentMode === 'bot' && currentBotIds.length > 0"
-            v-model:value="currentEventBotIds"
-            :options="eventBotSelectOptions"
-            :loading="botOptionsLoading || channelBotsLoading"
-            :disabled="channelSectionDisabled || channelSaving"
-            placeholder="选择接收频道事件的 BOT"
-            clearable
-            multiple
-          />
+          <div v-if="currentMode === 'bot'" class="tab-dice-mode__bot-config">
+            <div class="tab-dice-mode__intro">
+              BOT 掷骰分 3 步：先把 BOT 绑定到频道，再指定 1 个主控 BOT，最后决定哪些 BOT 接收频道事件。
+            </div>
+            <div class="tab-dice-mode__field">
+              <div class="tab-dice-mode__field-title">1. 频道已绑定 BOT</div>
+              <div class="tab-dice-mode__field-desc">这些 BOT 会加入当前频道。至少选择 1 个，才能启用 BOT 掷骰。</div>
+              <n-select
+                v-model:value="currentBotIds"
+                :options="botSelectOptions"
+                :loading="botOptionsLoading || channelBotsLoading"
+                :disabled="channelSectionDisabled || channelSaving || !hasBotOptions"
+                placeholder="选择要绑定到当前频道的 BOT"
+                clearable
+                multiple
+              />
+            </div>
+            <template v-if="currentBotIds.length > 0">
+              <div class="tab-dice-mode__field">
+                <div class="tab-dice-mode__field-title">2. 主控 BOT</div>
+                <div class="tab-dice-mode__field-desc">负责处理掷骰命令，以及频道里的角色卡相关能力。</div>
+                <n-select
+                  v-model:value="currentPrimaryBotId"
+                  :options="primaryBotSelectOptions"
+                  :loading="botOptionsLoading || channelBotsLoading"
+                  :disabled="channelSectionDisabled || channelSaving"
+                  placeholder="选择主控 BOT"
+                  clearable
+                />
+              </div>
+              <div class="tab-dice-mode__field">
+                <div class="tab-dice-mode__field-title">3. 接收频道事件的 BOT</div>
+                <div class="tab-dice-mode__field-desc">决定哪些 BOT 会收到本频道事件。留空时，默认全部已绑定 BOT 都会接收。</div>
+                <n-select
+                  v-model:value="currentEventBotIds"
+                  :options="eventBotSelectOptions"
+                  :loading="botOptionsLoading || channelBotsLoading"
+                  :disabled="channelSectionDisabled || channelSaving"
+                  placeholder="选择接收频道事件的 BOT"
+                  clearable
+                  multiple
+                />
+              </div>
+            </template>
+          </div>
           <div v-if="currentMode === 'bot' && !botOptionsLoading && !hasBotOptions" class="tab-dice-mode__hint">
             暂无可用机器人令牌，请先在后台创建。
           </div>
           <div v-if="currentMode === 'bot' && currentBotIds.length > 0" class="tab-dice-mode__hint">
-            已绑定 BOT 决定 group 权限；事件接收 BOT 决定哪些 BOT 收到频道事件；主控 BOT 负责命令执行与角色卡能力。
+            频道事件指的是频道中的消息收发与BOT指令。
           </div>
           <div v-if="isPrivateChannel" class="tab-dice-mode__hint">
             私聊频道不支持在这里修改默认掷骰处理方式。
@@ -463,5 +479,35 @@ onUnmounted(() => {
 .tab-dice-mode__hint {
   color: var(--sc-text-secondary);
   font-size: 12px;
+}
+
+.tab-dice-mode__bot-config {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tab-dice-mode__intro {
+  color: var(--sc-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.tab-dice-mode__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tab-dice-mode__field-title {
+  color: var(--sc-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tab-dice-mode__field-desc {
+  color: var(--sc-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
 }
 </style>
