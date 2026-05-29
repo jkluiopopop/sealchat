@@ -2,7 +2,7 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, shallowRef, watch, type CSSProperties } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
-import { LayoutGrid, LayoutList, Search, Star, StarOff } from '@vicons/tabler';
+import { Archive, Compass, LayoutGrid, LayoutList, Plus, Refresh, Search, Star, StarOff, World } from '@vicons/tabler';
 import { useRouter } from 'vue-router';
 import { setLocale, setLocaleByNavigator } from '@/lang';
 import { useI18n } from 'vue-i18n';
@@ -327,6 +327,8 @@ const showPagination = computed(() => activePagination.value.total > activePagin
 
 const viewToggleIcon = computed(() => (viewMode.value === 'list' ? LayoutGrid : LayoutList));
 const viewToggleLabel = computed(() => (viewMode.value === 'list' ? '网格视图' : '列表视图'));
+const lobbyModeIcon = computed(() => (lobbyMode.value === 'mine' ? World : Compass));
+const lobbyModeLabel = computed(() => (lobbyMode.value === 'mine' ? '我的世界' : '探索世界'));
 const canManageLobbyAnnouncements = computed(() => !!user.checkPerm('mod_admin'));
 
 const refreshCurrentMode = async () => {
@@ -344,6 +346,10 @@ const openAnnouncementPanel = () => {
 const openTickerAnnouncementPopup = (item: AnnouncementItem) => {
   announcementPopupItem.value = item;
   announcementPopupVisible.value = true;
+};
+
+const openArchivedWorldsPlaceholder = () => {
+  message.info('归档世界功能开发中');
 };
 
 const resetAndFetchCurrentMode = async () => {
@@ -924,36 +930,117 @@ const handleExplorePageSizeChange = (pageSize: number) => {
           </n-tooltip>
         </n-dropdown>
       </div>
-      <div class="world-lobby-header-buttons">
-        <n-button size="small" quaternary @click="openAnnouncementPanel">
+      <div class="world-lobby-tabs" aria-label="世界大厅导航">
+        <n-button
+          size="small"
+          quaternary
+          class="world-lobby-tab"
+          @click="openAnnouncementPanel"
+        >
           公告
         </n-button>
-        <n-button size="small" quaternary @click="toggleViewMode">
+        <n-button
+          size="small"
+          quaternary
+          class="world-lobby-tab world-lobby-tab--active"
+          @click="switchLobbyMode"
+        >
           <template #icon>
             <n-icon>
-              <component :is="viewToggleIcon" />
+              <component :is="lobbyModeIcon" />
             </n-icon>
           </template>
-          {{ viewToggleLabel }}
+          {{ lobbyModeLabel }}
         </n-button>
-        <n-button size="small" @click="refreshCurrentMode" :loading="loading">
-          刷新
+        <n-button
+          size="small"
+          quaternary
+          class="world-lobby-tab"
+          @click="openArchivedWorldsPlaceholder"
+        >
+          <template #icon>
+            <n-icon>
+              <Archive />
+            </n-icon>
+          </template>
+          归档世界
         </n-button>
-        <n-button size="small" type="primary" @click="createVisible = true" v-if="lobbyMode === 'mine'">
-          创建世界
-        </n-button>
-        <n-button size="small" :type="lobbyMode === 'mine' ? 'tertiary' : 'primary'" @click="switchLobbyMode">
-          {{ lobbyMode === 'mine' ? '探索世界' : '我的世界' }}
-        </n-button>
+      </div>
+      <div class="world-lobby-header-buttons">
+        <div class="world-lobby-header-actions-left">
+          <n-button size="small" quaternary class="world-lobby-desktop-action" @click="openAnnouncementPanel">
+            公告
+          </n-button>
+          <n-button
+            size="small"
+            tertiary
+            class="world-lobby-mode-action world-lobby-desktop-action"
+            @click="switchLobbyMode"
+          >
+            <template #icon>
+              <n-icon>
+                <component :is="lobbyModeIcon" />
+              </n-icon>
+            </template>
+            {{ lobbyModeLabel }}
+          </n-button>
+          <n-button size="small" class="world-lobby-desktop-action" tertiary @click="openArchivedWorldsPlaceholder">
+            <template #icon>
+              <n-icon>
+                <Archive />
+              </n-icon>
+            </template>
+            归档世界
+          </n-button>
+          <n-button
+            size="small"
+            quaternary
+            class="world-lobby-icon-action"
+            :aria-label="viewToggleLabel"
+            @click="toggleViewMode"
+          >
+            <template #icon>
+              <n-icon>
+                <component :is="viewToggleIcon" />
+              </n-icon>
+            </template>
+          </n-button>
+          <n-button
+            size="small"
+            quaternary
+            class="world-lobby-icon-action"
+            aria-label="刷新"
+            @click="refreshCurrentMode"
+            :loading="loading"
+          >
+            <template #icon>
+              <n-icon>
+                <Refresh />
+              </n-icon>
+            </template>
+          </n-button>
+        </div>
+        <div class="world-lobby-header-actions-right">
+          <n-button size="small" type="primary" class="world-lobby-create-btn" @click="createVisible = true">
+            <template #icon>
+              <n-icon>
+                <Plus />
+              </n-icon>
+            </template>
+            创建世界
+          </n-button>
+        </div>
       </div>
     </div>
 
-    <WorldLobbyAnnouncementTicker @open-announcement="openTickerAnnouncementPopup" />
+    <div class="world-lobby-announcement-banner">
+      <WorldLobbyAnnouncementTicker @open-announcement="openTickerAnnouncementPopup" />
+    </div>
 
     <div class="world-toolbar-row">
       <n-input
         v-model:value="searchKeyword"
-        size="small"
+        size="medium"
         clearable
         placeholder="搜索世界或频道"
         @keyup.enter="handleSearch"
@@ -965,12 +1052,11 @@ const handleExplorePageSizeChange = (pageSize: number) => {
           </n-icon>
         </template>
       </n-input>
-      <n-button size="small" type="primary" @click="handleSearch" :loading="loading">搜索</n-button>
     </div>
 
-    <div class="world-toolbar-row">
-      <n-input v-model:value="inviteSlug" size="small" placeholder="输入邀请码" />
-      <n-button size="small" type="primary" :loading="joining" @click="consumeInvite">通过邀请码加入</n-button>
+    <div class="world-toolbar-row world-toolbar-row--invite">
+      <n-input v-model:value="inviteSlug" size="medium" placeholder="输入邀请码" @keyup.enter="consumeInvite" />
+      <n-button size="medium" secondary :loading="joining" @click="consumeInvite">加入</n-button>
     </div>
 
     <template v-if="viewMode === 'list'">
@@ -1371,13 +1457,63 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   justify-content: flex-end;
 }
 
+.world-lobby-tabs {
+  min-width: 0;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.world-lobby-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.world-lobby-tab {
+  flex: 0 0 auto;
+  color: var(--sc-text-secondary);
+}
+
+.world-lobby-tab--active {
+  color: var(--sc-text-primary);
+}
+
 .world-lobby-header-buttons {
   justify-self: end;
   min-width: 0;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.world-lobby-header-actions-left,
+.world-lobby-header-actions-right {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.world-lobby-icon-action {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+}
+
+.world-lobby-announcement-banner {
+  min-height: 0;
+  border: 1px solid color-mix(in srgb, var(--sc-border-strong) 34%, transparent);
+  border-radius: 10px;
+  padding: 4px 8px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, #3388de 12%, var(--sc-bg-layer-strong)),
+      color-mix(in srgb, var(--sc-bg-surface) 94%, #3388de)
+    );
 }
 
 .world-toolbar-row {
@@ -1389,6 +1525,14 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 .world-toolbar-row :deep(.n-input) {
   flex: 1;
   min-width: 220px;
+}
+
+.world-toolbar-row :deep(.n-input-wrapper) {
+  background: color-mix(in srgb, var(--sc-bg-layer-strong) 88%, var(--sc-bg-surface));
+}
+
+.world-toolbar-row--invite :deep(.n-button) {
+  min-width: 82px;
 }
 
 .sc-card-scroll {
@@ -1687,18 +1831,56 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 }
 
 @media (max-width: 640px) {
+  .world-lobby-root {
+    gap: 14px;
+    padding: 14px !important;
+  }
+
   .world-lobby-header {
     grid-template-columns: 1fr auto;
-    row-gap: 8px;
+    row-gap: 10px;
+  }
+
+  .world-lobby-header h2 {
+    min-width: 0;
+  }
+
+  .world-lobby-tabs {
+    display: flex;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    order: 2;
+    width: 100%;
+    padding-bottom: 2px;
   }
 
   .world-lobby-header-buttons {
     grid-column: 1 / -1;
+    grid-row: 3;
+    width: 100%;
     justify-self: stretch;
+    justify-content: space-between;
     flex-wrap: nowrap;
-    overflow-x: auto;
+    overflow: visible;
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
+    gap: 6px;
+  }
+
+  .world-lobby-header-actions-left,
+  .world-lobby-header-actions-right {
+    gap: 6px;
+  }
+
+  .world-lobby-header-actions-left {
+    flex: 0 0 auto;
+    min-width: max-content;
+  }
+
+  .world-lobby-header-actions-right {
+    flex: 0 0 auto;
+    justify-content: flex-end;
+    min-width: max-content;
   }
 
   .world-lobby-header-buttons::-webkit-scrollbar {
@@ -1710,9 +1892,44 @@ const handleExplorePageSizeChange = (pageSize: number) => {
     white-space: nowrap;
   }
 
+  .world-lobby-desktop-action {
+    display: none;
+  }
+
+  .world-lobby-icon-action {
+    width: 34px;
+    min-width: 34px;
+  }
+
+  .world-lobby-create-btn {
+    margin-left: auto;
+    min-width: max-content;
+    max-width: 132px;
+  }
+
+  .world-lobby-create-btn :deep(.n-button__content) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .world-lobby-announcement-banner {
+    padding: 5px 8px;
+  }
+
   .world-toolbar-row {
-    flex-direction: column;
+    flex-direction: row;
     align-items: stretch;
+    gap: 8px;
+  }
+
+  .world-toolbar-row :deep(.n-input) {
+    min-width: 0;
+  }
+
+  .world-toolbar-row--invite :deep(.n-button) {
+    flex: 0 0 76px;
+    min-width: 76px;
   }
 
   .world-row {
