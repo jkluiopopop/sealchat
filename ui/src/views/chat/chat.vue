@@ -459,7 +459,7 @@ const inputIcMode = computed<'ic' | 'ooc'>({
     } else {
       const channelId = chat.curChannel?.id || '';
       const previousIdentityId = channelId ? chat.getActiveIdentityId(channelId) : '';
-      chat.icMode = mode;
+      chat.setIcMode(mode, channelId);
       // 触发自动角色切换
       chat.autoSwitchRoleOnIcOocChange(mode);
       const nextIdentityId = channelId ? chat.getActiveIdentityId(channelId) : '';
