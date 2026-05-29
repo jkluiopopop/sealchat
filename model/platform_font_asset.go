@@ -32,7 +32,6 @@ type PlatformFontAsset struct {
 	SubsetObjectKey     string                   `json:"subsetObjectKey"`
 	ManifestStorageType StorageType              `json:"manifestStorageType" gorm:"type:varchar(16)"`
 	ManifestObjectKey   string                   `json:"manifestObjectKey"`
-	PreviewText         string                   `json:"previewText"`
 	SourceFileName      string                   `json:"sourceFileName"`
 	SourceMimeType      string                   `json:"sourceMimeType"`
 	SourceSize          int64                    `json:"sourceSize"`
