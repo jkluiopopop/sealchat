@@ -8,6 +8,13 @@ export type StatusMetricKey =
   | 'attachmentCount'
   | 'attachmentBytes';
 
+export type StatusMetricValueKey =
+  | StatusMetricKey
+  | 'attachmentImageCount'
+  | 'attachmentImageBytes'
+  | 'attachmentFontCount'
+  | 'attachmentFontBytes';
+
 export interface StatusHistoryPoint {
   timestamp: number;
   concurrentConnections: number;
@@ -20,6 +27,16 @@ export interface StatusHistoryPoint {
   messageCount?: number;
   attachmentCount: number;
   attachmentBytes: number;
+  attachmentImageCount?: number;
+  attachmentImageBytes?: number;
+  attachmentFontCount?: number;
+  attachmentFontBytes?: number;
+}
+
+export interface StatusMetricSeriesDefinition {
+  key: StatusMetricValueKey;
+  label: string;
+  color: string;
 }
 
 export interface StatusMetricDefinition {
@@ -27,6 +44,7 @@ export interface StatusMetricDefinition {
   label: string;
   color: string;
   format: (value: number) => string;
+  series?: StatusMetricSeriesDefinition[];
 }
 
 export interface StatusMetricHistoryRow {
@@ -102,12 +120,20 @@ export const statusMetricDefinitions: Record<StatusMetricKey, StatusMetricDefini
     label: '附件数量',
     color: '#0ea5e9',
     format: formatStatusNumber,
+    series: [
+      { key: 'attachmentImageCount', label: '图片附件', color: '#0ea5e9' },
+      { key: 'attachmentFontCount', label: '字体附件', color: '#8b5cf6' },
+    ],
   },
   attachmentBytes: {
     key: 'attachmentBytes',
     label: '附件总大小',
     color: '#ca8a04',
     format: formatStatusBytes,
+    series: [
+      { key: 'attachmentImageBytes', label: '图片附件', color: '#ca8a04' },
+      { key: 'attachmentFontBytes', label: '字体附件', color: '#14b8a6' },
+    ],
   },
 };
 
@@ -122,7 +148,9 @@ export function buildMetricHistoryRows(
     .slice(-limit)
     .reverse()
     .map((point) => {
-      const value = point[metric.key] || 0;
+      const value = metric.series?.length
+        ? metric.series.reduce((sum, item) => sum + Number(point[item.key] || 0), 0)
+        : point[metric.key] || 0;
       return {
         timestamp: point.timestamp,
         value,

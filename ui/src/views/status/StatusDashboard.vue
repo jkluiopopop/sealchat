@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import type { CSSProperties } from 'vue';
 import dayjs from 'dayjs';
 import { useMessage } from 'naive-ui';
 import { api } from '@/stores/_config';
@@ -16,6 +17,7 @@ import {
   type StatusFilterMode,
   type StatusHistoryPoint,
   type StatusHistoryQuery,
+  type StatusMetricKey,
 } from './status-history';
 
 interface StatusSummary {
@@ -41,6 +43,10 @@ interface StatusSummary {
   messageCharCountOoc: number;
   attachmentCount: number;
   attachmentBytes: number;
+  attachmentImageCount?: number;
+  attachmentImageBytes?: number;
+  attachmentFontCount?: number;
+  attachmentFontBytes?: number;
   intervalSeconds: number;
   retentionDays: number;
 }
@@ -64,7 +70,7 @@ const historyLoading = ref(false);
 const refreshTimer = ref<number | null>(null);
 const historyFilterMode = ref<StatusFilterMode>('1h');
 const customRange = ref<[number, number] | null>(null);
-const expandedMetricKey = ref<string | null>(null);
+const expandedMetricKey = ref<StatusMetricKey | null>(null);
 let historyRequestSeq = 0;
 
 const lastUpdatedText = computed(() => {
@@ -142,8 +148,27 @@ const summaryCards = computed<StatusCard[]>(() => {
         { label: '外', value: formatStatusNumber(data.messageCharCountOoc) },
       ],
     },
-    { label: '附件数量', value: formatStatusNumber(data.attachmentCount), hint: '附件目录内文件数量' },
-    { label: '附件总大小', value: formatStatusBytes(data.attachmentBytes), hint: '附件目录占用空间' },
+    {
+      label: '附件数量',
+      value: formatStatusNumber(data.attachmentCount),
+      hint: '正式图片附件与平台字体资源数量',
+      variant: 'metric',
+      breakdowns: [
+        { label: '图', value: formatStatusNumber(data.attachmentImageCount) },
+        { label: '字', value: formatStatusNumber(data.attachmentFontCount) },
+      ],
+    },
+    {
+      label: '附件总大小',
+      value: formatStatusBytes(data.attachmentBytes),
+      hint: '正式图片附件与平台字体资源大小',
+      variant: 'metric',
+      compactValue: true,
+      breakdowns: [
+        { label: '图', value: formatStatusBytes(data.attachmentImageBytes) },
+        { label: '字', value: formatStatusBytes(data.attachmentFontBytes) },
+      ],
+    },
   ];
 });
 
@@ -167,7 +192,7 @@ const customRangeText = computed(() => {
   return `${dayjs(customRange.value[0]).format('YYYY-MM-DD HH:mm')} ~ ${dayjs(customRange.value[1]).format('YYYY-MM-DD HH:mm')}`;
 });
 
-const expandedOverlayPanelStyle = {
+const expandedOverlayPanelStyle: CSSProperties = {
   position: 'fixed',
   inset: '0',
   width: '100vw',
@@ -176,7 +201,7 @@ const expandedOverlayPanelStyle = {
   minHeight: '100vh',
 };
 
-const expandedOverlayStyle = {
+const expandedOverlayStyle: CSSProperties = {
   position: 'fixed',
   inset: '0',
   zIndex: '5000',

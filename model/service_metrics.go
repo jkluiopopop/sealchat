@@ -26,6 +26,10 @@ type ServiceMetricSample struct {
 	MessageCharCountOOC   int64     `json:"messageCharCountOoc"`
 	AttachmentCount       int64     `json:"attachmentCount"`
 	AttachmentBytes       int64     `json:"attachmentBytes"`
+	AttachmentImageCount  int64     `json:"attachmentImageCount"`
+	AttachmentImageBytes  int64     `json:"attachmentImageBytes"`
+	AttachmentFontCount   int64     `json:"attachmentFontCount"`
+	AttachmentFontBytes   int64     `json:"attachmentFontBytes"`
 	CreatedAt             time.Time `json:"createdAt"`
 }
 

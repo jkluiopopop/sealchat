@@ -21,6 +21,11 @@ const chartVisible = ref(false);
 let observer: IntersectionObserver | null = null;
 const latestValueText = computed(() => {
   const latestPoint = props.points[props.points.length - 1];
+  if (props.metric.series?.length) {
+    return props.metric.series
+      .map((item) => `${item.label} ${props.metric.format(Number(latestPoint?.[item.key] || 0))}`)
+      .join(' / ');
+  }
   return props.metric.format(latestPoint?.[props.metric.key] || 0);
 });
 

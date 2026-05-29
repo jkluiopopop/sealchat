@@ -5,11 +5,11 @@ import { useDisplayStore } from '@/stores/display';
 import { useECharts } from '@/composables/useECharts';
 import * as echarts from 'echarts/core';
 import { LineChart } from 'echarts/charts';
-import { GridComponent, TooltipComponent, DataZoomComponent } from 'echarts/components';
+import { GridComponent, TooltipComponent, DataZoomComponent, LegendComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { StatusHistoryPoint, StatusMetricDefinition } from '../status-history';
 
-echarts.use([LineChart, GridComponent, TooltipComponent, DataZoomComponent, CanvasRenderer]);
+echarts.use([LineChart, GridComponent, TooltipComponent, DataZoomComponent, LegendComponent, CanvasRenderer]);
 
 const props = defineProps<{
   metric: StatusMetricDefinition;
@@ -71,10 +71,24 @@ const chartOption = computed(() => {
   }
 
   const labels = props.points.map((point) => dayjs(point.timestamp).format(timeLabelFormat.value));
-  const values = props.points.map((point) => point[props.metric.key] || 0);
+  const seriesDefs = props.metric.series?.length
+    ? props.metric.series
+    : [{ key: props.metric.key, label: props.metric.label, color: props.metric.color }];
+  const seriesColors = seriesDefs.map((item) => item.color);
 
   return {
     backgroundColor: 'transparent',
+    color: seriesColors,
+    legend: seriesDefs.length > 1 ? {
+      top: 0,
+      right: '3%',
+      textStyle: {
+        color: chartColors.value.textColor,
+        fontSize: 11,
+      },
+      itemWidth: 16,
+      itemHeight: 8,
+    } : undefined,
     tooltip: {
       trigger: 'axis',
       axisPointer: {
@@ -89,7 +103,7 @@ const chartOption = computed(() => {
     grid: {
       left: '3%',
       right: '3%',
-      top: 18,
+      top: seriesDefs.length > 1 ? 34 : 18,
       bottom: props.points.length > 24 ? 72 : 28,
       containLabel: true,
     },
@@ -124,27 +138,26 @@ const chartOption = computed(() => {
         },
       },
     },
-    series: [
-      {
-        type: 'line',
-        smooth: true,
-        showSymbol: false,
-        data: values,
-        lineStyle: {
-          color: props.metric.color,
-          width: 2,
-        },
-        itemStyle: {
-          color: props.metric.color,
-        },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: `${props.metric.color}66` },
-            { offset: 1, color: chartColors.value.areaEndColor },
-          ]),
-        },
+    series: seriesDefs.map((item) => ({
+      name: item.label,
+      type: 'line',
+      smooth: true,
+      showSymbol: false,
+      data: props.points.map((point) => point[item.key] || 0),
+      lineStyle: {
+        color: item.color,
+        width: 2,
       },
-    ],
+      itemStyle: {
+        color: item.color,
+      },
+      areaStyle: {
+        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: `${item.color}44` },
+          { offset: 1, color: chartColors.value.areaEndColor },
+        ]),
+      },
+    })),
   };
 });
 
