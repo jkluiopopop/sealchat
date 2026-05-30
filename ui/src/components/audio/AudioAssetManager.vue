@@ -1325,8 +1325,8 @@ function confirmDeleteFolder() {
       try {
         await audio.deleteFolder(currentFolder.value!.id);
         message.success('文件夹已删除');
-      } catch (err) {
-        message.error('删除文件夹失败');
+      } catch (err: any) {
+        message.error(err?.response?.data?.message || err?.message || '删除文件夹失败');
         console.warn(err);
       }
     },

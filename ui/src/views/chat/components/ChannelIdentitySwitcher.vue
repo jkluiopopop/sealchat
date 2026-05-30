@@ -498,7 +498,7 @@ const handleSelect = async (key: string | number) => {
   }
   try {
     await cardStore.syncCardForIdentity(channelId, String(key), {
-      preserveWhenUnbound: false,
+      preserveWhenUnbound: true,
     });
   } catch (e) {
     console.warn('Failed to sync character card for identity', e);

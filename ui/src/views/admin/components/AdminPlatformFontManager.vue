@@ -9,6 +9,7 @@ import {
   uploadAdminPlatformFontSubsetPackage,
 } from '@/services/font/platformFontApi'
 import { inferFontFamilyFromFilename, sanitizeFontFamilyName } from '@/services/font/fontUtils'
+import { copyTextWithResult } from '@/utils/clipboard'
 import {
   getPlatformFontSplitCapability,
   splitPlatformFontFile,
@@ -31,7 +32,6 @@ const draftDisplayName = ref('')
 const draftFamily = ref('')
 const draftWeight = ref('400')
 const draftStyle = ref<'normal' | 'italic'>('normal')
-const draftPreviewText = ref('永字八法')
 const selectedFile = ref<File | null>(null)
 const splitCapability = ref<PlatformFontSplitCapability>({
   available: false,
@@ -39,10 +39,6 @@ const splitCapability = ref<PlatformFontSplitCapability>({
 })
 
 const readyCount = computed(() => items.value.filter((item) => item.status === 'ready').length)
-const buildPreviewFontFamily = (family?: string) => {
-  const normalized = sanitizeFontFamilyName(family || '')
-  return normalized ? `"${normalized}", inherit` : undefined
-}
 
 const resetDraft = () => {
   selectedFile.value = null
@@ -50,7 +46,6 @@ const resetDraft = () => {
   draftFamily.value = ''
   draftWeight.value = '400'
   draftStyle.value = 'normal'
-  draftPreviewText.value = '永字八法'
 }
 
 const reload = async () => {
@@ -112,7 +107,6 @@ const buildCreatePayload = () => {
     family: sanitizeFontFamilyName(draftFamily.value) || inferFontFamilyFromFilename(selectedFile.value.name),
     weight: draftWeight.value.trim() || '400',
     style: draftStyle.value,
-    previewText: draftPreviewText.value.trim() || '永字八法',
   }
 }
 
@@ -196,6 +190,13 @@ const handleDelete = async (item: PlatformFontAsset) => {
   }
 }
 
+const copyFontId = async (item: PlatformFontAsset) => {
+  await copyTextWithResult(item.id, {
+    onSuccess: () => message.success('字体 ID 已复制'),
+    onFailure: () => message.error('复制字体 ID 失败'),
+  })
+}
+
 onMounted(() => {
   void reload()
   void refreshSplitCapability()
@@ -254,7 +255,6 @@ onMounted(() => {
             { label: '斜体 italic', value: 'italic' },
           ]"
         />
-        <n-input v-model:value="draftPreviewText" placeholder="预览文案" />
         <div class="platform-font-manager__upload-actions">
           <n-button secondary :disabled="uploading" @click="triggerFileSelect">选择字体文件</n-button>
           <span class="platform-font-manager__file-name">{{ selectedFile?.name || '未选择文件' }}</span>
@@ -297,8 +297,9 @@ onMounted(() => {
             </div>
           </div>
           <p class="platform-font-manager__family">{{ item.family }}</p>
-          <p class="platform-font-manager__preview" :style="{ fontFamily: buildPreviewFontFamily(item.family) }">
-            {{ item.previewText || '永字八法' }}
+          <p class="platform-font-manager__font-id">
+            <span>字体 ID：{{ item.id }}</span>
+            <n-button size="tiny" quaternary @click="copyFontId(item)">复制 ID</n-button>
           </p>
           <p class="platform-font-manager__meta">
             {{ item.sourceFileName || '未知文件' }} · {{ item.sourceMimeType || '未知类型' }} · {{ item.sourceSize || 0 }} B · 分片数 {{ item.subsetCount || 0 }}
@@ -436,6 +437,7 @@ onMounted(() => {
 }
 
 .platform-font-manager__family,
+.platform-font-manager__font-id,
 .platform-font-manager__meta,
 .platform-font-manager__error {
   margin: 6px 0 0;
@@ -446,10 +448,11 @@ onMounted(() => {
   color: var(--sc-text-secondary);
 }
 
-.platform-font-manager__preview {
-  margin: 8px 0 0;
-  font-size: 20px;
-  line-height: 1.4;
+.platform-font-manager__font-id {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .platform-font-manager__meta {

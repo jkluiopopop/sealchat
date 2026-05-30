@@ -23,6 +23,7 @@ import { mergeCharacterApiRuntimeStateIntoChannels } from './chatChannelRuntimeS
 import { findChannelByIdFromTree, findFirstEnterableChannel, isDeletedChannelForAccess } from './chatChannelSelection';
 import { addWhisperTargetUnique } from './whisperTargetSelection';
 import { parseLastChannelByWorldMap, resolvePreferredChannelForWorld, updateLastChannelByWorldMap } from './chatWorldChannelSession';
+import { normalizeStoredChannelIcOocMode, resolveChannelRestorePreference, type StoredChannelIcOocMode } from '@/utils/channelSessionRestore';
 import { resolveWindowFocusState } from '@/utils/windowFocusState';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
@@ -147,7 +148,8 @@ interface ChatState {
   observerSlug: string,
   joinedWorldIds: string[],
   worldListCache: { items: any[]; total: number; page: number; pageSize: number } | null,
-  worldLobbyMode: 'mine' | 'explore',
+  archivedWorldCache: { items: any[]; total: number; page: number; pageSize: number } | null,
+  worldLobbyMode: 'mine' | 'explore' | 'archive',
   myWorldCache: { owned: any[]; joined: any[] },
   exploreWorldCache: { items: any[]; total: number; page: number; pageSize: number } | null,
   worldMap: Record<string, any>,
@@ -241,6 +243,7 @@ interface ChatState {
   botListCache: PaginationListResponse<UserInfo> | null;
   botListCacheUpdatedAt: number;
   favoriteWorldIds: string[];
+  archivedWorldIds: string[];
   channelIcOocRoleConfig: Record<string, ChannelIcOocRoleConfig>;
   // 临时显示的归档频道（查看归档频道时使用，切换后清除）
   temporaryArchivedChannel: SChannel | null;
@@ -347,6 +350,7 @@ const buildChannelIdentityScopeKey = (channelId: string, targetUserId?: string |
 };
 const getChannelIdentityStorageKey = (scopeKey: string) => `channelIdentity:${scopeKey}`;
 const getChannelIdentityVariantStorageKey = (scopeKey: string, identityId: string) => `channelIdentityVariant:${scopeKey}:${identityId}`;
+const getChannelIcOocModeStorageKey = (scopeKey: string) => `channelIcOocMode:${scopeKey}`;
 const EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG: ChannelIcOocRoleConfig = Object.freeze({ icRoleId: null, oocRoleId: null });
 
 const readChannelIdentityFromStorage = (scopeKey: string): string => {
@@ -398,6 +402,28 @@ const writeChannelIdentityVariantToStorage = (scopeKey: string, identityId: stri
       return;
     }
     localStorage.setItem(key, variantId);
+  } catch {
+    // ignore storage failures
+  }
+};
+
+const readChannelIcOocModeFromStorage = (scopeKey: string): StoredChannelIcOocMode => {
+  if (typeof window === 'undefined' || !scopeKey) {
+    return 'ic';
+  }
+  try {
+    return normalizeStoredChannelIcOocMode(localStorage.getItem(getChannelIcOocModeStorageKey(scopeKey)));
+  } catch {
+    return 'ic';
+  }
+};
+
+const writeChannelIcOocModeToStorage = (scopeKey: string, mode: 'ic' | 'ooc') => {
+  if (typeof window === 'undefined' || !scopeKey) {
+    return;
+  }
+  try {
+    localStorage.setItem(getChannelIcOocModeStorageKey(scopeKey), normalizeStoredChannelIcOocMode(mode));
   } catch {
     // ignore storage failures
   }
@@ -929,13 +955,41 @@ let channelMembersCountRefreshTimer: ReturnType<typeof setInterval> | null = nul
 let channelListRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let focusListenersBound = false;
 let channelTreeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-const scheduleChannelTreeRefresh = (chat: any) => {
-  if (!chat?.currentWorldId) return;
+const resolveActiveWorldId = (chat: any): string => {
+  if (!chat) return '';
+  if (chat.observerMode) {
+    return String(chat.observerWorldId || chat.currentWorldId || '').trim();
+  }
+  return String(chat.currentWorldId || '').trim();
+};
+
+const invalidateChannelTreeCache = (chat: any, worldId: string) => {
+  const normalizedWorldId = String(worldId || '').trim();
+  if (!chat || !normalizedWorldId) return;
+  if (chat.channelTreeByWorld?.[normalizedWorldId]) {
+    const nextTreeByWorld = { ...chat.channelTreeByWorld };
+    delete nextTreeByWorld[normalizedWorldId];
+    chat.channelTreeByWorld = nextTreeByWorld;
+  }
+  if (chat.favoriteChannelCandidatesByWorld?.[normalizedWorldId]) {
+    const nextFavoriteMap = { ...chat.favoriteChannelCandidatesByWorld };
+    delete nextFavoriteMap[normalizedWorldId];
+    chat.favoriteChannelCandidatesByWorld = nextFavoriteMap;
+  }
+  chat.channelTreeReady = {
+    ...chat.channelTreeReady,
+    [normalizedWorldId]: false,
+  };
+};
+
+const scheduleChannelTreeRefresh = (chat: any, worldId?: string) => {
+  const targetWorldId = String(worldId || resolveActiveWorldId(chat) || '').trim();
+  if (!targetWorldId) return;
   if (channelTreeRefreshTimer) return;
   channelTreeRefreshTimer = setTimeout(() => {
     channelTreeRefreshTimer = null;
-    if (chat.currentWorldId) {
-      void chat.channelList(chat.currentWorldId, true);
+    if (resolveActiveWorldId(chat) === targetWorldId) {
+      void chat.channelList(targetWorldId, true);
     }
   }, 150);
 };
@@ -1053,10 +1107,11 @@ export const useChatStore = defineStore({
     observerWorldId: '',
     observerChannelId: '',
     observerSlug: '',
-    joinedWorldIds: [],
-    worldListCache: null,
-    worldLobbyMode: 'mine',
-    myWorldCache: { owned: [], joined: [] },
+	    joinedWorldIds: [],
+	    worldListCache: null,
+	    archivedWorldCache: null,
+	    worldLobbyMode: 'mine',
+	    myWorldCache: { owned: [], joined: [] },
     exploreWorldCache: null,
     worldMap: {},
     worldDetailMap: {},
@@ -1145,7 +1200,7 @@ export const useChatStore = defineStore({
     channelMemberPermMap: {},
     botListCache: null,
     botListCacheUpdatedAt: 0,
-    favoriteWorldIds: (() => {
+	    favoriteWorldIds: (() => {
       if (typeof window === 'undefined') return [];
       try {
         const stored = localStorage.getItem('favoriteWorldIds');
@@ -1154,8 +1209,9 @@ export const useChatStore = defineStore({
         console.warn('parse favoriteWorldIds failed', err);
         return [];
       }
-    })(),
-    channelIcOocRoleConfig: {},
+	    })(),
+	    archivedWorldIds: [],
+	    channelIcOocRoleConfig: {},
     temporaryArchivedChannel: null,
     multiSelect: null,
     firstUnreadInfo: null,
@@ -1889,9 +1945,9 @@ export const useChatStore = defineStore({
       return !!this.currentWorldId;
     },
 
-    async worldList(params?: { page?: number; pageSize?: number; joined?: boolean; keyword?: string }) {
-      const resp = await api.get('/api/v1/worlds', { params });
-      const data = resp.data;
+	    async worldList(params?: { page?: number; pageSize?: number; joined?: boolean; keyword?: string; archived?: boolean; includeArchived?: boolean }) {
+	      const resp = await api.get('/api/v1/worlds', { params });
+	      const data = resp.data;
       if (Array.isArray(data?.items)) {
         data.items.forEach((item: any) => {
           if (item?.world?.id) {
@@ -1899,13 +1955,20 @@ export const useChatStore = defineStore({
           }
         });
       }
-      if (Array.isArray(data?.favoriteWorldIds)) {
-        this.favoriteWorldIds = data.favoriteWorldIds;
-        this.persistFavoriteWorlds();
-      }
-      this.worldListCache = data;
-      return data;
-    },
+	      if (Array.isArray(data?.favoriteWorldIds)) {
+	        this.favoriteWorldIds = data.favoriteWorldIds;
+	        this.persistFavoriteWorlds();
+	      }
+	      if (Array.isArray(data?.archivedWorldIds)) {
+	        this.archivedWorldIds = data.archivedWorldIds;
+	      }
+	      if (params?.archived) {
+	        this.archivedWorldCache = data;
+	      } else {
+	        this.worldListCache = data;
+	      }
+	      return data;
+	    },
 
     async worldListExplore(params?: { page?: number; pageSize?: number; keyword?: string; visibility?: string; joined?: boolean }) {
       const resp = await api.get('/api/v1/worlds', {
@@ -1934,8 +1997,10 @@ export const useChatStore = defineStore({
       description?: string;
       visibility?: string;
       avatar?: string;
-      channelDefaultDiceMode?: 'builtin' | 'bot';
+      channelDefaultDiceMode?: 'builtin' | 'bot' | 'disabled';
+      channelDefaultBotIds?: string[];
       channelDefaultBotId?: string;
+      channelDefaultEventBotIds?: string[];
     }) {
       const resp = await api.post('/api/v1/worlds', payload);
       const worldId = resp.data.world?.id;
@@ -1964,15 +2029,31 @@ export const useChatStore = defineStore({
       return ids;
     },
 
-    async toggleWorldFavorite(worldId: string) {
+	    async toggleWorldFavorite(worldId: string) {
       if (!worldId) return;
       const willFavorite = !this.favoriteWorldIds.includes(worldId);
       const resp = await api.post('/api/v1/worlds/' + worldId + '/favorite', { favorite: willFavorite });
       const ids: string[] = resp.data?.worldIds || [];
       this.favoriteWorldIds = ids;
       this.persistFavoriteWorlds();
-      return ids;
-    },
+	      return ids;
+	    },
+
+	    async archiveWorld(worldId: string) {
+	      const resp = await api.post(`/api/v1/worlds/${worldId}/archive`, {});
+	      if (!this.archivedWorldIds.includes(worldId)) {
+	        this.archivedWorldIds.push(worldId);
+	      }
+	      this.joinedWorldIds = this.joinedWorldIds.filter(id => id !== worldId);
+	      return resp.data;
+	    },
+
+	    async restoreArchivedWorld(worldId: string) {
+	      const resp = await api.delete(`/api/v1/worlds/${worldId}/archive`);
+	      this.archivedWorldIds = this.archivedWorldIds.filter(id => id !== worldId);
+	      await this.refreshJoinedWorldState();
+	      return resp.data;
+	    },
 
     isWorldFavorited(worldId: string) {
       return this.favoriteWorldIds.includes(worldId);
@@ -2056,8 +2137,10 @@ export const useChatStore = defineStore({
       allowManageOtherUserChannelIdentities?: boolean;
       allowMemberEditKeywords?: boolean;
       strictWhisperPrivacy?: boolean;
-      channelDefaultDiceMode?: 'builtin' | 'bot';
+      channelDefaultDiceMode?: 'builtin' | 'bot' | 'disabled';
+      channelDefaultBotIds?: string[];
       channelDefaultBotId?: string;
+      channelDefaultEventBotIds?: string[];
       characterCardBadgeTemplate?: string;
     }) {
       const resp = await api.patch(`/api/v1/worlds/${worldId}`, payload);
@@ -2389,6 +2472,7 @@ export const useChatStore = defineStore({
           this.observerChannelId = id;
           writeObserverSessionChannel(this.observerSlug, this.observerWorldId || this.currentWorldId, id);
           persistLastChannelForWorld(this.observerWorldId || this.currentWorldId, id);
+          this.setIcMode(this.resolveStoredChannelIcOocMode(id), id);
           this.setChannelUnreadCount(id, 0);
           if (isStale()) {
             return true;
@@ -2445,6 +2529,7 @@ export const useChatStore = defineStore({
       }
 
       persistLastChannelForWorld(this.currentWorldId, id);
+      this.setIcMode(this.resolveStoredChannelIcOocMode(id), id);
       this.setChannelUnreadCount(id, 0);
       this.setChannelMentionState(id, false);
       this.curChannelUsers = [];
@@ -2530,6 +2615,69 @@ export const useChatStore = defineStore({
       }
       this.channelList(this.currentWorldId);
       return true;
+    },
+
+    resolveStoredChannelIcOocMode(channelId: string, targetUserId?: string | null): StoredChannelIcOocMode {
+      const scopeKey = this.resolveChannelIdentityScopeKey(channelId, targetUserId);
+      if (!scopeKey) {
+        return 'ic';
+      }
+      return readChannelIcOocModeFromStorage(scopeKey);
+    },
+
+    restoreChannelIdentitySession(channelId: string, items: ChannelIdentity[], targetUserId?: string | null) {
+      const scopeKey = this.resolveChannelIdentityScopeKey(channelId, targetUserId);
+      const defaultItem = items.find(item => item.isDefault) || items[0];
+      if (!scopeKey) {
+        const storedMode = this.resolveStoredChannelIcOocMode(channelId, targetUserId);
+        this.setIcMode(storedMode, channelId, targetUserId);
+        return {
+          mode: storedMode,
+          identityId: '',
+          preferIdentityModeMapping: false,
+        };
+      }
+      if (scopeKey !== channelId) {
+        const savedActive = readChannelIdentityFromStorage(scopeKey);
+        const activeId = savedActive && items.some(item => item.id === savedActive)
+          ? savedActive
+          : (defaultItem?.id || '');
+        if (activeId) {
+          this.setActiveIdentity(channelId, activeId, targetUserId);
+        } else {
+          this.activeChannelIdentity = {
+            ...this.activeChannelIdentity,
+            [scopeKey]: '',
+          };
+        }
+        return {
+          mode: 'ic' as const,
+          identityId: activeId,
+          preferIdentityModeMapping: false,
+        };
+      }
+      const storedMode = this.resolveStoredChannelIcOocMode(channelId, targetUserId);
+      const config = this.getChannelIcOocRoleConfig(channelId, targetUserId);
+      const restored = resolveChannelRestorePreference({
+        storedMode,
+        storedIdentityId: readChannelIdentityFromStorage(scopeKey),
+        defaultIdentityId: defaultItem?.id || '',
+        icRoleId: config.icRoleId,
+        oocRoleId: config.oocRoleId,
+        validIdentityIds: items.map((item) => item.id),
+      });
+      if (restored.identityId) {
+        this.setActiveIdentity(channelId, restored.identityId, targetUserId);
+      } else {
+        this.activeChannelIdentity = {
+          ...this.activeChannelIdentity,
+          [scopeKey]: '',
+        };
+      }
+      if (!restored.preferIdentityModeMapping) {
+        this.setIcMode(restored.mode, channelId, targetUserId);
+      }
+      return restored;
     },
 
 
@@ -2742,7 +2890,7 @@ export const useChatStore = defineStore({
         : '';
       if (temporaryMode === 'ic' || temporaryMode === 'ooc') {
         if (this.icMode !== temporaryMode) {
-          this.icMode = temporaryMode;
+          this.setIcMode(temporaryMode, channelId);
         }
         return;
       }
@@ -2755,12 +2903,12 @@ export const useChatStore = defineStore({
       if (isIcRole && !isOocRole) {
         // 角色仅映射到 IC，自动切换到 IC 模式
         if (this.icMode !== 'ic') {
-          this.icMode = 'ic';
+          this.setIcMode('ic', channelId);
         }
       } else if (isOocRole && !isIcRole) {
         // 角色仅映射到 OOC，自动切换到 OOC 模式
         if (this.icMode !== 'ooc') {
-          this.icMode = 'ooc';
+          this.setIcMode('ooc', channelId);
         }
       }
       // 如果角色同时映射到 IC 和 OOC，或都不匹配，不做切换
@@ -2852,13 +3000,7 @@ export const useChatStore = defineStore({
         if (!this.channelIdentityVariants[scopeKey]) {
           void this.loadChannelIdentityVariants(channelId, false, targetUserId);
         }
-        const cached = readChannelIdentityFromStorage(scopeKey);
-        const defaultItem = items.find(item => item.isDefault) || items[0];
-        const activeId = cached && items.some(item => item.id === cached) ? cached : (defaultItem?.id || '');
-        if (activeId) {
-          // 统一走 setActiveIdentity，确保刷新后也能按角色映射同步 IC/OOC 模式
-          this.setActiveIdentity(channelId, activeId, targetUserId);
-        }
+        this.restoreChannelIdentitySession(channelId, items, targetUserId);
         return items;
       }
       const existing = inFlightChannelIdentityLoads.get(scopeKey);
@@ -2903,18 +3045,7 @@ export const useChatStore = defineStore({
           [scopeKey]: Date.now(),
         };
         this.applyChannelIcOocRoleConfig(channelId, resp.data.icOocConfig || EMPTY_CHANNEL_IC_OOC_ROLE_CONFIG, targetUserId);
-        const savedActive = readChannelIdentityFromStorage(scopeKey);
-        const defaultItem = items.find(item => item.isDefault) || items[0];
-        const activeId = savedActive && items.some(item => item.id === savedActive) ? savedActive : (defaultItem?.id || '');
-        if (activeId) {
-          // 统一走 setActiveIdentity，确保刷新后也能按角色映射同步 IC/OOC 模式
-          this.setActiveIdentity(channelId, activeId, targetUserId);
-        } else {
-          this.activeChannelIdentity = {
-            ...this.activeChannelIdentity,
-            [scopeKey]: '',
-          };
-        }
+        this.restoreChannelIdentitySession(channelId, items, targetUserId);
         this.pruneIdentityRecentSpoken(scopeKey, items.map(item => item.id));
         void this.loadChannelIdentityVariants(channelId, force, targetUserId);
         return items;
@@ -3980,6 +4111,7 @@ export const useChatStore = defineStore({
       roleIds?: string[];
       includeRoleless?: boolean;
       limit?: number;
+      direction?: 'before' | 'after';
     }) {
       const payload: Record<string, any> = {
         channel_id: channelId,
@@ -4014,6 +4146,9 @@ export const useChatStore = defineStore({
           if (Number.isFinite(normalizedLimit) && normalizedLimit > 0) {
             payload.limit = normalizedLimit;
           }
+        }
+        if (options.direction === 'after') {
+          payload.direction = 'after';
         }
       }
       const resp = await this.sendAPI('message.list', payload as APIMessage);
@@ -5337,8 +5472,18 @@ export const useChatStore = defineStore({
     },
 
     // 新增方法
-    setIcMode(mode: 'ic' | 'ooc') {
-      this.icMode = mode;
+    setIcMode(mode: 'ic' | 'ooc', channelId?: string, targetUserId?: string | null) {
+      const normalizedMode = normalizeStoredChannelIcOocMode(mode);
+      this.icMode = normalizedMode;
+      const targetChannelId = String(channelId || this.curChannel?.id || '').trim();
+      if (!targetChannelId) {
+        return;
+      }
+      const scopeKey = this.resolveChannelIdentityScopeKey(targetChannelId, targetUserId);
+      if (!scopeKey) {
+        return;
+      }
+      writeChannelIcOocModeToStorage(scopeKey, normalizedMode);
     },
 
     markGatewayActivity() {
@@ -6202,7 +6347,15 @@ chatEvent.on('channel-updated', (event) => {
   const treeChanged = options.treeChanged === true || options.tree_changed === true;
   const chat = useChatStore();
   if (treeChanged) {
-    scheduleChannelTreeRefresh(chat);
+    const targetWorldId = String(options.worldId || options.world_id || (event.channel as any)?.worldId || '').trim();
+    if (!targetWorldId) {
+      scheduleChannelTreeRefresh(chat);
+      return;
+    }
+    invalidateChannelTreeCache(chat, targetWorldId);
+    if (resolveActiveWorldId(chat) === targetWorldId) {
+      scheduleChannelTreeRefresh(chat, targetWorldId);
+    }
     return;
   }
   const channelId = event?.channel?.id;

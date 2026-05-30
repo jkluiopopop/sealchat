@@ -159,6 +159,22 @@ func (m *Manager) UploadToS3(ctx context.Context, input UploadInput) (*UploadRes
 	return m.remote.upload(ctx, input)
 }
 
+func (m *Manager) UploadWithBackend(ctx context.Context, backend BackendType, input UploadInput) (*UploadResult, error) {
+	if strings.TrimSpace(input.ObjectKey) == "" {
+		return nil, fmt.Errorf("objectKey 不能为空")
+	}
+	input.ContentType = normalizeContentType(input.ContentType, input.ObjectKey)
+	switch backend {
+	case BackendS3:
+		if m.remote == nil {
+			return nil, fmt.Errorf("未启用 S3 存储")
+		}
+		return m.remote.upload(ctx, input)
+	default:
+		return m.local.upload(input)
+	}
+}
+
 func (m *Manager) Exists(ctx context.Context, backend BackendType, objectKey string) (bool, error) {
 	switch backend {
 	case BackendS3:

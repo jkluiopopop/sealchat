@@ -4,6 +4,7 @@ import { NBadge, NButton, NIcon, NInput, NRadioButton, NRadioGroup } from 'naive
 import { ArrowsLeftRight } from '@vicons/tabler';
 import { EarthOutline, SettingsSharp, BookOutline, MegaphoneOutline } from '@vicons/ionicons5';
 import { matchText } from '@/utils/pinyinMatch';
+import { formatSplitChannelDisplayName, type SplitChannelDisplayLike } from '../splitChannelDisplay';
 
 export type PaneId = 'A' | 'B';
 type PaneMode = 'chat' | 'web';
@@ -11,6 +12,7 @@ type PaneMode = 'chat' | 'web';
 export interface SplitChannelNode {
   id: string;
   name: string;
+  permType?: string;
   unread: number;
   children?: SplitChannelNode[];
 }
@@ -20,6 +22,7 @@ type WorldOption = { value: string; label: string };
 interface PaneSummary {
   id: PaneId;
   channelName: string;
+  channelPermType?: string;
   unread: number;
   worldName: string;
 }
@@ -161,7 +164,7 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
         >
           <span class="sc-split-pane-chip__id">{{ pane.id }}</span>
           <span class="sc-split-pane-chip__content">
-            <span class="sc-split-pane-chip__name">{{ pane.channelName || '未选择频道' }}</span>
+            <span class="sc-split-pane-chip__name">{{ pane.channelName ? formatSplitChannelDisplayName({ name: pane.channelName, permType: pane.channelPermType } as SplitChannelDisplayLike) : '未选择频道' }}</span>
             <span class="sc-split-pane-chip__world">{{ pane.worldName || '未选择世界' }}</span>
           </span>
           <n-badge v-if="pane.unread > 0" :value="pane.unread" :max="99" />
@@ -317,7 +320,7 @@ const flatTree = computed(() => renderTree(filteredTree.value, 0));
           :style="{ paddingLeft: `${12 + item.depth * 14}px` }"
           @click="emit('open-channel', item.node.id)"
         >
-          <span class="sc-split-channel-item__name">{{ item.node.name }}</span>
+          <span class="sc-split-channel-item__name">{{ formatSplitChannelDisplayName(item.node) }}</span>
           <n-badge v-if="item.node.unread > 0" :value="item.node.unread" :max="99" />
         </button>
 

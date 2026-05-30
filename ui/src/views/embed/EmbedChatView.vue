@@ -9,6 +9,7 @@ import { usePushNotificationStore } from '@/stores/pushNotification';
 import { useIFormStore } from '@/stores/iform';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import AudioDrawer from '@/components/audio/AudioDrawer.vue';
+import { formatSplitChannelDisplayName, type SplitChannelDisplayLike } from '@/views/split/splitChannelDisplay';
 
 type PaneId = 'A' | 'B';
 type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
@@ -39,6 +40,7 @@ type RoleOption = { id: string; label?: string; name?: string };
 type SplitChannelNode = {
   id: string;
   name: string;
+  permType?: string;
   unread: number;
   children?: SplitChannelNode[];
 };
@@ -103,6 +105,7 @@ const buildChannelTree = (): SplitChannelNode[] => {
         return {
           id: String(item.id || ''),
           name: String(item.name || ''),
+          permType: typeof item?.permType === 'string' ? item.permType : undefined,
           unread: selfUnread + childrenUnread,
           children,
         };
@@ -180,10 +183,11 @@ const normalizeChannelTree = (nodes: any): SplitChannelNode[] => {
       .map((item) => {
         const id = typeof item?.id === 'string' ? item.id : String(item?.id || '');
         const name = typeof item?.name === 'string' ? item.name : String(item?.name || '');
+        const permType = typeof item?.permType === 'string' ? item.permType : undefined;
         const unread = typeof item?.unread === 'number' ? item.unread : Number(item?.unread || 0);
         const children = walk(item?.children || []);
         if (!id) return null;
-        return { id, name, unread: Number.isFinite(unread) ? unread : 0, children };
+        return { id, name, permType, unread: Number.isFinite(unread) ? unread : 0, children };
       })
       .filter(Boolean) as SplitChannelNode[];
   };
@@ -239,7 +243,9 @@ const normalizePresenceMap = (map: any): Record<string, PresenceData> => {
 const postState = (type: 'sealchat.embed.ready' | 'sealchat.embed.state') => {
   if (!paneId.value) return;
   const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
-  const channelName = typeof chat.curChannel?.name === 'string' ? chat.curChannel?.name : '';
+  const currentChannelDisplay = chat.curChannel as SplitChannelDisplayLike | null | undefined;
+  const channelName = formatSplitChannelDisplayName(currentChannelDisplay);
+  const channelPermType = typeof currentChannelDisplay?.permType === 'string' ? currentChannelDisplay.permType : '';
   const worldId = chat.currentWorldId || '';
   const worldName = chat.currentWorld?.name || '';
   const connectState = (chat.connectState || 'connecting') as ConnectState;
@@ -255,6 +261,7 @@ const postState = (type: 'sealchat.embed.ready' | 'sealchat.embed.state') => {
     worldOptions: normalizeWorldOptions(toRaw(chat.joinedWorldOptions)),
     channelId,
     channelName,
+    channelPermType,
     connectState,
     onlineMembersCount,
     members: normalizePresenceMembers(toRaw(chat.curChannelUsers)),

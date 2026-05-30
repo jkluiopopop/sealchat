@@ -177,7 +177,7 @@ function renderMentionAwareText(text: string): string {
 
   while ((match = MENTION_TOKEN_REGEX.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      result += escapeHtml(text.slice(lastIndex, match.index));
+      result += escapeHtmlPreservingBoundarySpaces(text.slice(lastIndex, match.index));
     }
 
     const atId = decodeMentionText(match[2] || '').trim();
@@ -190,7 +190,7 @@ function renderMentionAwareText(text: string): string {
   }
 
   if (lastIndex < text.length) {
-    result += escapeHtml(text.slice(lastIndex));
+    result += escapeHtmlPreservingBoundarySpaces(text.slice(lastIndex));
   }
 
   return result;
@@ -224,6 +224,56 @@ function resolveRenderableSmartLinkValue(
   return buildFallbackAttachmentUrl(value, baseUrl);
 }
 
+function applyCombinedTextStyle(text: string, marks: Array<{ type: string; attrs?: Record<string, any> }>): string {
+  const textStyleMark = marks.find((mark) => mark?.type === 'textStyle');
+  const highlightMark = marks.find((mark) => mark?.type === 'highlight');
+  if (!textStyleMark && !highlightMark) {
+    return text;
+  }
+
+  const attrs: string[] = [];
+  const styles: string[] = [];
+
+  if (textStyleMark?.attrs?.fontAssetId) {
+    attrs.push(`data-platform-font-id="${escapeHtml(String(textStyleMark.attrs.fontAssetId))}"`);
+  }
+  if (textStyleMark?.attrs?.platformFontFamily) {
+    attrs.push(`data-platform-font-family="${escapeHtml(String(textStyleMark.attrs.platformFontFamily))}"`);
+  }
+  if (textStyleMark?.attrs?.fontSize) {
+    const fontSize = escapeHtml(String(textStyleMark.attrs.fontSize));
+    attrs.push(`data-font-size="${fontSize}"`);
+    styles.push(`font-size: ${fontSize} !important`);
+  }
+  if (textStyleMark?.attrs?.fontFamily) {
+    styles.push(`font-family: ${escapeHtml(String(textStyleMark.attrs.fontFamily))} !important`);
+  }
+  if (textStyleMark?.attrs?.color) {
+    const normalizedColor = normalizeCssColor(String(textStyleMark.attrs.color));
+    if (normalizedColor && !shouldFilterTextColor(normalizedColor)) {
+      styles.push(`color: ${escapeHtml(normalizedColor)} !important`);
+    }
+  }
+  if (highlightMark) {
+    const bgColor = escapeHtml(String(highlightMark.attrs?.color || '#fef08a'));
+    styles.push(`background-color: ${bgColor} !important`);
+  }
+
+  if (!attrs.length && !styles.length) {
+    return text;
+  }
+
+  const tag = highlightMark ? 'mark' : 'span';
+  const attrString = [
+    ...attrs,
+    styles.length ? `style="${styles.join('; ')}"` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  return `<${tag}${attrString ? ` ${attrString}` : ''}>${text}</${tag}>`;
+}
+
 /**
  * 渲染单个节点
  */
@@ -240,6 +290,7 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
 
     // 应用文本标记
     if (node.marks && node.marks.length > 0) {
+      text = applyCombinedTextStyle(text, node.marks);
       node.marks.forEach((mark) => {
         switch (mark.type) {
           case 'bold':
@@ -258,8 +309,6 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
             text = `<code>${text}</code>`;
             break;
           case 'highlight':
-            const bgColor = mark.attrs?.color || '#fef08a';
-            text = `<mark style="background-color: ${escapeHtml(bgColor)} !important">${text}</mark>`;
             break;
           case 'spoiler':
             text = `<span class="tiptap-spoiler" data-spoiler="true">${text}</span>`;
@@ -278,20 +327,6 @@ function renderNode(node: TipTapNode, options: RenderOptions = {}): string {
             text = `<a href="${escapeHtml(href)}" class="${linkClass}" target="${target}" rel="noopener noreferrer">${text}</a>`;
             break;
           case 'textStyle':
-            if (mark.attrs?.fontAssetId) {
-              const platformFontId = escapeHtml(String(mark.attrs.fontAssetId));
-              const platformFontFamily = escapeHtml(String(mark.attrs.platformFontFamily || mark.attrs.fontFamily || ''));
-              const extraStyle = mark.attrs?.fontFamily
-                ? ` style="font-family: ${escapeHtml(String(mark.attrs.fontFamily))} !important"`
-                : '';
-              text = `<span data-platform-font-id="${platformFontId}" data-platform-font-family="${platformFontFamily}"${extraStyle}>${text}</span>`;
-            }
-            if (mark.attrs?.color) {
-              const normalizedColor = normalizeCssColor(String(mark.attrs.color));
-              if (normalizedColor && !shouldFilterTextColor(normalizedColor)) {
-                text = `<span style="color: ${escapeHtml(normalizedColor)} !important">${text}</span>`;
-              }
-            }
             break;
         }
       });
@@ -415,7 +450,7 @@ export function tiptapJsonToHtml(json: TipTapNode | string, options: RenderOptio
  */
 function stripTrailingEmptyParagraphs(html: string): string {
   // 匹配尾部的空段落: <p><br /></p> 或 <p></p> 或带样式的空段落
-  const emptyParagraphPattern = /<p(?:\s[^>]*)?>(?:<br\s*\/?>)?\s*<\/p>\s*$/i;
+  const emptyParagraphPattern = /<p(?:\s[^>]*)?>(?:<br\s*\/?>)?<\/p>$/i;
 
   let result = html;
   // 循环移除，因为可能有多个连续的空段落
@@ -423,7 +458,7 @@ function stripTrailingEmptyParagraphs(html: string): string {
     result = result.replace(emptyParagraphPattern, '');
   }
 
-  return result.trim();
+  return result;
 }
 
 function buildFallbackAttachmentUrl(value: string, baseUrl: string): string {
@@ -550,6 +585,13 @@ function escapeHtml(text: string): string {
     "'": '&#039;',
   };
   return text.replace(/[&<>"']/g, (char) => map[char] || char);
+}
+
+function escapeHtmlPreservingBoundarySpaces(text: string): string {
+  const escaped = escapeHtml(text);
+  return escaped
+    .replace(/^ +/, (spaces) => '&nbsp;'.repeat(spaces.length))
+    .replace(/ +$/, (spaces) => '&nbsp;'.repeat(spaces.length));
 }
 
 /**

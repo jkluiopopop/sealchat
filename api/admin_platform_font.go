@@ -60,7 +60,6 @@ func AdminPlatformFontCreateHandler(c *fiber.Ctx) error {
 		Family:      c.FormValue("family"),
 		Weight:      c.FormValue("weight"),
 		Style:       c.FormValue("style"),
-		PreviewText: c.FormValue("previewText"),
 		CreatedBy:   user.ID,
 	})
 	if err != nil {
@@ -102,14 +101,13 @@ func AdminPlatformFontUpdateHandler(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusUnauthorized, nil, "未登录")
 	}
 	var req struct {
-		DisplayName  *string                        `json:"displayName"`
-		Family       *string                        `json:"family"`
-		Weight       *string                        `json:"weight"`
-		Style        *string                        `json:"style"`
-		PreviewText  *string                        `json:"previewText"`
-		Status       *model.PlatformFontStatus      `json:"status"`
+		DisplayName  *string                         `json:"displayName"`
+		Family       *string                         `json:"family"`
+		Weight       *string                         `json:"weight"`
+		Style        *string                         `json:"style"`
+		Status       *model.PlatformFontStatus       `json:"status"`
 		DeliveryMode *model.PlatformFontDeliveryMode `json:"deliveryMode"`
-		LastError    *string                        `json:"lastError"`
+		LastError    *string                         `json:"lastError"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求参数解析失败")
@@ -119,7 +117,6 @@ func AdminPlatformFontUpdateHandler(c *fiber.Ctx) error {
 		Family:       req.Family,
 		Weight:       req.Weight,
 		Style:        req.Style,
-		PreviewText:  req.PreviewText,
 		Status:       req.Status,
 		DeliveryMode: req.DeliveryMode,
 		LastError:    req.LastError,

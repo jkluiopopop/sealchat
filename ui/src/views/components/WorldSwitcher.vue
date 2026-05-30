@@ -24,8 +24,10 @@ const createInitialWorldForm = () => ({
   name: '',
   description: '',
   visibility: 'public' as string,
-  channelDefaultDiceMode: 'builtin' as 'builtin' | 'bot',
+  channelDefaultDiceMode: 'builtin' as 'builtin' | 'bot' | 'disabled',
+  channelDefaultBotIds: [] as string[],
   channelDefaultBotId: '',
+  channelDefaultEventBotIds: [] as string[],
 });
 
 const worldForm = ref(createInitialWorldForm());
@@ -89,6 +91,10 @@ const handleWorldCreate = async () => {
   }
   if (worldForm.value.channelDefaultDiceMode === 'bot' && !worldForm.value.channelDefaultBotId) {
     message.error('选择 BOT 掷骰时必须指定默认 BOT');
+    return;
+  }
+  if (worldForm.value.channelDefaultDiceMode === 'bot' && worldForm.value.channelDefaultBotIds.length === 0) {
+    message.error('请至少绑定一个 BOT');
     return;
   }
   try {
@@ -184,7 +190,9 @@ const getDescriptionCountLabel = (value?: string) => {
       <n-form-item label="掷骰默认">
         <WorldDiceDefaultsFields
           v-model:mode="worldForm.channelDefaultDiceMode"
+          v-model:bot-ids="worldForm.channelDefaultBotIds"
           v-model:bot-id="worldForm.channelDefaultBotId"
+          v-model:event-bot-ids="worldForm.channelDefaultEventBotIds"
           :bot-select-options="botSelectOptions"
           :bot-options-loading="botOptionsLoading"
         />

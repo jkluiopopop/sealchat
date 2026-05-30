@@ -149,12 +149,14 @@ storage:
   local:
     uploadDir: ./sealchat-data/upload
     audioDir: ./sealchat-data/static/audio
+    fontDir: ./data/fonts
     tempDir: ./sealchat-data/temp
     baseUrl: ""
   s3:
     enabled: false
     attachmentsEnabled: true   # 附件/图片是否存入 S3
     audioEnabled: true         # 音频是否存入 S3
+    fontsEnabled: true         # 平台字体原文件/分片/manifest 是否存入 S3
     endpoint: https://cos.ap-region.myqcloud.com
     region: ap-region
     bucket: your-bucket-name

@@ -7,11 +7,56 @@ import {
   getPlatformFontManifest,
   getPlatformFontMeta,
 } from './platformFontApi'
+import type { PlatformFontAsset } from './platformFontTypes'
 
 const inflightLoads = new Map<string, Promise<string>>()
 const loadedFamilies = new Map<string, string>()
 const failedLoads = new Set<string>()
 const loadedSubsetStyles = new Map<string, string>()
+
+const isAbsoluteSubsetAssetUrl = (value: string): boolean => /^(data:|blob:|https?:|\/\/|\/)/iu.test(String(value || '').trim())
+
+const resolveSubsetBaseUrl = (value: string): string => {
+  const trimmed = String(value || '').trim()
+  if (!trimmed) {
+    if (typeof window !== 'undefined') {
+      return window.location.href
+    }
+    return 'http://localhost/'
+  }
+  if (/^https?:\/\//iu.test(trimmed)) {
+    return trimmed
+  }
+  if (/^\/\//u.test(trimmed)) {
+    if (typeof window !== 'undefined') {
+      return `${window.location.protocol}${trimmed}`
+    }
+    return `http:${trimmed}`
+  }
+  if (/^\//u.test(trimmed)) {
+    if (typeof window !== 'undefined') {
+      return new URL(trimmed, window.location.origin).toString()
+    }
+    return `http://localhost${trimmed}`
+  }
+  return trimmed
+}
+
+export const resolvePlatformFontSubsetCssUrl = (fontId: string, cssName: string, cssUrl?: string): string => {
+  const normalizedCssName = String(cssName || '').trim()
+  const normalizedCssUrl = String(cssUrl || '').trim()
+  if (!normalizedCssName) {
+    return normalizedCssUrl
+  }
+  if (!normalizedCssUrl) {
+    return buildPlatformFontSubsetUrl(fontId, normalizedCssName)
+  }
+  if (isAbsoluteSubsetAssetUrl(normalizedCssUrl)) {
+    return normalizedCssUrl
+  }
+  const normalizedRelative = normalizedCssUrl.replace(/^\.?\//u, '')
+  return buildPlatformFontSubsetUrl(fontId, normalizedRelative || normalizedCssName)
+}
 
 const fetchFontBlob = async (url: string): Promise<Blob> => {
   const resp = await fetch(url, { credentials: 'include' })
@@ -30,15 +75,16 @@ const loadSinglePlatformFont = async (fontId: string, family: string): Promise<s
 const attachSubsetStyle = (fontId: string, cssText: string, baseUrl: string): void => {
   if (typeof document === 'undefined') return
   if (loadedSubsetStyles.has(fontId)) return
+  const resolvedBaseUrl = resolveSubsetBaseUrl(baseUrl)
   const resolvedCss = cssText.replace(
     /url\((['"]?)([^)'"]+)\1\)/gu,
     (_all, quote: string, rawUrl: string) => {
       const trimmed = String(rawUrl || '').trim()
-      if (!trimmed || /^(data:|blob:|https?:|\/\/)/iu.test(trimmed)) {
+      if (!trimmed || isAbsoluteSubsetAssetUrl(trimmed)) {
         return `url(${quote || ''}${trimmed}${quote || ''})`
       }
       const normalized = trimmed.replace(/^\.?\//u, '')
-      const absolute = new URL(normalized, `${baseUrl.replace(/\/+$/u, '')}/`).toString()
+      const absolute = new URL(normalized, `${resolvedBaseUrl.replace(/\/+$/u, '')}/`).toString()
       return `url(${quote || ''}${absolute}${quote || ''})`
     },
   )
@@ -56,7 +102,7 @@ const tryLoadSubsetPlatformFont = async (fontId: string, family: string): Promis
     if (!cssName) {
       return false
     }
-    const cssUrl = manifest?.cssUrl || buildPlatformFontSubsetUrl(fontId, cssName)
+    const cssUrl = resolvePlatformFontSubsetCssUrl(fontId, cssName, manifest?.cssUrl)
     const resp = await fetch(cssUrl, { credentials: 'include' })
     if (!resp.ok) {
       return false
@@ -120,6 +166,50 @@ export const ensurePlatformFontLoaded = async (
 export const resolvePlatformFontFamily = async (fontId: string, preferredFamily?: string): Promise<string> => {
   const family = await ensurePlatformFontLoaded(fontId, preferredFamily)
   return buildGlobalFontFamilyStack(family)
+}
+
+export const ensurePlatformFontAssetLoaded = async (
+  asset: Pick<PlatformFontAsset, 'id' | 'family' | 'displayName' | 'deliveryMode'>,
+  preferredFamily?: string,
+): Promise<string> => {
+  const normalizedId = String(asset?.id || '').trim()
+  if (!normalizedId) {
+    throw new Error('缺少平台字体 ID')
+  }
+  const cached = loadedFamilies.get(normalizedId)
+  if (cached) {
+    return cached
+  }
+  const inflight = inflightLoads.get(normalizedId)
+  if (inflight) {
+    return inflight
+  }
+  const task = (async () => {
+    const family = sanitizeFontFamilyName(preferredFamily || asset.family || asset.displayName)
+    if (!family) {
+      throw new Error('平台字体缺少可用字体名')
+    }
+    if (asset.deliveryMode === 'subset') {
+      const subsetLoaded = await tryLoadSubsetPlatformFont(normalizedId, family)
+      if (!subsetLoaded) {
+        await loadSinglePlatformFont(normalizedId, family)
+      }
+    } else {
+      await loadSinglePlatformFont(normalizedId, family)
+    }
+    loadedFamilies.set(normalizedId, family)
+    failedLoads.delete(normalizedId)
+    return family
+  })()
+  inflightLoads.set(normalizedId, task)
+  try {
+    return await task
+  } catch (error) {
+    failedLoads.add(normalizedId)
+    throw error
+  } finally {
+    inflightLoads.delete(normalizedId)
+  }
 }
 
 export const preloadPlatformFontsFromDom = async (root?: ParentNode | null): Promise<void> => {

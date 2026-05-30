@@ -54,7 +54,6 @@ export const createAdminPlatformFont = async (payload: PlatformFontCreatePayload
   if (payload.family) form.append('family', payload.family)
   if (payload.weight) form.append('weight', payload.weight)
   if (payload.style) form.append('style', payload.style)
-  if (payload.previewText) form.append('previewText', payload.previewText)
   const resp = await api.post('/api/v1/admin/platform-fonts', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })

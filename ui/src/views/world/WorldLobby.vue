@@ -2,7 +2,7 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, shallowRef, watch, type CSSProperties } from 'vue';
 import { useChatStore } from '@/stores/chat';
 import { useDialog, useMessage } from 'naive-ui';
-import { LayoutGrid, LayoutList, Search, Star, StarOff } from '@vicons/tabler';
+import { Archive, Compass, LayoutGrid, LayoutList, Plus, Refresh, Search, Star, StarOff, World } from '@vicons/tabler';
 import { useRouter } from 'vue-router';
 import { setLocale, setLocaleByNavigator } from '@/lang';
 import { useI18n } from 'vue-i18n';
@@ -25,7 +25,7 @@ import {
   truncateTextByDisplayWidth,
 } from '@/utils/displayWidth';
 
-type LobbyMode = 'mine' | 'explore';
+type LobbyMode = 'mine' | 'explore' | 'archive';
 type WorldLobbyViewMode = 'list' | 'grid';
 
 interface PaginationState {
@@ -85,6 +85,10 @@ const joining = ref(false);
 const searchKeyword = ref('');
 const createVisible = ref(false);
 const creating = ref(false);
+const archivePickerVisible = ref(false);
+const archivePickerLoading = ref(false);
+const archiveCandidateItems = ref<any[]>([]);
+const archiveSelectedWorldIds = ref<string[]>([]);
 const userProfileShow = ref(false);
 const adminShow = ref(false);
 const inputStatsShow = ref(false);
@@ -115,6 +119,12 @@ const explorePagination = ref<PaginationState>({
   total: 0,
 });
 
+const archivePagination = ref<PaginationState>({
+  page: 1,
+  pageSize: DEFAULT_PAGE_SIZE,
+  total: 0,
+});
+
 const botOptionsLoading = ref(false);
 const botList = ref<any[]>([]);
 
@@ -122,8 +132,10 @@ const createInitialWorldForm = () => ({
   name: '',
   description: '',
   visibility: 'public',
-  channelDefaultDiceMode: 'builtin' as 'builtin' | 'bot',
+  channelDefaultDiceMode: 'builtin' as 'builtin' | 'bot' | 'disabled',
+  channelDefaultBotIds: [] as string[],
   channelDefaultBotId: '',
+  channelDefaultEventBotIds: [] as string[],
 });
 
 const createForm = ref(createInitialWorldForm());
@@ -313,22 +325,97 @@ const fetchExploreList = async (options: FetchOptions = {}) => {
   }
 };
 
-const lobbyMode = computed<LobbyMode>(() => (chat.worldLobbyMode === 'explore' ? 'explore' : 'mine'));
+const fetchArchiveList = async (options: FetchOptions = {}) => {
+  const seq = beginRequest();
+  try {
+    const keyword = options.keyword ?? searchKeyword.value.trim();
+    const page = options.page ?? archivePagination.value.page;
+    const pageSize = options.pageSize ?? archivePagination.value.pageSize;
+    const data = await chat.worldList({
+      page,
+      pageSize,
+      joined: true,
+      archived: true,
+      keyword: keyword || undefined,
+    });
+    if (!isLatestRequest(seq)) {
+      return;
+    }
+    const nextPage = normalizePositiveInt(data?.page, page);
+    const nextPageSize = normalizePositiveInt(data?.pageSize, pageSize);
+    const nextTotal = normalizeNonNegativeInt(data?.total, 0);
+    const maxPage = Math.max(1, Math.ceil(nextTotal / nextPageSize));
+
+    if (nextTotal > 0 && nextPage > maxPage) {
+      archivePagination.value = {
+        page: maxPage,
+        pageSize: nextPageSize,
+        total: nextTotal,
+      };
+      await fetchArchiveList({ keyword, page: maxPage, pageSize: nextPageSize });
+      return;
+    }
+
+    archivePagination.value = {
+      page: nextPage,
+      pageSize: nextPageSize,
+      total: nextTotal,
+    };
+  } catch {
+    if (isLatestRequest(seq)) {
+      message.error('加载归档世界失败');
+    }
+  } finally {
+    endRequest(seq);
+  }
+};
+
+const lobbyMode = computed<LobbyMode>(() => {
+  if (chat.worldLobbyMode === 'archive') {
+    return 'archive';
+  }
+  return chat.worldLobbyMode === 'explore' ? 'explore' : 'mine';
+});
 
 const mineWorlds = computed<any[]>(() => chat.worldListCache?.items || []);
 const exploreWorlds = computed<any[]>(() => chat.exploreWorldCache?.items || []);
-const activeWorlds = computed<any[]>(() => (lobbyMode.value === 'mine' ? mineWorlds.value : exploreWorlds.value));
-const activeCardTitle = computed(() => (lobbyMode.value === 'mine' ? '世界列表' : '探索世界'));
-const activeEmptyText = computed(() => (lobbyMode.value === 'mine' ? '暂无世界' : '暂无公开世界'));
-const activePagination = computed(() => (lobbyMode.value === 'mine' ? minePagination.value : explorePagination.value));
+const archivedWorlds = computed<any[]>(() => chat.archivedWorldCache?.items || []);
+const activeWorlds = computed<any[]>(() => {
+  if (lobbyMode.value === 'archive') {
+    return archivedWorlds.value;
+  }
+  return lobbyMode.value === 'mine' ? mineWorlds.value : exploreWorlds.value;
+});
+const activeCardTitle = computed(() => {
+  if (lobbyMode.value === 'archive') {
+    return '归档世界';
+  }
+  return lobbyMode.value === 'mine' ? '世界列表' : '探索世界';
+});
+const activeEmptyText = computed(() => {
+  if (lobbyMode.value === 'archive') {
+    return '暂无归档世界';
+  }
+  return lobbyMode.value === 'mine' ? '暂无世界' : '暂无公开世界';
+});
+const activePagination = computed(() => {
+  if (lobbyMode.value === 'archive') {
+    return archivePagination.value;
+  }
+  return lobbyMode.value === 'mine' ? minePagination.value : explorePagination.value;
+});
 const showPagination = computed(() => activePagination.value.total > activePagination.value.pageSize);
 
 const viewToggleIcon = computed(() => (viewMode.value === 'list' ? LayoutGrid : LayoutList));
 const viewToggleLabel = computed(() => (viewMode.value === 'list' ? '网格视图' : '列表视图'));
+const lobbyModeIcon = computed(() => (lobbyMode.value === 'mine' ? World : Compass));
+const lobbyModeLabel = computed(() => (lobbyMode.value === 'mine' ? '我的世界' : '探索世界'));
 const canManageLobbyAnnouncements = computed(() => !!user.checkPerm('mod_admin'));
 
 const refreshCurrentMode = async () => {
-  if (lobbyMode.value === 'mine') {
+  if (lobbyMode.value === 'archive') {
+    await fetchArchiveList();
+  } else if (lobbyMode.value === 'mine') {
     await fetchList();
   } else {
     await fetchExploreList();
@@ -344,8 +431,22 @@ const openTickerAnnouncementPopup = (item: AnnouncementItem) => {
   announcementPopupVisible.value = true;
 };
 
+const openArchivedWorlds = async () => {
+  if (lobbyMode.value === 'archive') {
+    chat.worldLobbyMode = 'mine';
+    await fetchList();
+    return;
+  }
+  chat.worldLobbyMode = 'archive';
+  archivePagination.value.page = 1;
+  await fetchArchiveList({ page: 1 });
+};
+
 const resetAndFetchCurrentMode = async () => {
-  if (lobbyMode.value === 'mine') {
+  if (lobbyMode.value === 'archive') {
+    archivePagination.value.page = 1;
+    await fetchArchiveList({ page: 1 });
+  } else if (lobbyMode.value === 'mine') {
     minePagination.value.page = 1;
     await fetchList({ page: 1 });
   } else {
@@ -682,6 +783,13 @@ const handleGridLeaveWorld = (item: any) => {
   }
 };
 
+const handleGridRestoreWorld = async (worldId: string) => {
+  await restoreWorldArchive(worldId);
+  if (mobileGridActionMode.value) {
+    gridActionOpenWorldId.value = null;
+  }
+};
+
 const handleGridEnterWorld = async (worldId: string) => {
   await enterWorld(worldId);
   if (mobileGridActionMode.value) {
@@ -728,6 +836,76 @@ const confirmLeaveWorld = (item: any) => {
   });
 };
 
+const archivePickerOptions = computed(() => archiveCandidateItems.value.map((item: any) => ({
+  label: item?.world?.name || item?.world?.id || '未命名世界',
+  value: item?.world?.id,
+})).filter((item: any) => Boolean(item.value)));
+
+const openArchivePicker = async () => {
+  archivePickerVisible.value = true;
+  archivePickerLoading.value = true;
+  archiveSelectedWorldIds.value = [];
+  try {
+    const pageSize = 50;
+    let page = 1;
+    let total = 0;
+    const items: any[] = [];
+    do {
+      const data = await chat.worldList({
+        joined: true,
+        includeArchived: false,
+        page,
+        pageSize,
+      });
+      const pageItems = Array.isArray(data?.items) ? data.items : [];
+      items.push(...pageItems);
+      total = normalizeNonNegativeInt(data?.total, items.length);
+      const nextPageSize = normalizePositiveInt(data?.pageSize, pageSize);
+      if (!pageItems.length || page * nextPageSize >= total) {
+        break;
+      }
+      page += 1;
+    } while (items.length < total);
+    archiveCandidateItems.value = items;
+  } catch (err: any) {
+    message.error(err?.response?.data?.message || '加载可归档世界失败');
+  } finally {
+    archivePickerLoading.value = false;
+  }
+};
+
+const submitArchiveSelection = async () => {
+  const ids = archiveSelectedWorldIds.value.filter(Boolean);
+  if (!ids.length) {
+    message.warning('请选择要归档的世界');
+    return;
+  }
+  archivePickerLoading.value = true;
+  try {
+    for (const worldId of ids) {
+      await chat.archiveWorld(worldId);
+    }
+    message.success('已归档世界');
+    archivePickerVisible.value = false;
+    archiveSelectedWorldIds.value = [];
+    await fetchArchiveList({ page: 1 });
+  } catch (err: any) {
+    message.error(err?.response?.data?.message || '归档失败');
+  } finally {
+    archivePickerLoading.value = false;
+  }
+};
+
+const restoreWorldArchive = async (worldId: string) => {
+  try {
+    await chat.restoreArchivedWorld(worldId);
+    message.success('已恢复世界');
+    await fetchArchiveList();
+  } catch (err: any) {
+    message.error(err?.response?.data?.message || '恢复失败');
+  }
+};
+
 const resetCreateForm = () => {
   createForm.value = createInitialWorldForm();
 };
@@ -741,6 +919,10 @@ const handleCreateWorld = async () => {
     message.error('选择 BOT 掷骰时必须指定默认 BOT');
     return;
   }
+  if (createForm.value.channelDefaultDiceMode === 'bot' && createForm.value.channelDefaultBotIds.length === 0) {
+    message.error('请至少绑定一个 BOT');
+    return;
+  }
   creating.value = true;
   try {
     await chat.createWorld({
@@ -748,7 +930,9 @@ const handleCreateWorld = async () => {
       description: createForm.value.description,
       visibility: createForm.value.visibility,
       channelDefaultDiceMode: createForm.value.channelDefaultDiceMode,
+      channelDefaultBotIds: createForm.value.channelDefaultBotIds,
       channelDefaultBotId: createForm.value.channelDefaultBotId,
+      channelDefaultEventBotIds: createForm.value.channelDefaultEventBotIds,
     });
     message.success('创建世界成功');
     createVisible.value = false;
@@ -889,6 +1073,17 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   explorePagination.value.page = 1;
   void fetchExploreList({ page: 1, pageSize });
 };
+
+const handleArchivePageChange = (page: number) => {
+  archivePagination.value.page = page;
+  void fetchArchiveList({ page });
+};
+
+const handleArchivePageSizeChange = (pageSize: number) => {
+  archivePagination.value.pageSize = pageSize;
+  archivePagination.value.page = 1;
+  void fetchArchiveList({ page: 1, pageSize });
+};
 </script>
 
 <template>
@@ -916,36 +1111,154 @@ const handleExplorePageSizeChange = (pageSize: number) => {
           </n-tooltip>
         </n-dropdown>
       </div>
-      <div class="world-lobby-header-buttons">
-        <n-button size="small" quaternary @click="openAnnouncementPanel">
+      <div class="world-lobby-tabs" aria-label="世界大厅导航">
+        <n-button
+          size="small"
+          quaternary
+          class="world-lobby-tab"
+          @click="openAnnouncementPanel"
+        >
           公告
         </n-button>
-        <n-button size="small" quaternary @click="toggleViewMode">
+        <n-button
+          size="small"
+          quaternary
+          class="world-lobby-tab"
+          :class="{ 'world-lobby-tab--active': lobbyMode !== 'archive' }"
+          @click="switchLobbyMode"
+        >
           <template #icon>
             <n-icon>
-              <component :is="viewToggleIcon" />
+              <component :is="lobbyModeIcon" />
             </n-icon>
           </template>
-          {{ viewToggleLabel }}
+          {{ lobbyModeLabel }}
         </n-button>
-        <n-button size="small" @click="refreshCurrentMode" :loading="loading">
-          刷新
-        </n-button>
-        <n-button size="small" type="primary" @click="createVisible = true" v-if="lobbyMode === 'mine'">
-          创建世界
-        </n-button>
-        <n-button size="small" :type="lobbyMode === 'mine' ? 'tertiary' : 'primary'" @click="switchLobbyMode">
-          {{ lobbyMode === 'mine' ? '探索世界' : '我的世界' }}
-        </n-button>
+        <n-tooltip trigger="hover">
+          <template #trigger>
+            <n-button
+              size="small"
+              quaternary
+              class="world-lobby-tab"
+              :class="{ 'world-lobby-tab--active': lobbyMode === 'archive' }"
+              @click="openArchivedWorlds"
+            >
+              <template #icon>
+                <n-icon>
+                  <Archive />
+                </n-icon>
+              </template>
+              归档世界
+            </n-button>
+          </template>
+          <span>{{ lobbyMode === 'archive' ? '返回我的世界' : '查看已归档的世界' }}</span>
+        </n-tooltip>
+      </div>
+      <div class="world-lobby-header-buttons">
+        <div class="world-lobby-header-actions-left">
+          <n-button size="small" quaternary class="world-lobby-desktop-action" @click="openAnnouncementPanel">
+            公告
+          </n-button>
+          <n-button
+            size="small"
+            tertiary
+            class="world-lobby-mode-action world-lobby-desktop-action"
+            :class="{ 'world-lobby-nav-action--active': lobbyMode !== 'archive' }"
+            @click="switchLobbyMode"
+          >
+            <template #icon>
+              <n-icon>
+                <component :is="lobbyModeIcon" />
+              </n-icon>
+            </template>
+            {{ lobbyModeLabel }}
+          </n-button>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                size="small"
+                class="world-lobby-desktop-action world-lobby-archive-action"
+                :class="{ 'world-lobby-nav-action--active': lobbyMode === 'archive' }"
+                tertiary
+                @click="openArchivedWorlds"
+              >
+                <template #icon>
+                  <n-icon>
+                    <Archive />
+                  </n-icon>
+                </template>
+                归档世界
+              </n-button>
+            </template>
+            <span>{{ lobbyMode === 'archive' ? '返回我的世界' : '查看已归档的世界' }}</span>
+          </n-tooltip>
+          <n-button
+            size="small"
+            quaternary
+            class="world-lobby-icon-action"
+            :aria-label="viewToggleLabel"
+            @click="toggleViewMode"
+          >
+            <template #icon>
+              <n-icon>
+                <component :is="viewToggleIcon" />
+              </n-icon>
+            </template>
+          </n-button>
+          <n-button
+            size="small"
+            quaternary
+            class="world-lobby-icon-action"
+            aria-label="刷新"
+            @click="refreshCurrentMode"
+            :loading="loading"
+          >
+            <template #icon>
+              <n-icon>
+                <Refresh />
+              </n-icon>
+            </template>
+          </n-button>
+        </div>
+        <div class="world-lobby-header-actions-right">
+          <n-tooltip v-if="lobbyMode === 'archive'" trigger="hover">
+            <template #trigger>
+              <n-button
+                size="medium"
+                type="error"
+                class="world-lobby-create-btn world-lobby-archive-btn"
+                @click="openArchivePicker"
+              >
+                <template #icon>
+                  <n-icon>
+                    <Archive />
+                  </n-icon>
+                </template>
+                将世界归档
+              </n-button>
+            </template>
+            <span>选择已加入的世界加入归档</span>
+          </n-tooltip>
+          <n-button v-else size="small" type="primary" class="world-lobby-create-btn" @click="createVisible = true">
+            <template #icon>
+              <n-icon>
+                <Plus />
+              </n-icon>
+            </template>
+            创建世界
+          </n-button>
+        </div>
       </div>
     </div>
 
-    <WorldLobbyAnnouncementTicker @open-announcement="openTickerAnnouncementPopup" />
+    <div class="world-lobby-announcement-banner">
+      <WorldLobbyAnnouncementTicker @open-announcement="openTickerAnnouncementPopup" />
+    </div>
 
     <div class="world-toolbar-row">
       <n-input
         v-model:value="searchKeyword"
-        size="small"
+        size="medium"
         clearable
         placeholder="搜索世界或频道"
         @keyup.enter="handleSearch"
@@ -957,12 +1270,11 @@ const handleExplorePageSizeChange = (pageSize: number) => {
           </n-icon>
         </template>
       </n-input>
-      <n-button size="small" type="primary" @click="handleSearch" :loading="loading">搜索</n-button>
     </div>
 
-    <div class="world-toolbar-row">
-      <n-input v-model:value="inviteSlug" size="small" placeholder="输入邀请码" />
-      <n-button size="small" type="primary" :loading="joining" @click="consumeInvite">通过邀请码加入</n-button>
+    <div v-if="lobbyMode !== 'archive'" class="world-toolbar-row world-toolbar-row--invite">
+      <n-input v-model:value="inviteSlug" size="medium" placeholder="输入邀请码" @keyup.enter="consumeInvite" />
+      <n-button size="medium" secondary :loading="joining" @click="consumeInvite">加入</n-button>
     </div>
 
     <template v-if="viewMode === 'list'">
@@ -994,13 +1306,22 @@ const handleExplorePageSizeChange = (pageSize: number) => {
                   {{ getWorldRoleTag(item.memberRole).label }}
                 </n-tag>
                 <n-button
-                  v-if="item.isMember && item.memberRole !== 'owner'"
+                  v-if="lobbyMode !== 'archive' && item.isMember && item.memberRole !== 'owner'"
                   size="tiny"
                   quaternary
                   type="error"
                   @click="confirmLeaveWorld(item)"
                 >
                   退出
+                </n-button>
+                <n-button
+                  v-if="lobbyMode === 'archive'"
+                  size="tiny"
+                  type="warning"
+                  secondary
+                  @click="restoreWorldArchive(item.world.id)"
+                >
+                  恢复
                 </n-button>
                 <n-button size="tiny" type="primary" @click="enterWorld(item.world.id)">进入</n-button>
               </div>
@@ -1069,13 +1390,22 @@ const handleExplorePageSizeChange = (pageSize: number) => {
                 </n-icon>
               </n-button>
               <n-button
-                v-if="item.isMember && item.memberRole !== 'owner'"
+                v-if="lobbyMode !== 'archive' && item.isMember && item.memberRole !== 'owner'"
                 size="small"
                 quaternary
                 class="world-grid-action-btn world-grid-action-btn--danger"
                 @click.stop="handleGridLeaveWorld(item)"
               >
                 退出
+              </n-button>
+              <n-button
+                v-if="lobbyMode === 'archive'"
+                size="small"
+                quaternary
+                class="world-grid-action-btn"
+                @click.stop="handleGridRestoreWorld(item.world.id)"
+              >
+                恢复
               </n-button>
               <n-button
                 size="small"
@@ -1092,10 +1422,21 @@ const handleExplorePageSizeChange = (pageSize: number) => {
     </template>
 
     <div v-if="showPagination" class="world-pagination">
-      <n-pagination
-        v-if="lobbyMode === 'mine'"
-        size="small"
-        :page="minePagination.page"
+        <n-pagination
+          v-if="lobbyMode === 'archive'"
+          size="small"
+          :page="archivePagination.page"
+          :page-size="archivePagination.pageSize"
+          :item-count="archivePagination.total"
+          show-size-picker
+          :page-sizes="PAGE_SIZES"
+          @update:page="handleArchivePageChange"
+          @update:page-size="handleArchivePageSizeChange"
+        />
+        <n-pagination
+          v-else-if="lobbyMode === 'mine'"
+          size="small"
+          :page="minePagination.page"
         :page-size="minePagination.pageSize"
         :item-count="minePagination.total"
         show-size-picker
@@ -1115,6 +1456,29 @@ const handleExplorePageSizeChange = (pageSize: number) => {
         @update:page-size="handleExplorePageSizeChange"
       />
     </div>
+
+    <n-modal v-model:show="archivePickerVisible" preset="dialog" title="归档世界" style="max-width: 560px">
+      <n-spin :show="archivePickerLoading">
+        <n-select
+          v-model:value="archiveSelectedWorldIds"
+          class="world-archive-select"
+          multiple
+          filterable
+          clearable
+          :options="archivePickerOptions"
+          :max-tag-count="'responsive'"
+          placeholder="搜索并选择要归档的世界"
+          empty="暂无可归档世界"
+        />
+        <n-empty v-if="!archivePickerOptions.length && !archivePickerLoading" description="暂无可归档世界" />
+      </n-spin>
+      <template #action>
+        <n-space>
+          <n-button quaternary @click="archivePickerVisible = false">取消</n-button>
+          <n-button type="error" :loading="archivePickerLoading" @click="submitArchiveSelection">归档</n-button>
+        </n-space>
+      </template>
+    </n-modal>
 
     <n-modal v-model:show="createVisible" preset="dialog" title="创建世界" style="max-width: 420px">
       <n-form label-width="72">
@@ -1145,7 +1509,9 @@ const handleExplorePageSizeChange = (pageSize: number) => {
         <n-form-item label="掷骰默认">
           <WorldDiceDefaultsFields
             v-model:mode="createForm.channelDefaultDiceMode"
+            v-model:bot-ids="createForm.channelDefaultBotIds"
             v-model:bot-id="createForm.channelDefaultBotId"
+            v-model:event-bot-ids="createForm.channelDefaultEventBotIds"
             :bot-select-options="botSelectOptions"
             :bot-options-loading="botOptionsLoading"
           />
@@ -1361,13 +1727,95 @@ const handleExplorePageSizeChange = (pageSize: number) => {
   justify-content: flex-end;
 }
 
+.world-lobby-tabs {
+  min-width: 0;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.world-lobby-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.world-lobby-tab {
+  flex: 0 0 auto;
+  color: var(--sc-text-secondary);
+}
+
+.world-lobby-tab--active {
+  color: var(--sc-text-primary);
+  filter: drop-shadow(0 8px 18px color-mix(in srgb, var(--sc-accent, #3388de) 34%, transparent));
+}
+
+.world-lobby-tab--active :deep(.n-button__border),
+.world-lobby-tab--active :deep(.n-button__state-border) {
+  border-color: color-mix(in srgb, var(--sc-accent, #3388de) 54%, transparent);
+}
+
+.world-lobby-nav-action--active {
+  color: var(--sc-text-primary);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--sc-accent, #3388de) 42%, transparent),
+    0 10px 24px color-mix(in srgb, var(--sc-accent, #3388de) 24%, transparent);
+}
+
+.world-lobby-archive-action.world-lobby-nav-action--active {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, #f87171 48%, transparent),
+    0 10px 24px color-mix(in srgb, #f87171 28%, transparent);
+}
+
 .world-lobby-header-buttons {
   justify-self: end;
   min-width: 0;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.world-lobby-header-actions-left,
+.world-lobby-header-actions-right {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.world-lobby-icon-action {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+}
+
+.world-lobby-archive-btn {
+  min-width: 104px;
+  font-weight: 700;
+}
+
+.world-archive-select {
+  width: 100%;
+}
+
+.world-archive-select :deep(.n-base-selection) {
+  min-height: 42px;
+}
+
+.world-lobby-announcement-banner {
+  min-height: 0;
+  border: 1px solid color-mix(in srgb, var(--sc-border-strong) 34%, transparent);
+  border-radius: 10px;
+  padding: 4px 8px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, #3388de 12%, var(--sc-bg-layer-strong)),
+      color-mix(in srgb, var(--sc-bg-surface) 94%, #3388de)
+    );
 }
 
 .world-toolbar-row {
@@ -1379,6 +1827,14 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 .world-toolbar-row :deep(.n-input) {
   flex: 1;
   min-width: 220px;
+}
+
+.world-toolbar-row :deep(.n-input-wrapper) {
+  background: color-mix(in srgb, var(--sc-bg-layer-strong) 88%, var(--sc-bg-surface));
+}
+
+.world-toolbar-row--invite :deep(.n-button) {
+  min-width: 82px;
 }
 
 .sc-card-scroll {
@@ -1677,18 +2133,56 @@ const handleExplorePageSizeChange = (pageSize: number) => {
 }
 
 @media (max-width: 640px) {
+  .world-lobby-root {
+    gap: 14px;
+    padding: 14px !important;
+  }
+
   .world-lobby-header {
     grid-template-columns: 1fr auto;
-    row-gap: 8px;
+    row-gap: 10px;
+  }
+
+  .world-lobby-header h2 {
+    min-width: 0;
+  }
+
+  .world-lobby-tabs {
+    display: flex;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    order: 2;
+    width: 100%;
+    padding-bottom: 2px;
   }
 
   .world-lobby-header-buttons {
     grid-column: 1 / -1;
+    grid-row: 3;
+    width: 100%;
     justify-self: stretch;
+    justify-content: space-between;
     flex-wrap: nowrap;
-    overflow-x: auto;
+    overflow: visible;
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
+    gap: 6px;
+  }
+
+  .world-lobby-header-actions-left,
+  .world-lobby-header-actions-right {
+    gap: 6px;
+  }
+
+  .world-lobby-header-actions-left {
+    flex: 0 0 auto;
+    min-width: max-content;
+  }
+
+  .world-lobby-header-actions-right {
+    flex: 0 0 auto;
+    justify-content: flex-end;
+    min-width: max-content;
   }
 
   .world-lobby-header-buttons::-webkit-scrollbar {
@@ -1700,9 +2194,44 @@ const handleExplorePageSizeChange = (pageSize: number) => {
     white-space: nowrap;
   }
 
+  .world-lobby-desktop-action {
+    display: none;
+  }
+
+  .world-lobby-icon-action {
+    width: 34px;
+    min-width: 34px;
+  }
+
+  .world-lobby-create-btn {
+    margin-left: auto;
+    min-width: max-content;
+    max-width: 132px;
+  }
+
+  .world-lobby-create-btn :deep(.n-button__content) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .world-lobby-announcement-banner {
+    padding: 5px 8px;
+  }
+
   .world-toolbar-row {
-    flex-direction: column;
+    flex-direction: row;
     align-items: stretch;
+    gap: 8px;
+  }
+
+  .world-toolbar-row :deep(.n-input) {
+    min-width: 0;
+  }
+
+  .world-toolbar-row--invite :deep(.n-button) {
+    flex: 0 0 76px;
+    min-width: 76px;
   }
 
   .world-row {

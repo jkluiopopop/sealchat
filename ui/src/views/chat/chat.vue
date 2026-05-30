@@ -29,6 +29,7 @@ import ChatImportProgress from './components/ChatImportProgress.vue'
 import ChannelImageViewerDrawer from './components/ChannelImageViewerDrawer.vue'
 import DiceTray from './components/DiceTray.vue'
 import ChatDiceModeControl from './components/ChatDiceModeControl.vue'
+import { getDiceModeLabel, shouldShowDiceTrayTrigger } from './diceMode'
 import IFormPanelHost from '@/components/iform/IFormPanelHost.vue';
 import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
 import IFormDrawer from '@/components/iform/IFormDrawer.vue';
@@ -77,7 +78,7 @@ import { recordDiceHistory } from '@/views/chat/composables/useDiceHistory';
 import DOMPurify from 'dompurify';
 import type { DisplaySettings, ToolbarHotkeyKey } from '@/stores/display';
 import { INPUT_AREA_HEIGHT_LIMITS } from '@/stores/display';
-import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
+import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml, serializePlainTextFromDomNode } from '@/utils/plainQuickFormat';
 import { isSmartLinkNode, smartLinkToPlainText } from '@/utils/tiptapSmartLink';
 import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
 import { shouldAttemptCharacterApiReconnectBeforeBotCommand } from '@/utils/characterApiReconnectGuard';
@@ -126,6 +127,7 @@ import KeywordSuggestPanel from '@/components/chat/KeywordSuggestPanel.vue';
 import MessageImageEditor from '@/components/chat/MessageImageEditor.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
+import { buildMessageCursor } from '@/utils/messageCursor';
 import { resolveDeletedChannelFallbackId } from '@/stores/chatChannelSelection';
 import {
   buildInputHistorySignature,
@@ -457,14 +459,14 @@ const inputIcMode = computed<'ic' | 'ooc'>({
     } else {
       const channelId = chat.curChannel?.id || '';
       const previousIdentityId = channelId ? chat.getActiveIdentityId(channelId) : '';
-      chat.icMode = mode;
+      chat.setIcMode(mode, channelId);
       // 触发自动角色切换
       chat.autoSwitchRoleOnIcOocChange(mode);
       const nextIdentityId = channelId ? chat.getActiveIdentityId(channelId) : '';
       if (channelId && nextIdentityId && nextIdentityId !== previousIdentityId) {
         void (async () => {
           const syncResult = await characterCardStore.syncCardForIdentity(channelId, nextIdentityId, {
-            preserveWhenUnbound: false,
+            preserveWhenUnbound: true,
           });
           if (syncResult.ok) {
             emitTypingPreview();
@@ -609,13 +611,20 @@ const botSelectOptions = computed(() => botOptions.value.map((bot) => ({
   value: bot.id,
 })));
 const hasBotOptions = computed(() => botOptions.value.length > 0);
-const diceModeLabel = computed(() => effectiveBotFeatureEnabled.value ? 'BOT掷骰' : '内置掷骰');
+const diceModeLabel = computed(() => getDiceModeLabel({
+  builtInDiceEnabled: channelFeatures.builtInDiceEnabled,
+  botFeatureEnabled: channelFeatures.botFeatureEnabled,
+  isBotPrivateChatChannel: isCurrentBotPrivateChatChannel.value,
+}));
 const diceModeTooltip = computed(() => {
   if (isCurrentBotPrivateChatChannel.value) {
     return '当前为机器人私聊，已固定使用 BOT 掷骰模式';
   }
   if (effectiveBotFeatureEnabled.value) {
     return '当前使用机器人处理掷骰指令，点击齿轮可切换内置掷骰模式';
+  }
+  if (!effectiveBuiltInDiceEnabled.value) {
+    return '当前频道已关闭掷骰，可在设置中重新启用。';
   }
   return '当前使用内置掷骰功能，点击齿轮可切换机器人掷骰模式';
 });
@@ -655,6 +664,11 @@ const effectiveBotFeatureEnabled = computed(() => (
   isCurrentBotPrivateChatChannel.value ? true : channelFeatures.botFeatureEnabled
 ));
 const canUseBuiltInDice = computed(() => effectiveBuiltInDiceEnabled.value);
+const showDiceTrayTrigger = computed(() => shouldShowDiceTrayTrigger({
+  builtInDiceEnabled: channelFeatures.builtInDiceEnabled,
+  botFeatureEnabled: channelFeatures.botFeatureEnabled,
+  isBotPrivateChatChannel: isCurrentBotPrivateChatChannel.value,
+}));
 const showDiceModeStatus = computed(() => canManageChannelFeatures.value || isCurrentBotPrivateChatChannel.value);
 const showDiceModeSettings = computed(() => canManageChannelFeatures.value && !isCurrentBotPrivateChatChannel.value);
 watch(
@@ -1369,7 +1383,7 @@ const simulateCurrentIdentitySelection = async (channelId?: string) => {
       return false;
     }
     const syncResult = await characterCardStore.syncCardForIdentity(channelId, identityId, {
-      preserveWhenUnbound: false,
+      preserveWhenUnbound: true,
     });
     if (!syncResult.ok) {
       return false;
@@ -1825,10 +1839,25 @@ const selectionBar = reactive({
 })
 const selectionBarRef = ref<HTMLElement | null>(null)
 const selectionMaxLength = 120
+let activeMessageSelectionRange: Range | null = null
 
 const hideSelectionBar = () => {
   selectionBar.visible = false
   selectionBar.text = ''
+  activeMessageSelectionRange = null
+}
+
+const serializeMessageSelectionRange = (range: Range | null): string => {
+  if (!range) {
+    return ''
+  }
+  const fragment = range.cloneContents()
+  const text = Array.from(fragment.childNodes)
+    .map((node) => serializePlainTextFromDomNode(node))
+    .join('')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return text
 }
 
 watch(
@@ -1887,11 +1916,6 @@ const handleSelectionChange = () => {
     hideSelectionBar()
     return
   }
-  const text = selection.toString().trim()
-  if (!text || text.length === 0 || text.length > selectionMaxLength) {
-    hideSelectionBar()
-    return
-  }
   const range = selection.rangeCount ? selection.getRangeAt(0) : null
   if (!range) {
     hideSelectionBar()
@@ -1907,8 +1931,14 @@ const handleSelectionChange = () => {
     hideSelectionBar()
     return
   }
+  const serializedText = serializeMessageSelectionRange(range)
+  if (!serializedText || serializedText.length === 0 || serializedText.length > selectionMaxLength) {
+    hideSelectionBar()
+    return
+  }
   updateSelectionPosition(rect)
-  selectionBar.text = text
+  activeMessageSelectionRange = range.cloneRange()
+  selectionBar.text = serializedText
   selectionBar.visible = true
 }
 
@@ -1924,14 +1954,39 @@ const handlePointerDown = (event: PointerEvent) => {
 }
 
 const handleSelectionCopy = async () => {
-  if (!selectionBar.text) return
-  const copied = await copyTextWithFallback(selectionBar.text)
+  const text = serializeMessageSelectionRange(activeMessageSelectionRange) || selectionBar.text
+  if (!text) return
+  const copied = await copyTextWithFallback(text)
   if (copied) {
     message.success('已复制选中文本')
   } else {
     message.error('复制失败')
   }
   hideSelectionBar()
+}
+
+const handleNativeSelectionCopy = (event: ClipboardEvent) => {
+  const container = messagesListRef.value
+  if (!container || !event.clipboardData) {
+    return
+  }
+  const selection = window.getSelection()
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+    return
+  }
+  const range = selection.getRangeAt(0)
+  const node = range.commonAncestorContainer instanceof Element ? range.commonAncestorContainer : range.commonAncestorContainer?.parentElement
+  if (!node || !container.contains(node)) {
+    return
+  }
+  const serializedText = serializeMessageSelectionRange(range)
+  if (!serializedText) {
+    return
+  }
+  event.preventDefault()
+  event.clipboardData.setData('text/plain', serializedText)
+  selectionBar.text = serializedText
+  activeMessageSelectionRange = range.cloneRange()
 }
 
 const handleSelectionAddKeyword = () => {
@@ -1966,6 +2021,7 @@ if (typeof window !== 'undefined') {
   useEventListener(document, 'selectionchange', handleSelectionChange)
   useEventListener(document, 'pointerdown', handlePointerDown, { capture: true })
   useEventListener(window, 'resize', hideSelectionBar)
+  useEventListener(document, 'copy', handleNativeSelectionCopy)
 }
 
 const topSentinelRef = ref<HTMLElement | null>(null);
@@ -5774,10 +5830,15 @@ const updateWindowAnchorsFromRows = () => {
     messageWindow.earliestTimestamp = null;
     messageWindow.latestTimestamp = null;
     messageWindow.afterCursor = '';
+    if (isSearchBrowseActive()) {
+      searchBrowseSession.afterCursor = '';
+    }
     return;
   }
-  const firstTs = normalizeTimestamp(rows.value[0]?.createdAt);
-  const lastTs = normalizeTimestamp(rows.value[rows.value.length - 1]?.createdAt);
+  const firstMessage = rows.value[0];
+  const lastMessage = rows.value[rows.value.length - 1];
+  const firstTs = normalizeTimestamp(firstMessage?.createdAt);
+  const lastTs = normalizeTimestamp(lastMessage?.createdAt);
   if (firstTs !== null) {
     messageWindow.earliestTimestamp = firstTs;
   }
@@ -5786,9 +5847,12 @@ const updateWindowAnchorsFromRows = () => {
       messageWindow.hasReachedLatest = false;
     }
     messageWindow.latestTimestamp = lastTs;
-    messageWindow.afterCursor = String(lastTs);
+    messageWindow.afterCursor = buildMessageCursor(lastMessage as any);
   } else {
     messageWindow.afterCursor = '';
+  }
+  if (isSearchBrowseActive()) {
+    searchBrowseSession.afterCursor = messageWindow.afterCursor;
   }
 };
 
@@ -8082,6 +8146,7 @@ const upsertMessage = (incoming?: Message) => {
   if ((incoming as any).is_deleted || (incoming as any).isDeleted) {
     rows.value = rows.value.filter((msg) => msg.id !== incoming.id);
     removePinnedMessage(incoming.id);
+    updateWindowAnchorsFromRows();
     return;
   }
   const index = rows.value.findIndex((msg) => msg.id === incoming.id);
@@ -8095,6 +8160,7 @@ const upsertMessage = (incoming?: Message) => {
     rows.value.push(incoming);
   }
   sortRowsByDisplayOrder();
+  updateWindowAnchorsFromRows();
   upsertPinnedMessage(incoming);
 };
 
@@ -11814,7 +11880,7 @@ const send = throttle(async () => {
     if (shortcutResult?.matched) {
       chat.setActiveIdentity(chat.curChannel.id, shortcutResult.matched.id);
       await characterCardStore.syncCardForIdentity(chat.curChannel.id, shortcutResult.matched.id, {
-        preserveWhenUnbound: false,
+        preserveWhenUnbound: true,
       });
       draft = shortcutResult.restContent;
       textToSend.value = shortcutResult.restContent;
@@ -13181,41 +13247,6 @@ const fetchOlderThanTimestamp = async (anchorTimestamp: number) => {
   return { messages: [] as Message[], cursor: '', reachedStart: false };
 };
 
-const fetchNewerThanTimestamp = async (anchorTimestamp: number) => {
-  let span = HISTORY_PAGINATION_WINDOW_MS;
-  let attempts = 0;
-  while (attempts < HISTORY_WINDOW_EXPANSION_LIMIT) {
-    const from = Math.max(0, anchorTimestamp + 1);
-    const to = anchorTimestamp + span;
-    try {
-      const resp = await chat.messageListDuring(chat.curChannel!.id, from, to, {
-        includeArchived: true,
-        includeOoc: true,
-        ...buildRoleFilterOptions(),
-      });
-      const normalized = normalizeMessageList(resp?.data || []).filter((msg) => {
-        const created = normalizeTimestamp(msg.createdAt) ?? 0;
-        return created > anchorTimestamp;
-      });
-      if (normalized.length) {
-        return {
-          messages: normalized,
-          reachedLatest: false,
-        };
-      }
-      if (to >= Date.now()) {
-        return { messages: [], reachedLatest: true };
-      }
-    } catch (error) {
-      console.warn('按时间窗口加载新消息失败', error);
-      return { messages: [], reachedLatest: false };
-    }
-    span *= 2;
-    attempts += 1;
-  }
-  return { messages: [], reachedLatest: false };
-};
-
 const autoFillIfNeeded = async () => {
   await nextTick();
   const container = messagesListRef.value;
@@ -13444,34 +13475,36 @@ const loadNewerMessages = async () => {
   ) {
     return false;
   }
-  const anchor =
-    messageWindow.latestTimestamp ??
-    normalizeTimestamp(rows.value[rows.value.length - 1]?.createdAt);
-  if (anchor === null || anchor === undefined) {
+  if (!messageWindow.afterCursor) {
+    messageWindow.hasReachedLatest = true;
+    if (isSearchBrowseActive()) {
+      searchBrowseSession.hasMoreAfter = false;
+    }
     return false;
   }
   messageWindow.loadingAfter = true;
   try {
-    const result = await fetchNewerThanTimestamp(anchor);
-    if (result.messages.length) {
-      mergeIncomingMessages(result.messages);
-      updateWindowAnchorsFromRows();
+    const resp = await chat.messageList(chat.curChannel.id, messageWindow.afterCursor, {
+      includeArchived: chat.filterState.showArchived,
+      limit: PAGINATED_MESSAGE_LOAD_LIMIT,
+      direction: 'after',
+      ...buildRoleFilterOptions(),
+    });
+    const normalized = normalizeMessageList(resp?.data || []);
+    if (normalized.length) {
+      mergeIncomingMessages(normalized);
       messageWindow.hasReachedLatest = false;
       if (isSearchBrowseActive()) {
-        searchBrowseSession.hasMoreAfter = true;
+        searchBrowseSession.hasMoreAfter = Boolean(resp?.next);
       }
       return true;
     }
-    if (result.reachedLatest) {
-      messageWindow.hasReachedLatest = true;
-      messageWindow.afterCursor = '';
-      if (isSearchBrowseActive()) {
-        searchBrowseSession.afterCursor = '';
-        searchBrowseSession.hasMoreAfter = false;
-      }
-      if (isNearBottom()) {
-        updateViewMode('live');
-      }
+    messageWindow.hasReachedLatest = true;
+    if (isSearchBrowseActive()) {
+      searchBrowseSession.hasMoreAfter = false;
+    }
+    if (isNearBottom()) {
+      updateViewMode('live');
     }
     return false;
   } catch (error) {
@@ -14546,7 +14579,7 @@ onBeforeUnmount(() => {
         :class="{ 'chat-input-actions__teleport-content--compact-toolbar': isMinimalInputActive }"
       >
         <div class="chat-input-actions__group chat-input-actions__group--leading chat-input-actions__group--leading-extras">
-          <div class="chat-input-actions__cell">
+          <div v-if="showDiceTrayTrigger" class="chat-input-actions__cell">
             <div class="emoji-trigger">
               <n-tooltip trigger="hover">
                 <template #trigger>
@@ -16063,7 +16096,7 @@ onBeforeUnmount(() => {
                     </div>
                   </n-popover>
                 </div>
-                <div class="chat-input-actions__cell" v-if="isDiceTrayEdgeAnchored">
+                <div class="chat-input-actions__cell" v-if="showDiceTrayTrigger && isDiceTrayEdgeAnchored">
                   <n-popover
                     trigger="manual"
                     placement="top-end"
@@ -16123,7 +16156,7 @@ onBeforeUnmount(() => {
                     </DiceTray>
                   </n-popover>
                 </div>
-                <div class="chat-input-actions__cell" v-else>
+                <div class="chat-input-actions__cell" v-else-if="showDiceTrayTrigger">
                   <n-popover trigger="manual" placement="top" :show="diceTrayDesktopVisible">
                     <template #trigger>
                       <n-tooltip trigger="hover">
@@ -18587,21 +18620,21 @@ onBeforeUnmount(() => {
 
   /* 标题样式 */
   h1, h2, h3 {
-    margin: 0.5rem 0 0.25rem;
+    margin: 0.75rem 0 0.45rem;
     font-weight: 600;
     line-height: 1.3;
   }
 
   h1 {
-    font-size: 1.25rem;
+    font-size: 1.75rem;
   }
 
   h2 {
-    font-size: 1.1rem;
+    font-size: 1.5rem;
   }
 
   h3 {
-    font-size: 1rem;
+    font-size: 1.25rem;
   }
 
   /* 列表样式 */
@@ -18662,7 +18695,11 @@ onBeforeUnmount(() => {
   /* 高亮样式 */
   mark {
     background-color: #fef08a;
-    padding: 0.1rem 0.2rem;
+    display: inline;
+    line-height: inherit;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    padding: 0.08em 0.18em;
     border-radius: 0.125rem;
   }
 
@@ -18713,10 +18750,11 @@ onBeforeUnmount(() => {
 
 .preview-content {
   max-width: 100%;
+  line-height: var(--chat-line-height, 1.6);
 
   p {
     margin: 0;
-    line-height: 1.5;
+    line-height: inherit;
   }
 
   p + p {

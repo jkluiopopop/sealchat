@@ -1659,16 +1659,16 @@ func detachAssetFromPlaybackStatesTx(tx *gorm.DB, assetID string) (*AudioDeleteI
 			state.CapturedAtMs = state.UpdatedAt.UnixMilli()
 		}
 		if err := tx.Model(&model.AudioPlaybackState{}).Where("channel_id = ?", state.ChannelID).Updates(map[string]interface{}{
-			"tracks":          state.Tracks,
-			"is_playing":      state.IsPlaying,
-			"position":        state.Position,
-			"updated_at":      state.UpdatedAt,
-			"revision":        state.Revision,
-			"captured_at_ms":  state.CapturedAtMs,
-			"loop_enabled":    state.LoopEnabled,
-			"playback_rate":   state.PlaybackRate,
-			"updated_by":      state.UpdatedBy,
-			"scene_id":        state.SceneID,
+			"tracks":                 state.Tracks,
+			"is_playing":             state.IsPlaying,
+			"position":               state.Position,
+			"updated_at":             state.UpdatedAt,
+			"revision":               state.Revision,
+			"captured_at_ms":         state.CapturedAtMs,
+			"loop_enabled":           state.LoopEnabled,
+			"playback_rate":          state.PlaybackRate,
+			"updated_by":             state.UpdatedBy,
+			"scene_id":               state.SceneID,
 			"world_playback_enabled": state.WorldPlaybackEnabled,
 		}).Error; err != nil {
 			return nil, err
@@ -2535,16 +2535,14 @@ func AudioDeleteFolder(id string) error {
 	if childrenCount > 0 {
 		return errors.New("请先删除子文件夹")
 	}
-	var assetsCount int64
-	if err := model.GetDB().Model(&model.AudioAsset{}).
-		Where("folder_id = ?", id).
-		Count(&assetsCount).Error; err != nil {
-		return err
-	}
-	if assetsCount > 0 {
-		return errors.New("文件夹内仍有素材，无法删除")
-	}
-	return model.GetDB().Delete(folder).Error
+	return model.GetDB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.AudioAsset{}).
+			Where("folder_id = ?", id).
+			Update("folder_id", nil).Error; err != nil {
+			return err
+		}
+		return tx.Delete(folder).Error
+	})
 }
 
 func AudioListScenes(channelScope string) ([]*model.AudioScene, error) {

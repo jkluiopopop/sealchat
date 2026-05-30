@@ -39,7 +39,7 @@ func apiChannelCreate(ctx *ChatContext, data *protocol.Channel) (any, error) {
 	if !service.IsWorldAdmin(worldID, ctx.User.ID) && !pm.CanWithSystemRole(ctx.User.ID, pm.PermModAdmin) {
 		return nil, fmt.Errorf("无权在该世界创建频道")
 	}
-	defaultDiceMode, defaultBotID, err := service.ResolveWorldChannelDefaultDiceConfig(worldID)
+	defaultDiceConfig, err := service.ResolveWorldChannelDefaultDiceConfig(worldID)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrWorldDefaultDiceMode):
@@ -54,30 +54,18 @@ func apiChannelCreate(ctx *ChatContext, data *protocol.Channel) (any, error) {
 	}
 
 	m := service.ChannelNew(utils.NewID(), permType, data.Name, worldID, ctx.User.ID, data.ParentID)
-	if m != nil && defaultDiceMode == model.WorldChannelDefaultDiceModeBot {
-		if err := service.ApplyWorldChannelDefaultDiceConfig(m.ID, defaultDiceMode, defaultBotID); err != nil {
+	if m != nil && defaultDiceConfig.Mode != model.WorldChannelDefaultDiceModeBuiltin {
+		if err := service.ApplyWorldChannelDefaultDiceConfig(m.ID, defaultDiceConfig); err != nil {
 			log.Printf("应用世界默认掷骰配置失败[channel=%s world=%s]: %v", m.ID, worldID, err)
 		} else {
-			m.BuiltInDiceEnabled = false
-			m.BotFeatureEnabled = true
+			m.BuiltInDiceEnabled = defaultDiceConfig.Mode == model.WorldChannelDefaultDiceModeBuiltin
+			m.BotFeatureEnabled = defaultDiceConfig.Mode == model.WorldChannelDefaultDiceModeBot
+			m.PrimaryBotID = defaultDiceConfig.PrimaryBotID
+			m.EventBotIDsJSON, _ = service.EncodeBotIDListJSON(defaultDiceConfig.EventBotIDs)
 		}
 	}
 	if m != nil {
-		ev := &protocol.Event{
-			Type:    protocol.EventChannelUpdated,
-			Channel: m.ToProtocolType(),
-			Argv: &protocol.Argv{
-				Options: map[string]interface{}{
-					"treeChanged": true,
-					"worldId":     worldID,
-					"action":      "create",
-				},
-			},
-		}
-		if ctx.User != nil {
-			ev.User = ctx.User.ToProtocolType()
-		}
-		broadcastEventToWorld(worldID, ev)
+		broadcastChannelTreeInvalidated(ctx.User, m, "create")
 	}
 
 	return &struct {
@@ -600,11 +588,6 @@ func apiChannelFeatureUpdate(ctx *ChatContext, data *struct {
 				updates["event_bot_ids_json"] = encoded
 			}
 		}
-	}
-
-	if !channel.BuiltInDiceEnabled && !channel.BotFeatureEnabled {
-		channel.BuiltInDiceEnabled = true
-		updates["built_in_dice_enabled"] = true
 	}
 
 	if err := model.GetDB().Model(&model.ChannelModel{}).

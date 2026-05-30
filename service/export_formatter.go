@@ -566,7 +566,7 @@ func applyTipTapMarks(content string, marks []*tiptapMark) string {
 	if content == "" || len(marks) == 0 {
 		return content
 	}
-	result := content
+	result := applyTipTapCombinedTextStyle(content, marks)
 	for _, mark := range marks {
 		if mark == nil {
 			continue
@@ -583,11 +583,7 @@ func applyTipTapMarks(content string, marks []*tiptapMark) string {
 		case "code":
 			result = "<code>" + result + "</code>"
 		case "highlight":
-			color := mark.attrString("color")
-			if color == "" {
-				color = "#fef08a"
-			}
-			result = `<mark style="background-color:` + htmlEscape(color) + `">` + result + "</mark>"
+			continue
 		case "link":
 			href := htmlEscape(mark.attrString("href"))
 			if href == "" {
@@ -599,29 +595,80 @@ func applyTipTapMarks(content string, marks []*tiptapMark) string {
 			}
 			result = `<a href="` + href + `" target="` + htmlEscape(target) + `" rel="noopener noreferrer">` + result + "</a>"
 		case "textstyle":
-			attrs := make([]string, 0, 3)
-			styles := make([]string, 0, 2)
-			if fontAssetID := strings.TrimSpace(mark.attrString("fontAssetId")); fontAssetID != "" {
-				attrs = append(attrs, `data-platform-font-id="`+htmlEscape(fontAssetID)+`"`)
-			}
-			if platformFontFamily := strings.TrimSpace(mark.attrString("platformFontFamily")); platformFontFamily != "" {
-				attrs = append(attrs, `data-platform-font-family="`+htmlEscape(platformFontFamily)+`"`)
-			}
-			if fontFamily := strings.TrimSpace(mark.attrString("fontFamily")); fontFamily != "" {
-				styles = append(styles, `font-family: `+htmlEscape(fontFamily))
-			}
-			if color := strings.TrimSpace(mark.attrString("color")); color != "" {
-				styles = append(styles, `color:`+htmlEscape(color))
-			}
-			if len(styles) > 0 {
-				attrs = append(attrs, `style="`+strings.Join(styles, "; ")+`"`)
-			}
-			if len(attrs) > 0 {
-				result = `<span ` + strings.Join(attrs, " ") + `>` + result + "</span>"
-			}
+			continue
 		}
 	}
 	return result
+}
+
+func applyTipTapCombinedTextStyle(content string, marks []*tiptapMark) string {
+	if content == "" || len(marks) == 0 {
+		return content
+	}
+
+	var textStyleMark *tiptapMark
+	var highlightMark *tiptapMark
+	for _, mark := range marks {
+		if mark == nil {
+			continue
+		}
+		switch strings.ToLower(mark.Type) {
+		case "textstyle":
+			if textStyleMark == nil {
+				textStyleMark = mark
+			}
+		case "highlight":
+			if highlightMark == nil {
+				highlightMark = mark
+			}
+		}
+	}
+
+	if textStyleMark == nil && highlightMark == nil {
+		return content
+	}
+
+	attrs := make([]string, 0, 4)
+	styles := make([]string, 0, 4)
+	if textStyleMark != nil {
+		if fontAssetID := strings.TrimSpace(textStyleMark.attrString("fontAssetId")); fontAssetID != "" {
+			attrs = append(attrs, `data-platform-font-id="`+htmlEscape(fontAssetID)+`"`)
+		}
+		if platformFontFamily := strings.TrimSpace(textStyleMark.attrString("platformFontFamily")); platformFontFamily != "" {
+			attrs = append(attrs, `data-platform-font-family="`+htmlEscape(platformFontFamily)+`"`)
+		}
+		if fontFamily := strings.TrimSpace(textStyleMark.attrString("fontFamily")); fontFamily != "" {
+			styles = append(styles, `font-family:`+htmlEscape(fontFamily))
+		}
+		if fontSize := strings.TrimSpace(textStyleMark.attrString("fontSize")); fontSize != "" {
+			attrs = append(attrs, `data-font-size="`+htmlEscape(fontSize)+`"`)
+			styles = append(styles, `font-size:`+htmlEscape(fontSize))
+		}
+		if color := strings.TrimSpace(textStyleMark.attrString("color")); color != "" {
+			styles = append(styles, `color:`+htmlEscape(color))
+		}
+	}
+	if highlightMark != nil {
+		color := strings.TrimSpace(highlightMark.attrString("color"))
+		if color == "" {
+			color = "#fef08a"
+		}
+		styles = append(styles, `background-color:`+htmlEscape(color))
+	}
+
+	if len(attrs) == 0 && len(styles) == 0 {
+		return content
+	}
+
+	if len(styles) > 0 {
+		attrs = append(attrs, `style="`+strings.Join(styles, "; ")+`"`)
+	}
+
+	tag := "span"
+	if highlightMark != nil {
+		tag = "mark"
+	}
+	return `<` + tag + ` ` + strings.Join(attrs, " ") + `>` + content + `</` + tag + `>`
 }
 
 func htmlEscape(input string) string {

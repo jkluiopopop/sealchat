@@ -32,10 +32,11 @@ type PlatformFontAsset struct {
 	SubsetObjectKey     string                   `json:"subsetObjectKey"`
 	ManifestStorageType StorageType              `json:"manifestStorageType" gorm:"type:varchar(16)"`
 	ManifestObjectKey   string                   `json:"manifestObjectKey"`
-	PreviewText         string                   `json:"previewText"`
 	SourceFileName      string                   `json:"sourceFileName"`
 	SourceMimeType      string                   `json:"sourceMimeType"`
 	SourceSize          int64                    `json:"sourceSize"`
+	StorageFileCount    int64                    `json:"storageFileCount"`
+	StorageTotalBytes   int64                    `json:"storageTotalBytes"`
 	SubsetCount         int                      `json:"subsetCount"`
 	LastError           string                   `json:"lastError"`
 	CreatedBy           string                   `json:"createdBy" gorm:"index"`
@@ -44,4 +45,3 @@ type PlatformFontAsset struct {
 }
 
 func (*PlatformFontAsset) TableName() string { return "platform_font_assets" }
-

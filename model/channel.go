@@ -255,9 +255,6 @@ func (c *ChannelModel) ToProtocolType() *protocol.Channel {
 func ChannelPublicNew(channelID string, ch *ChannelModel, creatorId string) *ChannelModel {
 	ch.ID = channelID
 	ch.UserID = creatorId
-	if !ch.BuiltInDiceEnabled && !ch.BotFeatureEnabled {
-		ch.BuiltInDiceEnabled = true
-	}
 
 	db.Create(ch)
 	return ch

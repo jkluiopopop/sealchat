@@ -36,6 +36,10 @@ type statusSummary struct {
 	MessageCharCountOOC   int64 `json:"messageCharCountOoc"`
 	AttachmentCount       int64 `json:"attachmentCount"`
 	AttachmentBytes       int64 `json:"attachmentBytes"`
+	AttachmentImageCount  int64 `json:"attachmentImageCount"`
+	AttachmentImageBytes  int64 `json:"attachmentImageBytes"`
+	AttachmentFontCount   int64 `json:"attachmentFontCount"`
+	AttachmentFontBytes   int64 `json:"attachmentFontBytes"`
 	IntervalSeconds       int   `json:"intervalSeconds"`
 	RetentionDays         int   `json:"retentionDays"`
 }
@@ -58,6 +62,10 @@ type statusPoint struct {
 	MessageCount          int64 `json:"messageCount"`
 	AttachmentCount       int64 `json:"attachmentCount"`
 	AttachmentBytes       int64 `json:"attachmentBytes"`
+	AttachmentImageCount  int64 `json:"attachmentImageCount"`
+	AttachmentImageBytes  int64 `json:"attachmentImageBytes"`
+	AttachmentFontCount   int64 `json:"attachmentFontCount"`
+	AttachmentFontBytes   int64 `json:"attachmentFontBytes"`
 }
 
 var (
@@ -171,6 +179,20 @@ func buildSummary(sample *model.ServiceMetricSample, collector *metrics.Collecto
 	if sample == nil {
 		sample = &model.ServiceMetricSample{TimestampMs: time.Now().UnixMilli()}
 	}
+	attachmentCount := sample.AttachmentCount
+	attachmentBytes := sample.AttachmentBytes
+	attachmentImageCount := sample.AttachmentImageCount
+	attachmentImageBytes := sample.AttachmentImageBytes
+	attachmentFontCount := sample.AttachmentFontCount
+	attachmentFontBytes := sample.AttachmentFontBytes
+	if attachmentStats, err := metrics.LoadAttachmentStatusStats(time.Now()); err == nil && attachmentStats != nil {
+		attachmentCount = attachmentStats.TotalCount
+		attachmentBytes = attachmentStats.TotalBytes
+		attachmentImageCount = attachmentStats.ImageCount
+		attachmentImageBytes = attachmentStats.ImageBytes
+		attachmentFontCount = attachmentStats.FontCount
+		attachmentFontBytes = attachmentStats.FontBytes
+	}
 	wsSnapshot := getWsConnectionSnapshot()
 	intervalSeconds := 120
 	retentionDays := 7
@@ -203,8 +225,12 @@ func buildSummary(sample *model.ServiceMetricSample, collector *metrics.Collecto
 		MessageCharCount:      sample.MessageCharCount,
 		MessageCharCountIC:    sample.MessageCharCountIC,
 		MessageCharCountOOC:   sample.MessageCharCountOOC,
-		AttachmentCount:       sample.AttachmentCount,
-		AttachmentBytes:       sample.AttachmentBytes,
+		AttachmentCount:       attachmentCount,
+		AttachmentBytes:       attachmentBytes,
+		AttachmentImageCount:  attachmentImageCount,
+		AttachmentImageBytes:  attachmentImageBytes,
+		AttachmentFontCount:   attachmentFontCount,
+		AttachmentFontBytes:   attachmentFontBytes,
 		IntervalSeconds:       intervalSeconds,
 		RetentionDays:         retentionDays,
 	}
@@ -226,6 +252,10 @@ func sampleToPoint(sample *model.ServiceMetricSample) statusPoint {
 		MessageCount:          sample.MessageCount,
 		AttachmentCount:       sample.AttachmentCount,
 		AttachmentBytes:       sample.AttachmentBytes,
+		AttachmentImageCount:  sample.AttachmentImageCount,
+		AttachmentImageBytes:  sample.AttachmentImageBytes,
+		AttachmentFontCount:   sample.AttachmentFontCount,
+		AttachmentFontBytes:   sample.AttachmentFontBytes,
 	}
 }
 

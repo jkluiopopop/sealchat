@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, shallowRef,
 import { useMessage } from 'naive-ui';
 import type { MentionOption } from 'naive-ui';
 import type { Editor } from '@tiptap/vue-3';
+import { Plugin } from 'prosemirror-state';
 import { loadTipTapBundle } from '@/utils/tiptap-loader';
 import { listPlatformFonts } from '@/services/font/platformFontApi';
 import { ensurePlatformFontLoaded } from '@/services/font/platformFontRegistry';
@@ -82,12 +83,15 @@ const editorElement = ref<HTMLElement | null>(null);
 const isInitializing = ref(true);
 const isFocused = ref(false);
 const isSyncingFromProps = ref(false);
+const editorStateVersion = ref(0);
 const isComposing = ref(false);
 const isMobile = ref(false);
 const fontSelectorExpanded = ref(false);
 const desktopFontSelectorExpanded = ref(false);
 const savedEditorSelectionRange = ref<{ start: number; end: number } | null>(null);
 const MOBILE_BREAKPOINT = 768;
+const RICH_CONTENT_PARSE_OPTIONS = { preserveWhitespace: 'full' as const };
+const SILENT_SET_CONTENT_OPTIONS = { emitUpdate: false, parseOptions: RICH_CONTENT_PARSE_OPTIONS };
 
 // Mention 面板状态
 const mentionVisible = ref(false);
@@ -372,6 +376,59 @@ const restoreEditorSelection = () => {
   ed.chain().setTextSelection({ from: safeStart, to: safeEnd }).run();
 };
 
+const syncToolbarStateFromEditor = () => {
+  const ed = editor.value;
+  if (!ed) {
+    selectedPlatformFontId.value = null;
+    selectedFontSize.value = null;
+    selectedBlockType.value = 'paragraph';
+    return;
+  }
+  const attrs = ed.getAttributes('textStyle') as Record<string, any>;
+  selectedPlatformFontId.value = typeof attrs?.fontAssetId === 'string' ? attrs.fontAssetId : null;
+  selectedFontSize.value = typeof attrs?.fontSize === 'string' ? attrs.fontSize : null;
+  if (ed.isActive('heading', { level: 1 })) {
+    selectedBlockType.value = 'heading-1';
+  } else if (ed.isActive('heading', { level: 2 })) {
+    selectedBlockType.value = 'heading-2';
+  } else if (ed.isActive('heading', { level: 3 })) {
+    selectedBlockType.value = 'heading-3';
+  } else {
+    selectedBlockType.value = 'paragraph';
+  }
+  primePlatformFontPreview(selectedPlatformFontId.value);
+};
+
+const bumpEditorStateVersion = () => {
+  editorStateVersion.value += 1;
+  syncToolbarStateFromEditor();
+};
+
+const runEditorCommandWithSelection = (command: (chain: any) => void) => {
+  const ed = editor.value;
+  if (!ed) {
+    return false;
+  }
+  restoreEditorSelection();
+  const chain = ed.chain().focus();
+  command(chain);
+  const result = chain.run();
+  rememberEditorSelection();
+  bumpEditorStateVersion();
+  return result;
+};
+
+const markToolbarPickerTriggerInteraction = (event: PointerEvent | MouseEvent) => {
+  event.preventDefault();
+  rememberEditorSelection();
+  markOverlayInteraction();
+};
+
+const closeToolbarPopovers = () => {
+  blockTypePopoverShow.value = false;
+  fontSizePopoverShow.value = false;
+};
+
 const scrollActiveMentionIntoView = () => {
   nextTick(() => {
     const container = mentionDropdownRef.value;
@@ -550,6 +607,8 @@ watch([mentionVisible, mentionFilteredOptions], () => {
 // 颜色选择器状态
 const highlightColorPopoverShow = ref(false);
 const textColorPopoverShow = ref(false);
+const blockTypePopoverShow = ref(false);
+const fontSizePopoverShow = ref(false);
 
 // 链接弹窗状态
 const linkModalShow = ref(false);
@@ -757,6 +816,24 @@ const customTextColor = ref('#1f2937');
 const platformFonts = ref<PlatformFontAsset[]>([]);
 const platformFontLoading = ref(false);
 const selectedPlatformFontId = ref<string | null>(null);
+const selectedFontSize = ref<string | null>(null);
+const selectedBlockType = ref<'paragraph' | 'heading-1' | 'heading-2' | 'heading-3'>('paragraph');
+const customFontSizeInput = ref('');
+const blockTypeOptions = [
+  { value: 'paragraph', shortLabel: 'P', label: '正文' },
+  { value: 'heading-1', shortLabel: 'H1', label: '标题 1' },
+  { value: 'heading-2', shortLabel: 'H2', label: '标题 2' },
+  { value: 'heading-3', shortLabel: 'H3', label: '标题 3' },
+] as const;
+const fontSizeOptions = [
+  { value: null, shortLabel: 'A', label: '默认字号' },
+  { value: '8px', shortLabel: '8', label: '8 px' },
+  { value: '12px', shortLabel: '12', label: '12 px' },
+  { value: '16px', shortLabel: '16', label: '16 px' },
+  { value: '24px', shortLabel: '24', label: '24 px' },
+  { value: '32px', shortLabel: '32', label: '32 px' },
+  { value: '48px', shortLabel: '48', label: '48 px' },
+] as const;
 const {
   platformFontOptions,
   renderPlatformFontLabel,
@@ -807,6 +884,44 @@ const applyCustomHighlightColor = () => {
 
 const applyCustomTextColor = () => {
   setTextColor(customTextColor.value);
+};
+
+const currentBlockTypeOption = computed(() => {
+  void editorStateVersion.value;
+  return blockTypeOptions.find((option) => option.value === selectedBlockType.value) || blockTypeOptions[0];
+});
+
+const currentFontSizeOption = computed(() => {
+  void editorStateVersion.value;
+  const matched = fontSizeOptions.find((option) => option.value === selectedFontSize.value);
+  if (matched) {
+    return matched;
+  }
+  if (selectedFontSize.value) {
+    const shortLabel = selectedFontSize.value.replace(/px$/i, '');
+    return {
+      value: selectedFontSize.value,
+      shortLabel,
+      label: `${shortLabel} px`,
+    };
+  }
+  return fontSizeOptions[0];
+});
+
+const normalizeFontSizeValue = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const normalized = trimmed.toLowerCase().endsWith('px') ? trimmed.slice(0, -2).trim() : trimmed;
+  if (!/^\d+$/.test(normalized)) {
+    return null;
+  }
+  const size = Number.parseInt(normalized, 10);
+  if (!Number.isFinite(size) || size < 1 || size > 200) {
+    return null;
+  }
+  return `${size}px`;
 };
 
 const EMPTY_DOC = {
@@ -874,6 +989,25 @@ const initEditor = async () => {
 
     EditorContent = EditorContentComp;
     BubbleMenu = BubbleMenuComp;
+
+    const preserveRichTextInputWhitespace = () => Extension.create({
+      name: 'preserveRichTextInputWhitespace',
+      addProseMirrorPlugins() {
+        return [
+          new Plugin({
+            props: {
+              handleTextInput(view: any, from: number, to: number, text: string) {
+                if (text !== ' ') {
+                  return false;
+                }
+                view.dispatch(view.state.tr.insertText(text, from, to).scrollIntoView());
+                return true;
+              },
+            },
+          }),
+        ];
+      },
+    });
 
     const SatoriMention = TiptapNodeClass.create({
       name: 'satoriMention',
@@ -943,6 +1077,17 @@ const initEditor = async () => {
                 renderHTML: (attributes: Record<string, any>) => {
                   if (!attributes.fontFamily) return {};
                   return { style: `font-family: ${attributes.fontFamily}` };
+                },
+              },
+              fontSize: {
+                default: null,
+                parseHTML: (element: HTMLElement) => element.style.fontSize || element.getAttribute('data-font-size'),
+                renderHTML: (attributes: Record<string, any>) => {
+                  if (!attributes.fontSize) return {};
+                  return {
+                    'data-font-size': attributes.fontSize,
+                    style: `font-size: ${attributes.fontSize}`,
+                  };
                 },
               },
             },
@@ -1025,7 +1170,9 @@ const initEditor = async () => {
     // 创建编辑器实例
     editor.value = new EditorClass({
       content: props.modelValue || '<p></p>',
+      parseOptions: RICH_CONTENT_PARSE_OPTIONS,
       extensions: [
+        preserveRichTextInputWhitespace(),
         SatoriMention,
         SmartLinkNode,
         StarterKit.configure({
@@ -1129,6 +1276,7 @@ const initEditor = async () => {
         const json = ed.getJSON();
         const serializedJson = serializeMentionNodesToTokens(json);
         const jsonString = JSON.stringify(serializedJson);
+        bumpEditorStateVersion();
         isSyncingFromProps.value = true;
         emit('update:modelValue', jsonString);
         checkMentionTrigger(ed);
@@ -1139,10 +1287,12 @@ const initEditor = async () => {
       onSelectionUpdate: ({ editor: ed }) => {
         editor.value = ed as Editor;
         rememberEditorSelection();
+        bumpEditorStateVersion();
       },
       onFocus: () => {
         isFocused.value = true;
         rememberEditorSelection();
+        bumpEditorStateVersion();
         emit('focus');
       },
       onBlur: ({ event }) => {
@@ -1158,17 +1308,19 @@ const initEditor = async () => {
       onCreate: ({ editor: ed }) => {
         // 初始化完成后，如果有内容则设置
         if (!props.modelValue) {
-          ed.commands.setContent(cloneEmptyDoc(), false);
+          ed.commands.setContent(cloneEmptyDoc(), SILENT_SET_CONTENT_OPTIONS);
+          bumpEditorStateVersion();
           return;
         }
         try {
           const json = JSON.parse(props.modelValue);
           const normalized = normalizeMentionTokensInDoc(json);
-          ed.commands.setContent(normalized, false);
+          ed.commands.setContent(normalized, SILENT_SET_CONTENT_OPTIONS);
         } catch {
           // 如果不是 JSON，当作纯文本
-          ed.commands.setContent(props.modelValue, false);
+          ed.commands.setContent(props.modelValue, SILENT_SET_CONTENT_OPTIONS);
         }
+        bumpEditorStateVersion();
       },
     });
 
@@ -1185,8 +1337,9 @@ watch(() => props.modelValue, (newValue) => {
   if (isSyncingFromProps.value) return;
 
   if (!newValue || newValue.trim() === '') {
-    editor.value.commands.setContent(cloneEmptyDoc(), false);
+    editor.value.commands.setContent(cloneEmptyDoc(), SILENT_SET_CONTENT_OPTIONS);
     editor.value.commands.setTextSelection(0);
+    bumpEditorStateVersion();
     return;
   }
 
@@ -1196,7 +1349,8 @@ watch(() => props.modelValue, (newValue) => {
     const currentSerialized = JSON.stringify(serializeMentionNodesToTokens(editor.value.getJSON()));
     const incomingSerialized = JSON.stringify(serializeMentionNodesToTokens(normalizedIncoming));
     if (currentSerialized !== incomingSerialized) {
-      editor.value.commands.setContent(normalizedIncoming, false);
+      editor.value.commands.setContent(normalizedIncoming, SILENT_SET_CONTENT_OPTIONS);
+      bumpEditorStateVersion();
     }
   } catch {
     // 非 JSON 格式，跳过
@@ -1285,8 +1439,20 @@ const toggleCodeBlock = () => editor.value?.chain().focus().toggleCodeBlock().ru
 const toggleBulletList = () => editor.value?.chain().focus().toggleBulletList().run();
 const toggleOrderedList = () => editor.value?.chain().focus().toggleOrderedList().run();
 const toggleBlockquote = () => editor.value?.chain().focus().toggleBlockquote().run();
-const setHeading = (level: 1 | 2 | 3) => editor.value?.chain().focus().toggleHeading({ level }).run();
-const setParagraph = () => editor.value?.chain().focus().setParagraph().run();
+const applyBlockType = (value: 'paragraph' | 'heading-1' | 'heading-2' | 'heading-3') => {
+  runEditorCommandWithSelection((chain) => {
+    if (value === 'paragraph') {
+      chain.setParagraph();
+    } else {
+      const level = Number(value.replace('heading-', '')) as 1 | 2 | 3;
+      chain.setHeading({ level });
+    }
+  });
+  selectedBlockType.value = value;
+  blockTypePopoverShow.value = false;
+};
+const setHeading = (level: 1 | 2 | 3) => applyBlockType(`heading-${level}` as 'heading-1' | 'heading-2' | 'heading-3');
+const setParagraph = () => applyBlockType('paragraph');
 const setTextAlign = (align: 'left' | 'center' | 'right' | 'justify') => editor.value?.chain().focus().setTextAlign(align).run();
 const toggleHighlight = () => editor.value?.chain().focus().toggleHighlight().run();
 const insertHorizontalRule = () => editor.value?.chain().focus().setHorizontalRule().run();
@@ -1344,12 +1510,13 @@ const refreshPlatformFonts = async () => {
 
 const applyPlatformFont = async (fontId: string | null) => {
   if (!fontId) {
-    restoreEditorSelection();
-    editor.value?.chain().focus().setMark('textStyle', {
-      fontAssetId: null,
-      platformFontFamily: null,
-      fontFamily: null,
-    }).run();
+    runEditorCommandWithSelection((chain) => {
+      chain.setMark('textStyle', {
+        fontAssetId: null,
+        platformFontFamily: null,
+        fontFamily: null,
+      });
+    });
     selectedPlatformFontId.value = null;
     if (isMobile.value) {
       closeFontSelector();
@@ -1362,16 +1529,66 @@ const applyPlatformFont = async (fontId: string | null) => {
     return;
   }
   const family = await ensurePlatformFontLoaded(target.id, target.family);
-  restoreEditorSelection();
-  editor.value?.chain().focus().setMark('textStyle', {
-    fontAssetId: target.id,
-    platformFontFamily: family,
-    fontFamily: `"${family}"`,
-  }).run();
+  runEditorCommandWithSelection((chain) => {
+    chain.setMark('textStyle', {
+      fontAssetId: target.id,
+      platformFontFamily: family,
+      fontFamily: `"${family}"`,
+    });
+  });
   selectedPlatformFontId.value = target.id;
   if (isMobile.value) {
     closeFontSelector();
   }
+};
+
+const applyFontSize = (size: string | null) => {
+  runEditorCommandWithSelection((chain) => {
+    chain.setMark('textStyle', {
+      fontSize: size,
+    });
+  });
+  selectedFontSize.value = size;
+  fontSizePopoverShow.value = false;
+};
+
+const applyFontSizeOption = (event: MouseEvent, size: string | null) => {
+  event.preventDefault();
+  markOverlayInteraction();
+  applyFontSize(size);
+};
+
+const applyCustomFontSize = () => {
+  const normalized = normalizeFontSizeValue(customFontSizeInput.value);
+  if (!normalized) {
+    message.warning('请输入 1 到 200 的字号，可省略 px');
+    return;
+  }
+  customFontSizeInput.value = normalized.replace(/px$/i, '');
+  applyFontSize(normalized);
+};
+
+const applyBlockTypeOption = (event: MouseEvent, value: 'paragraph' | 'heading-1' | 'heading-2' | 'heading-3') => {
+  event.preventDefault();
+  markOverlayInteraction();
+  applyBlockType(value);
+};
+
+const triggerBlockTypePopover = (show: boolean) => {
+  if (show) {
+    closeToolbarPopovers();
+    rememberEditorSelection();
+  }
+  blockTypePopoverShow.value = show;
+};
+
+const triggerFontSizePopover = (show: boolean) => {
+  if (show) {
+    closeToolbarPopovers();
+    rememberEditorSelection();
+    customFontSizeInput.value = selectedFontSize.value?.replace(/px$/i, '') || '';
+  }
+  fontSizePopoverShow.value = show;
 };
 
 const removeTextColor = () => {
@@ -1541,9 +1758,7 @@ const isActive = (name: string, attrs?: Record<string, any>) => {
 
 watch(editor, (instance) => {
   if (!instance) return;
-  const attrs = instance.getAttributes('textStyle') as Record<string, any>;
-  selectedPlatformFontId.value = typeof attrs?.fontAssetId === 'string' ? attrs.fontAssetId : null;
-  primePlatformFontPreview(selectedPlatformFontId.value);
+  bumpEditorStateVersion();
 });
 
 onMounted(() => {
@@ -1563,6 +1778,8 @@ const hasOpenOverlay = () => {
   return mentionVisible.value
     || highlightColorPopoverShow.value
     || textColorPopoverShow.value
+    || blockTypePopoverShow.value
+    || fontSizePopoverShow.value
     || linkModalShow.value
     || quickIFormModalShow.value;
 };
@@ -1625,42 +1842,88 @@ defineExpose({
       <!-- 固定工具栏 -->
       <div class="tiptap-toolbar">
         <div class="tiptap-toolbar__group">
-          <n-button
-            size="small"
-            text
-            :type="isActive('paragraph') ? 'primary' : 'default'"
-            @click="setParagraph"
-            title="正文"
+          <n-popover
+            trigger="click"
+            placement="bottom-start"
+            :show="blockTypePopoverShow"
+            @update:show="triggerBlockTypePopover"
           >
-            P
-          </n-button>
-          <n-button
-            size="small"
-            text
-            :type="isActive('heading', { level: 1 }) ? 'primary' : 'default'"
-            @click="setHeading(1)"
-            title="标题 1"
+            <template #trigger>
+              <div @pointerdown="markToolbarPickerTriggerInteraction">
+                <n-button
+                  size="small"
+                  text
+                  class="tiptap-toolbar-picker-btn"
+                  :type="selectedBlockType !== 'paragraph' ? 'primary' : 'default'"
+                  title="标题层级"
+                >
+                  <span class="tiptap-toolbar-picker-btn__value">{{ currentBlockTypeOption.shortLabel }}</span>
+                  <span class="tiptap-toolbar-picker-btn__caret">▾</span>
+                </n-button>
+              </div>
+            </template>
+            <div class="tiptap-toolbar-picker" @pointerdown.stop="markOverlayInteraction">
+              <button
+                v-for="option in blockTypeOptions"
+                :key="option.value"
+                type="button"
+                :class="['tiptap-toolbar-picker__item', { 'is-active': option.value === selectedBlockType }]"
+                @mousedown.prevent="applyBlockTypeOption($event, option.value)"
+              >
+                <span class="tiptap-toolbar-picker__item-label">{{ option.label }}</span>
+                <span class="tiptap-toolbar-picker__item-meta">{{ option.shortLabel }}</span>
+              </button>
+            </div>
+          </n-popover>
+        </div>
+
+        <div class="tiptap-toolbar__group">
+          <n-popover
+            trigger="click"
+            placement="bottom-start"
+            :show="fontSizePopoverShow"
+            @update:show="triggerFontSizePopover"
           >
-            H1
-          </n-button>
-          <n-button
-            size="small"
-            text
-            :type="isActive('heading', { level: 2 }) ? 'primary' : 'default'"
-            @click="setHeading(2)"
-            title="标题 2"
-          >
-            H2
-          </n-button>
-          <n-button
-            size="small"
-            text
-            :type="isActive('heading', { level: 3 }) ? 'primary' : 'default'"
-            @click="setHeading(3)"
-            title="标题 3"
-          >
-            H3
-          </n-button>
+            <template #trigger>
+              <div @pointerdown="markToolbarPickerTriggerInteraction">
+                <n-button
+                  size="small"
+                  text
+                  class="tiptap-toolbar-picker-btn"
+                  :type="selectedFontSize ? 'primary' : 'default'"
+                  title="字体大小"
+                >
+                  <span class="tiptap-toolbar-picker-btn__value">{{ currentFontSizeOption.shortLabel }}</span>
+                  <span class="tiptap-toolbar-picker-btn__caret">▾</span>
+                </n-button>
+              </div>
+            </template>
+            <div class="tiptap-toolbar-picker" @pointerdown.stop="markOverlayInteraction">
+              <button
+                v-for="option in fontSizeOptions"
+                :key="option.label"
+                type="button"
+                :class="['tiptap-toolbar-picker__item', { 'is-active': option.value === selectedFontSize }]"
+                @mousedown.prevent="applyFontSizeOption($event, option.value)"
+              >
+                <span class="tiptap-toolbar-picker__item-label">{{ option.label }}</span>
+                <span class="tiptap-toolbar-picker__item-meta">{{ option.shortLabel }}</span>
+              </button>
+              <div class="tiptap-toolbar-picker__custom" @mousedown.stop>
+                <n-input
+                  v-model:value="customFontSizeInput"
+                  size="tiny"
+                  placeholder="自定义 px"
+                  @keydown.enter.prevent="applyCustomFontSize"
+                >
+                  <template #suffix>px</template>
+                </n-input>
+                <n-button size="tiny" secondary @mousedown.prevent="applyCustomFontSize">
+                  应用
+                </n-button>
+              </div>
+            </div>
+          </n-popover>
         </div>
 
         <div class="tiptap-toolbar__divider"></div>
@@ -2334,6 +2597,24 @@ defineExpose({
   gap: 0.25rem;
 }
 
+.tiptap-toolbar-picker-btn {
+  gap: 0.2rem;
+}
+
+.tiptap-toolbar-picker-btn__value {
+  min-width: 1.25rem;
+  text-align: center;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.tiptap-toolbar-picker-btn__caret {
+  font-size: 0.625rem;
+  opacity: 0.75;
+  line-height: 1;
+}
+
 .tiptap-toolbar__group--font {
   flex: 0 0 7.5rem;
   min-width: 7.5rem;
@@ -2481,6 +2762,61 @@ defineExpose({
   margin: 0 0.25rem;
 }
 
+.tiptap-toolbar-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 9rem;
+  padding: 0.375rem;
+}
+
+.tiptap-toolbar-picker__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  padding: 0.45rem 0.6rem;
+  color: var(--sc-text-primary, #0f172a);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.tiptap-toolbar-picker__item:hover,
+.tiptap-toolbar-picker__item.is-active {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.tiptap-toolbar-picker__item.is-active {
+  color: #2563eb;
+}
+
+.tiptap-toolbar-picker__item-label {
+  font-size: 0.8125rem;
+  text-align: left;
+}
+
+.tiptap-toolbar-picker__item-meta {
+  font-size: 0.75rem;
+  opacity: 0.72;
+}
+
+.tiptap-toolbar-picker__custom {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.2rem 0.15rem;
+  border-top: 1px solid var(--sc-border-mute, #e5e7eb);
+  margin-top: 0.15rem;
+}
+
+.tiptap-toolbar-picker__custom :deep(.n-input) {
+  flex: 1 1 auto;
+}
+
 /* 颜色选择器样式 */
 .tiptap-color-picker {
   display: grid;
@@ -2620,6 +2956,23 @@ defineExpose({
   border-bottom-color: #60a5fa;
 }
 
+:root[data-display-palette='night'] .tiptap-toolbar-picker__item {
+  color: #e5e7eb;
+}
+
+:root[data-display-palette='night'] .tiptap-toolbar-picker__item:hover,
+:root[data-display-palette='night'] .tiptap-toolbar-picker__item.is-active {
+  background: rgba(96, 165, 250, 0.18);
+}
+
+:root[data-display-palette='night'] .tiptap-toolbar-picker__item.is-active {
+  color: #93c5fd;
+}
+
+:root[data-display-palette='night'] .tiptap-toolbar-picker__custom {
+  border-top-color: #3f3f5a;
+}
+
 :root[data-display-palette='night'] .mention-dropdown {
   background: var(--sc-bg-surface, #1e1e2e);
   border-color: var(--sc-border-mute, #3f3f5a);
@@ -2649,6 +3002,7 @@ defineExpose({
   padding: 0.75rem 1rem;
   outline: none;
   min-height: 3rem;
+  white-space: break-spaces;
   color: #1f2937; /* 日间模式默认文字颜色 */
   font-size: var(--chat-font-size, 0.9375rem);
   line-height: var(--chat-line-height, 1.6);

@@ -9,6 +9,15 @@ type MessageStatusStats struct {
 	OOCChars      int64 `json:"oocChars"`
 }
 
+type AttachmentStatusStats struct {
+	TotalCount int64 `json:"totalCount"`
+	TotalBytes int64 `json:"totalBytes"`
+	ImageCount int64 `json:"imageCount"`
+	ImageBytes int64 `json:"imageBytes"`
+	FontCount  int64 `json:"fontCount"`
+	FontBytes  int64 `json:"fontBytes"`
+}
+
 // CountActiveUsers 返回未禁用的非 BOT 注册用户数量。
 func CountActiveUsers() (int64, error) {
 	var count int64
@@ -101,4 +110,47 @@ func SumAttachmentSizes() (int64, error) {
 		Select("COALESCE(SUM(size), 0)").
 		Scan(&total).Error
 	return total, err
+}
+
+// CountAttachmentStatusStats 返回正式图片附件与平台字体资源的数量/大小统计。
+func CountAttachmentStatusStats() (*AttachmentStatusStats, error) {
+	type attachmentResult struct {
+		ImageCount int64 `gorm:"column:image_count"`
+		ImageBytes int64 `gorm:"column:image_bytes"`
+	}
+	type fontResult struct {
+		FontCount int64 `gorm:"column:font_count"`
+		FontBytes int64 `gorm:"column:font_bytes"`
+	}
+
+	var attachment attachmentResult
+	if err := db.Model(&AttachmentModel{}).
+		Where("is_temp = ?", false).
+		Select(
+			"COALESCE(SUM(CASE WHEN LOWER(COALESCE(mime_type, '')) LIKE 'image/%' THEN 1 ELSE 0 END), 0) AS image_count, " +
+				"COALESCE(SUM(CASE WHEN LOWER(COALESCE(mime_type, '')) LIKE 'image/%' THEN size ELSE 0 END), 0) AS image_bytes",
+		).
+		Scan(&attachment).Error; err != nil {
+		return nil, err
+	}
+
+	var font fontResult
+	if err := db.Model(&PlatformFontAsset{}).
+		Where("status = ?", PlatformFontStatusReady).
+		Select(
+			"COALESCE(SUM(CASE WHEN storage_file_count > 0 THEN storage_file_count ELSE 1 END), 0) AS font_count, " +
+				"COALESCE(SUM(CASE WHEN storage_total_bytes > 0 THEN storage_total_bytes ELSE source_size END), 0) AS font_bytes",
+		).
+		Scan(&font).Error; err != nil {
+		return nil, err
+	}
+
+	return &AttachmentStatusStats{
+		TotalCount: attachment.ImageCount + font.FontCount,
+		TotalBytes: attachment.ImageBytes + font.FontBytes,
+		ImageCount: attachment.ImageCount,
+		ImageBytes: attachment.ImageBytes,
+		FontCount:  font.FontCount,
+		FontBytes:  font.FontBytes,
+	}, nil
 }

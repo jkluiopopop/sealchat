@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ const (
 
 	WorldChannelDefaultDiceModeBuiltin = "builtin"
 	WorldChannelDefaultDiceModeBot     = "bot"
+	WorldChannelDefaultDiceModeDisabled = "disabled"
 
 	WorldRoleOwner     = "owner"
 	WorldRoleAdmin     = "admin"
@@ -39,6 +41,8 @@ type WorldModel struct {
 	StrictWhisperPrivacy       bool    `json:"strictWhisperPrivacy" gorm:"default:true"`       // 悄悄话严格保密：开启后管理员不可旁路查看
 	ChannelDefaultDiceMode     string  `json:"channelDefaultDiceMode" gorm:"size:24;default:builtin"`
 	ChannelDefaultBotID        string  `json:"channelDefaultBotId" gorm:"size:100"`
+	ChannelDefaultBotIDsJSON   string  `json:"-" gorm:"type:text"`
+	ChannelDefaultEventBotIDsJSON string `json:"-" gorm:"type:text"`
 	CharacterCardBadgeTemplate string  `json:"characterCardBadgeTemplate" gorm:"size:512"` // 世界徽章模板
 	IsSystemDefault            bool    `json:"isSystemDefault" gorm:"default:false;index"` // 系统默认世界标识，仅允许一个
 	OwnerID                    string  `json:"ownerId" gorm:"size:100;index"`
@@ -49,6 +53,52 @@ type WorldModel struct {
 
 func (*WorldModel) TableName() string {
 	return "worlds"
+}
+
+func parseWorldBotIDs(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func (m *WorldModel) GetChannelDefaultBotIDs() []string {
+	return parseWorldBotIDs(m.ChannelDefaultBotIDsJSON)
+}
+
+func (m *WorldModel) GetChannelDefaultEventBotIDs() []string {
+	return parseWorldBotIDs(m.ChannelDefaultEventBotIDsJSON)
+}
+
+func (m *WorldModel) MarshalJSON() ([]byte, error) {
+	type worldModelAlias WorldModel
+	return json.Marshal(&struct {
+		*worldModelAlias
+		ChannelDefaultBotIDs      []string `json:"channelDefaultBotIds,omitempty"`
+		ChannelDefaultEventBotIDs []string `json:"channelDefaultEventBotIds,omitempty"`
+	}{
+		worldModelAlias:           (*worldModelAlias)(m),
+		ChannelDefaultBotIDs:      m.GetChannelDefaultBotIDs(),
+		ChannelDefaultEventBotIDs: m.GetChannelDefaultEventBotIDs(),
+	})
 }
 
 func (m *WorldModel) BeforeCreate(tx *gorm.DB) error {

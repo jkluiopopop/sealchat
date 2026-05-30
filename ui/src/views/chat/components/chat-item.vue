@@ -4371,6 +4371,11 @@ const handleRetrySend = () => {
   background-color: #fef08a;
   border-bottom-color: color-mix(in srgb, #f59e0b 28%, transparent);
   border-radius: 0.125rem;
+  display: inline;
+  line-height: inherit;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  padding: 0.08em 0.18em;
   margin: 0;
 }
 
@@ -4458,6 +4463,26 @@ const handleRetrySend = () => {
   border: none;
   border-top: 2px solid #e5e7eb;
   margin: 1rem 0;
+}
+
+.content.typo h1,
+.content.typo h2,
+.content.typo h3 {
+  margin: 0.75rem 0 0.45rem;
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+.content.typo h1 {
+  font-size: 1.75rem;
+}
+
+.content.typo h2 {
+  font-size: 1.5rem;
+}
+
+.content.typo h3 {
+  font-size: 1.25rem;
 }
 
 .content.typo p {

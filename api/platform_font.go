@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strings"
 
@@ -12,6 +15,7 @@ import (
 	"sealchat/model"
 	"sealchat/service"
 	"sealchat/service/storage"
+	"sealchat/utils"
 )
 
 func PlatformFontListPublicHandler(c *fiber.Ctx) error {
@@ -80,7 +84,15 @@ func PlatformFontSubsetManifestHandler(c *fiber.Ctx) error {
 	if item.Status != model.PlatformFontStatusReady || item.DeliveryMode != model.PlatformFontDeliverySubset || strings.TrimSpace(item.ManifestObjectKey) == "" {
 		return wrapErrorStatus(c, fiber.StatusNotFound, nil, "平台字体分片清单不存在")
 	}
-	return sendPlatformFontObject(c, item.ManifestStorageType, item.ManifestObjectKey, "application/json", item.ID+"-manifest.json")
+	manifest, err := loadPlatformFontSubsetManifest(item)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取平台字体分片清单失败")
+	}
+	webURL := ""
+	if cfg := utils.GetConfig(); cfg != nil {
+		webURL = cfg.WebUrl
+	}
+	return c.JSON(normalizePlatformFontSubsetManifestForResponse(webURL, item.ID, manifest))
 }
 
 func PlatformFontSubsetFileHandler(c *fiber.Ctx) error {
@@ -186,4 +198,61 @@ func sanitizePlatformFontFilename(value string) string {
 			return r
 		}
 	}, name)
+}
+
+func loadPlatformFontSubsetManifest(item *model.PlatformFontAsset) (*service.PlatformFontSubsetManifestData, error) {
+	if item == nil {
+		return nil, errors.New("platform font asset is nil")
+	}
+	if strings.TrimSpace(item.ManifestObjectKey) == "" {
+		return nil, errors.New("platform font manifest object key is empty")
+	}
+	if item.ManifestStorageType == model.StorageFontS3 {
+		manager := service.GetStorageManager()
+		if manager == nil {
+			return nil, errors.New("storage manager not initialized")
+		}
+		target := manager.ResolveAttachmentExportURL(context.Background(), convertPlatformFontStorageToBackend(item.ManifestStorageType), item.ManifestObjectKey)
+		if strings.TrimSpace(target) == "" {
+			return nil, errors.New("platform font manifest remote url is empty")
+		}
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, target, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("unexpected manifest status: %d", resp.StatusCode)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		return decodePlatformFontSubsetManifest(body)
+	}
+	localPath, err := service.ResolveLocalPlatformFontPath(item.ManifestObjectKey)
+	if err != nil {
+		return nil, err
+	}
+	body, err := os.ReadFile(localPath)
+	if err != nil {
+		return nil, err
+	}
+	return decodePlatformFontSubsetManifest(body)
+}
+
+func decodePlatformFontSubsetManifest(body []byte) (*service.PlatformFontSubsetManifestData, error) {
+	var manifest service.PlatformFontSubsetManifestData
+	if err := json.Unmarshal(body, &manifest); err != nil {
+		return nil, err
+	}
+	return &manifest, nil
+}
+
+func normalizePlatformFontSubsetManifestForResponse(webURL string, fontID string, manifest *service.PlatformFontSubsetManifestData) *service.PlatformFontSubsetManifestData {
+	return service.NormalizePlatformFontSubsetManifestURLs(fontID, webURL, manifest)
 }

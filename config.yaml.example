@@ -135,12 +135,14 @@
     local:
       uploadDir: ./sealchat-data/upload
       audioDir: ./sealchat-data/static/audio
+      fontDir: ./data/fonts
       tempDir: ./sealchat-data/temp
       baseUrl: ""   # 若通过 Nginx 暴露本地附件，可填例如 https://files.example.com
     s3:
       enabled: true
       attachmentsEnabled: true   # 附件/图片是否存入 S3
       audioEnabled: true         # 音频是否存入 S3
+      fontsEnabled: true         # 平台字体原文件/分片/manifest 是否存入 S3
       endpoint: https://cos.ap-region.myqcloud.com
       region: ap-region
       bucket: your-bucket-name

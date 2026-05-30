@@ -6,7 +6,6 @@ import type { PlatformFontAsset } from './platformFontTypes'
 type PlatformFontSelectOption = SelectOption & {
   fontAsset: PlatformFontAsset
   rawLabel: string
-  previewText: string
   previewFamily?: string
 }
 
@@ -20,10 +19,8 @@ type UsePlatformFontSelectPreviewOptions = {
   selectedId: Ref<string | null>
   menuClass: string
   immediateSelectedPreview?: boolean
-  showPreviewText?: boolean
 }
 
-const DEFAULT_PREVIEW_TEXT = '永字八法'
 const PREVIEW_ROOT_MARGIN = '120px'
 
 const previewFamilyCache = reactive<Record<string, string>>({})
@@ -41,11 +38,6 @@ const resolveDisplayLabel = (item: { displayName?: string | null; family?: strin
   const displayName = String(item.displayName || '').trim()
   const family = String(item.family || '').trim()
   return displayName && displayName !== family ? `${displayName} · ${family}` : (displayName || family)
-}
-
-const resolvePreviewText = (item: { previewText?: string | null }) => {
-  const previewText = String(item.previewText || '').trim()
-  return previewText || DEFAULT_PREVIEW_TEXT
 }
 
 const resolveInlineFontFamily = (item: { id?: string; family?: string | null }) => {
@@ -92,7 +84,7 @@ const buildLabelNode = (option: PlatformFontSelectOption) => {
   )
 }
 
-const buildOptionNodeWithPreview = (node: VNodeChild, option: PlatformFontSelectOption, showPreviewText: boolean) => {
+const buildOptionNodeWithPreview = (node: VNodeChild, option: PlatformFontSelectOption) => {
   return h(
     'div',
     {
@@ -101,29 +93,12 @@ const buildOptionNodeWithPreview = (node: VNodeChild, option: PlatformFontSelect
       'data-platform-font-id': option.fontAsset.id,
       'data-platform-font-family': option.fontAsset.family,
       'data-platform-font-label': option.rawLabel,
-      'data-platform-font-preview': option.previewText,
       'data-platform-font-weight': option.fontAsset.weight,
       'data-platform-font-style': option.fontAsset.style,
       onMouseenter: () => queuePreviewLoad(option.fontAsset),
     },
     [
       h('div', { class: 'platform-font-select-preview__meta' }, [node]),
-      ...(showPreviewText ? [
-        h(
-          'div',
-          {
-            class: 'platform-font-select-preview__sample',
-            style: option.previewFamily
-              ? {
-                  fontFamily: option.previewFamily,
-                  fontWeight: option.fontAsset.weight,
-                  fontStyle: option.fontAsset.style,
-                }
-              : undefined,
-          },
-          option.previewText,
-        ),
-      ] : []),
     ],
   )
 }
@@ -133,7 +108,6 @@ export const createPlatformFontSelectPreviewController = ({
   selectedId,
   menuClass,
   immediateSelectedPreview = true,
-  showPreviewText = false,
 }: UsePlatformFontSelectPreviewOptions) => {
   const observedMenus = new WeakSet<HTMLElement>()
   let menuObserver: IntersectionObserver | null = null
@@ -154,7 +128,6 @@ export const createPlatformFontSelectPreviewController = ({
           id: fontId,
           family,
           displayName: element.dataset.platformFontLabel || family,
-          previewText: element.dataset.platformFontPreview || DEFAULT_PREVIEW_TEXT,
           weight: element.dataset.platformFontWeight || '400',
           style: element.dataset.platformFontStyle || 'normal',
           status: 'ready',
@@ -187,7 +160,6 @@ export const createPlatformFontSelectPreviewController = ({
       label: resolveDisplayLabel(item),
       rawLabel: resolveDisplayLabel(item),
       value: item.id,
-      previewText: resolvePreviewText(item),
       previewFamily: resolveInlineFontFamily(item),
       fontAsset: item,
     }))
@@ -215,7 +187,7 @@ export const createPlatformFontSelectPreviewController = ({
   }
 
   const renderPlatformFontOption = ({ node, option }: RenderOptionInfo) => {
-    return buildOptionNodeWithPreview(node, option as PlatformFontSelectOption, showPreviewText)
+    return buildOptionNodeWithPreview(node, option as PlatformFontSelectOption)
   }
 
   if (immediateSelectedPreview) {

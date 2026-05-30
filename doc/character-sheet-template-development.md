@@ -175,6 +175,221 @@ sealchat.setRollDispatchMode('template');
 
 ---
 
+### 4.2 引用平台字库字体
+
+模板可以声明需要使用的平台字库字体。宿主页面会读取声明、代替 iframe 请求平台字体，并把生成好的 `@font-face` CSS 注入模板运行环境。这样不会放宽 iframe 沙箱，也能复用平台字库的分片加载机制。
+
+在 `<head>` 或 `<body>` 中加入一个 JSON 声明块：
+
+~~~html
+<script type="application/sealchat-fonts+json">
+{
+  "version": 1,
+  "global": "body",
+  "fonts": [
+    {
+      "key": "body",
+      "platformFontId": "平台字体ID",
+      "cssVar": "--font-body"
+    },
+    {
+      "key": "title",
+      "platformFontId": "另一个平台字体ID",
+      "cssVar": "--font-title"
+    }
+  ]
+}
+</script>
+~~~
+
+字段说明：
+
+- `version`: 当前固定为 `1`。
+- `global`: 可选。填 CSS 选择器时，宿主会把第一个字体应用到该选择器；填 `false` 表示只注入 CSS 变量，不自动应用。
+- `fonts[].key`: 模板内便于识别的名称。
+- `fonts[].platformFontId`: 平台字库里的字体 ID。
+- `fonts[].family`: 可选。覆盖字体族名称；通常不需要填写，宿主会使用平台字库元数据。
+- `fonts[].cssVar`: 可选。宿主会写入该 CSS 变量，模板用 `var(...)` 引用。
+
+CSS 使用方式：
+
+~~~html
+<style>
+  body {
+    font-family: var(--font-body), sans-serif;
+  }
+
+  .name,
+  .section-title {
+    font-family: var(--font-title), serif;
+  }
+</style>
+~~~
+
+注意：
+
+- 不要在模板内直接 `fetch('/api/v1/platform-fonts/...')` 或手写平台字体 URL。模板 iframe 是受限沙箱，直接请求可能没有认证上下文。
+- 分片字体会按模板当前可见文本选择需要的 unicode-range chunk；人物卡内容变化后，宿主会自动补充缺失分片。
+- 如果字体不可用或声明格式错误，模板仍会继续渲染，并回退到 CSS 中的后备字体。
+- 平台字体由管理员维护；模板开发者只引用 `platformFontId`，不上传字体文件。
+
+字体测试模板：
+
+把下面两个 `platformFontId` 替换成管理后台平台字库中的真实字体 ID。建议一个使用普通文本字体，另一个使用标题或装饰字体。预览时应看到：全局正文、角色名、属性数值分别使用声明的字体；包含中英日与符号文本时，分片字体会按可见字符补充分片。
+
+~~~html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <script type="application/sealchat-fonts+json">
+  {
+    "version": 1,
+    "global": "body",
+    "fonts": [
+      {
+        "key": "body",
+        "platformFontId": "替换为正文平台字体ID",
+        "cssVar": "--font-body"
+      },
+      {
+        "key": "accent",
+        "platformFontId": "替换为标题平台字体ID",
+        "cssVar": "--font-accent"
+      }
+    ]
+  }
+  </script>
+  <style>
+    :root {
+      --c-bg: #101418;
+      --c-panel: #17202a;
+      --c-border: #2f4052;
+      --c-text: #edf2f7;
+      --c-muted: #9fb0c3;
+      --c-accent: #f5c542;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 14px;
+      background: var(--c-bg);
+      color: var(--c-text);
+      font-family: var(--font-body), "Microsoft YaHei", sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .card {
+      border: 1px solid var(--c-border);
+      border-radius: 8px;
+      background: var(--c-panel);
+      padding: 14px;
+    }
+
+    .name {
+      color: var(--c-accent);
+      font-family: var(--font-accent), serif;
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .sample {
+      color: var(--c-muted);
+      margin-bottom: 12px;
+      word-break: break-word;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .stat {
+      border: 1px solid var(--c-border);
+      border-radius: 6px;
+      padding: 8px;
+      min-width: 0;
+    }
+
+    .stat-label {
+      color: var(--c-muted);
+      font-size: 12px;
+    }
+
+    .stat-value {
+      font-family: var(--font-accent), serif;
+      font-size: 20px;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" class="card"></div>
+  <script>
+    var _windowId = null;
+    window.sealchat = {
+      onUpdate: function(cb) {
+        window.addEventListener('message', function(e) {
+          if (e.source !== window.parent) return;
+          if (e.data && e.data.type === 'SEALCHAT_UPDATE') {
+            _windowId = e.data.payload.windowId;
+            cb(e.data.payload);
+          }
+        });
+      },
+      roll: function() {},
+      updateAttrs: function(attrs) {
+        if (!_windowId) return;
+        window.parent.postMessage({
+          type: 'SEALCHAT_EVENT',
+          version: 1,
+          windowId: _windowId,
+          action: 'UPDATE_ATTRS',
+          payload: { attrs: attrs }
+        }, '*');
+      }
+    };
+
+    function escapeHtml(text) {
+      var div = document.createElement('div');
+      div.textContent = String(text == null ? '' : text);
+      return div.innerHTML;
+    }
+
+    function render(data) {
+      var attrs = (data && data.attrs) || {};
+      var rows = [
+        ['力量', attrs['力量'] || 60],
+        ['侦查', attrs['侦查'] || 70],
+        ['意志', attrs['意志'] || 55]
+      ];
+      var html = '';
+      html += '<div class="name">' + escapeHtml((data && data.name) || '字体测试调查员') + '</div>';
+      html += '<div class="sample">Font chunk sample: SealChat 字体分片测试 日本語テスト Ω≈ç√∫˜µ≤≥÷</div>';
+      html += '<div class="grid">';
+      for (var i = 0; i < rows.length; i += 1) {
+        html += '<div class="stat">';
+        html += '<div class="stat-label">' + escapeHtml(rows[i][0]) + '</div>';
+        html += '<div class="stat-value">' + escapeHtml(rows[i][1]) + '</div>';
+        html += '</div>';
+      }
+      html += '</div>';
+      document.getElementById('app').innerHTML = html;
+    }
+
+    sealchat.onUpdate(render);
+  </script>
+</body>
+</html>
+~~~
+
+---
+
 ## 5. 示例一：默认掷骰窗口模式（保持系统默认流程）
 
 特点：不设置 setRollDispatchMode('template')，点击属性后走默认掷骰弹窗。

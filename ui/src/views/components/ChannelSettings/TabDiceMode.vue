@@ -5,6 +5,7 @@ import type { SChannel, UserInfo, UserRoleModel } from '@/types';
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { useCharacterCardStore } from '@/stores/characterCard';
+import WorldDiceDefaultsFields from '@/views/world/WorldDiceDefaultsFields.vue';
 
 const props = defineProps({
   channel: {
@@ -24,14 +25,17 @@ const message = useMessage();
 const diceModeOptions = [
   { label: '内置掷骰', value: 'builtin' },
   { label: 'BOT掷骰', value: 'bot' },
+  { label: '关闭掷骰', value: 'disabled' },
 ];
 
-const currentMode = ref<'builtin' | 'bot'>('builtin');
+const currentMode = ref<'builtin' | 'bot' | 'disabled'>('builtin');
 const currentBotIds = ref<string[]>([]);
 const currentPrimaryBotId = ref('');
 const currentEventBotIds = ref<string[]>([]);
-const worldMode = ref<'builtin' | 'bot'>('builtin');
+const worldMode = ref<'builtin' | 'bot' | 'disabled'>('builtin');
+const worldBotIds = ref<string[]>([]);
 const worldBotId = ref('');
+const worldEventBotIds = ref<string[]>([]);
 
 const botList = ref<UserInfo[]>([]);
 const botOptionsLoading = ref(false);
@@ -90,14 +94,33 @@ const worldSectionVisible = computed(() => !!worldId.value && canManageWorldDefa
 const resetCurrentModeFromChannel = () => {
   const channel = props.channel;
   const botEnabled = channel?.botFeatureEnabled === true;
-  currentMode.value = botEnabled ? 'bot' : 'builtin';
+  const builtInEnabled = channel?.builtInDiceEnabled !== false;
+  if (botEnabled) {
+    currentMode.value = 'bot';
+    return;
+  }
+  currentMode.value = builtInEnabled ? 'builtin' : 'disabled';
 };
 
 const resetWorldModeFromDetail = () => {
   const detail = worldDetail.value;
-  const mode = detail?.world?.channelDefaultDiceMode === 'bot' ? 'bot' : 'builtin';
+  const mode = detail?.world?.channelDefaultDiceMode === 'bot'
+    ? 'bot'
+    : detail?.world?.channelDefaultDiceMode === 'disabled'
+      ? 'disabled'
+      : 'builtin';
   worldMode.value = mode;
+  const configuredWorldBotIds = Array.isArray((detail?.world as any)?.channelDefaultBotIds)
+    ? Array.from(new Set(((detail?.world as any)?.channelDefaultBotIds || []).map((id: unknown) => String(id || '').trim()).filter(Boolean)))
+    : [];
   worldBotId.value = String(detail?.world?.channelDefaultBotId || '').trim();
+  worldBotIds.value = configuredWorldBotIds.length > 0
+    ? configuredWorldBotIds
+    : (worldBotId.value ? [worldBotId.value] : []);
+  const configuredWorldEventBotIds = Array.isArray((detail?.world as any)?.channelDefaultEventBotIds)
+    ? Array.from(new Set(((detail?.world as any)?.channelDefaultEventBotIds || []).map((id: unknown) => String(id || '').trim()).filter((id) => worldBotIds.value.includes(id))))
+    : [];
+  worldEventBotIds.value = configuredWorldEventBotIds;
 };
 
 const loadBotOptions = async (force = false) => {
@@ -248,11 +271,21 @@ const saveChannelMode = async () => {
       }
       currentPrimaryBotId.value = primary;
       currentEventBotIds.value = eventBotIds;
-    } else {
+    } else if (currentMode.value === 'builtin') {
       await syncChannelBotBindings([]);
       await chat.updateChannelFeatures(channelId.value, {
         botFeatureEnabled: false,
         builtInDiceEnabled: true,
+        primaryBotId: '',
+        eventBotIds: [],
+      });
+      currentPrimaryBotId.value = '';
+      currentEventBotIds.value = [];
+    } else {
+      await syncChannelBotBindings([]);
+      await chat.updateChannelFeatures(channelId.value, {
+        botFeatureEnabled: false,
+        builtInDiceEnabled: false,
         primaryBotId: '',
         eventBotIds: [],
       });
@@ -276,11 +309,17 @@ const saveWorldDefaults = async () => {
     message.error('选择 BOT 掷骰时必须指定默认 BOT');
     return;
   }
+  if (worldMode.value === 'bot' && worldBotIds.value.length === 0) {
+    message.error('请至少绑定一个 BOT');
+    return;
+  }
   worldSaving.value = true;
   try {
     await chat.worldUpdate(worldId.value, {
       channelDefaultDiceMode: worldMode.value,
       channelDefaultBotId: worldBotId.value,
+      channelDefaultBotIds: worldBotIds.value,
+      channelDefaultEventBotIds: worldEventBotIds.value,
     });
     message.success('新频道默认掷骰方式已更新');
     await loadWorldDetail(true);
@@ -320,7 +359,9 @@ watch(
   async (id) => {
     if (!id) {
       worldMode.value = 'builtin';
+      worldBotIds.value = [];
       worldBotId.value = '';
+      worldEventBotIds.value = [];
       return;
     }
     await loadWorldDetail();
@@ -360,40 +401,56 @@ onUnmounted(() => {
               </n-radio>
             </n-space>
           </n-radio-group>
-          <n-select
-            v-if="currentMode === 'bot'"
-            v-model:value="currentBotIds"
-            :options="botSelectOptions"
-            :loading="botOptionsLoading || channelBotsLoading"
-            :disabled="channelSectionDisabled || channelSaving || !hasBotOptions"
-            placeholder="选择要绑定到当前频道的 BOT"
-            clearable
-            multiple
-          />
-          <n-select
-            v-if="currentMode === 'bot' && currentBotIds.length > 0"
-            v-model:value="currentPrimaryBotId"
-            :options="primaryBotSelectOptions"
-            :loading="botOptionsLoading || channelBotsLoading"
-            :disabled="channelSectionDisabled || channelSaving"
-            placeholder="选择主控 BOT"
-            clearable
-          />
-          <n-select
-            v-if="currentMode === 'bot' && currentBotIds.length > 0"
-            v-model:value="currentEventBotIds"
-            :options="eventBotSelectOptions"
-            :loading="botOptionsLoading || channelBotsLoading"
-            :disabled="channelSectionDisabled || channelSaving"
-            placeholder="选择接收频道事件的 BOT"
-            clearable
-            multiple
-          />
+          <div v-if="currentMode === 'bot'" class="tab-dice-mode__bot-config">
+            <div class="tab-dice-mode__intro">
+              BOT 掷骰分 3 步：先把 BOT 绑定到频道，再指定 1 个主控 BOT，最后决定哪些 BOT 接收频道事件。
+            </div>
+            <div class="tab-dice-mode__field">
+              <div class="tab-dice-mode__field-title">1. 频道已绑定 BOT</div>
+              <div class="tab-dice-mode__field-desc">这些 BOT 会加入当前频道。至少选择 1 个，才能启用 BOT 掷骰。</div>
+              <n-select
+                v-model:value="currentBotIds"
+                :options="botSelectOptions"
+                :loading="botOptionsLoading || channelBotsLoading"
+                :disabled="channelSectionDisabled || channelSaving || !hasBotOptions"
+                placeholder="选择要绑定到当前频道的 BOT"
+                clearable
+                multiple
+              />
+            </div>
+            <template v-if="currentBotIds.length > 0">
+              <div class="tab-dice-mode__field">
+                <div class="tab-dice-mode__field-title">2. 主控 BOT</div>
+                <div class="tab-dice-mode__field-desc">负责处理掷骰命令，以及频道里的角色卡相关能力。</div>
+                <n-select
+                  v-model:value="currentPrimaryBotId"
+                  :options="primaryBotSelectOptions"
+                  :loading="botOptionsLoading || channelBotsLoading"
+                  :disabled="channelSectionDisabled || channelSaving"
+                  placeholder="选择主控 BOT"
+                  clearable
+                />
+              </div>
+              <div class="tab-dice-mode__field">
+                <div class="tab-dice-mode__field-title">3. 接收频道事件的 BOT</div>
+                <div class="tab-dice-mode__field-desc">决定哪些 BOT 会收到本频道事件。留空时，默认全部已绑定 BOT 都会接收。</div>
+                <n-select
+                  v-model:value="currentEventBotIds"
+                  :options="eventBotSelectOptions"
+                  :loading="botOptionsLoading || channelBotsLoading"
+                  :disabled="channelSectionDisabled || channelSaving"
+                  placeholder="选择接收频道事件的 BOT"
+                  clearable
+                  multiple
+                />
+              </div>
+            </template>
+          </div>
           <div v-if="currentMode === 'bot' && !botOptionsLoading && !hasBotOptions" class="tab-dice-mode__hint">
             暂无可用机器人令牌，请先在后台创建。
           </div>
           <div v-if="currentMode === 'bot' && currentBotIds.length > 0" class="tab-dice-mode__hint">
-            已绑定 BOT 决定 group 权限；事件接收 BOT 决定哪些 BOT 收到频道事件；主控 BOT 负责命令执行与角色卡能力。
+            频道事件指的是频道中的消息收发与BOT指令。
           </div>
           <div v-if="isPrivateChannel" class="tab-dice-mode__hint">
             私聊频道不支持在这里修改默认掷骰处理方式。
@@ -414,31 +471,18 @@ onUnmounted(() => {
 
       <n-card v-if="worldSectionVisible" size="small" title="新频道默认掷骰方式">
         <n-space vertical :size="12">
-          <n-radio-group
-            v-model:value="worldMode"
+          <WorldDiceDefaultsFields
+            v-model:mode="worldMode"
+            v-model:bot-ids="worldBotIds"
+            v-model:bot-id="worldBotId"
+            v-model:event-bot-ids="worldEventBotIds"
+            :bot-select-options="botSelectOptions"
+            :bot-options-loading="botOptionsLoading"
             :disabled="worldSaving || worldDetailLoading"
-          >
-            <n-space>
-              <n-radio
-                v-for="item in diceModeOptions"
-                :key="`world-${item.value}`"
-                :value="item.value"
-              >
-                {{ item.label }}
-              </n-radio>
-            </n-space>
-          </n-radio-group>
-          <n-select
-            v-if="worldMode === 'bot'"
-            v-model:value="worldBotId"
-            :options="botSelectOptions"
-            :loading="botOptionsLoading"
-            :disabled="worldSaving || !hasBotOptions"
-            placeholder="选择新频道默认使用的 BOT"
-            clearable
+            hint="仅影响后续新建频道，不修改现有频道。"
           />
-          <div class="tab-dice-mode__hint">
-            仅影响后续新建频道，不修改现有频道。
+          <div v-if="worldMode === 'bot' && !botOptionsLoading && !hasBotOptions" class="tab-dice-mode__hint">
+            暂无可用机器人令牌，请先在后台创建。
           </div>
           <n-button
             type="primary"
@@ -463,5 +507,35 @@ onUnmounted(() => {
 .tab-dice-mode__hint {
   color: var(--sc-text-secondary);
   font-size: 12px;
+}
+
+.tab-dice-mode__bot-config {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tab-dice-mode__intro {
+  color: var(--sc-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.tab-dice-mode__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tab-dice-mode__field-title {
+  color: var(--sc-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tab-dice-mode__field-desc {
+  color: var(--sc-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
 }
 </style>

@@ -13,6 +13,11 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import {
+  buildCharacterSheetFontCssMessage,
+  parseCharacterSheetFontManifest,
+  resolveCharacterSheetFontCss,
+} from '@/services/font/characterSheetTemplateFontRuntime';
 
 export interface SealChatEventPayload {
   roll?: {
@@ -45,6 +50,9 @@ const emit = defineEmits<{
 }>();
 
 const iframeRef = ref<HTMLIFrameElement | null>(null);
+const fontSyncTimer = ref<ReturnType<typeof setTimeout> | null>(null);
+const fontSyncSeq = ref(0);
+const latestVisibleText = ref('');
 
 const EDIT_HOOK_MARKER = 'data-sealchat-edit-hook="1"';
 const EDIT_HOOK_SCRIPT = `<script ${EDIT_HOOK_MARKER}>
@@ -112,13 +120,85 @@ const EDIT_HOOK_SCRIPT = `<script ${EDIT_HOOK_MARKER}>
 })();
 <\/script>`;
 
-const finalSrcDoc = computed(() => {
-  const html = props.html || '';
-  if (html.includes(EDIT_HOOK_MARKER)) return html;
-  if (/<\/body>/i.test(html)) {
-    return html.replace(/<\/body>/i, `${EDIT_HOOK_SCRIPT}</body>`);
+const FONT_HOOK_MARKER = 'data-sealchat-font-hook="1"';
+const FONT_HOOK_SCRIPT = `<script ${FONT_HOOK_MARKER}>
+(function () {
+  var _windowId = '';
+  var timer = null;
+  var lastText = '';
+  function collectText() {
+    return (document.body && document.body.innerText) || '';
   }
-  return `${html}\n${EDIT_HOOK_SCRIPT}`;
+  function postText() {
+    if (!_windowId) return;
+    var text = collectText();
+    if (text === lastText) return;
+    lastText = text;
+    try {
+      window.parent.postMessage({
+        type: 'SEALCHAT_FONT_TEXT',
+        version: 1,
+        windowId: _windowId,
+        payload: { text: text }
+      }, '*');
+    } catch (e) {}
+  }
+  function schedulePostText() {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(postText, 80);
+  }
+  function applyCss(cssText) {
+    var style = document.querySelector('style[data-sealchat-font-runtime]');
+    if (!style) {
+      style = document.createElement('style');
+      style.setAttribute('data-sealchat-font-runtime', '1');
+      document.head.appendChild(style);
+    }
+    style.textContent = String(cssText || '');
+  }
+  window.addEventListener('message', function (e) {
+    if (e.source !== window.parent) return;
+    var data = e.data;
+    if (data && data.type === 'SEALCHAT_UPDATE' && data.payload && typeof data.payload.windowId === 'string') {
+      _windowId = data.payload.windowId;
+      schedulePostText();
+      return;
+    }
+    if (data && data.type === 'SEALCHAT_FONT_CSS' && data.payload) {
+      applyCss(data.payload.cssText);
+    }
+  });
+  if (typeof MutationObserver === 'function') {
+    var observer = new MutationObserver(schedulePostText);
+    observer.observe(document.documentElement || document, { childList: true, subtree: true, characterData: true });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', schedulePostText);
+  } else {
+    schedulePostText();
+  }
+})();
+<\/script>`;
+
+const hasTemplateFonts = computed(() => parseCharacterSheetFontManifest(props.html).fonts.length > 0);
+
+const finalSrcDoc = computed(() => {
+  let html = props.html || '';
+  if (!html.includes(EDIT_HOOK_MARKER)) {
+    if (/<\/body>/i.test(html)) {
+      html = html.replace(/<\/body>/i, `${EDIT_HOOK_SCRIPT}</body>`);
+    } else {
+      html = `${html}\n${EDIT_HOOK_SCRIPT}`;
+    }
+  }
+  if (hasTemplateFonts.value && !html.includes(FONT_HOOK_MARKER)) {
+    if (/<\/body>/i.test(html)) {
+      html = html.replace(/<\/body>/i, `${FONT_HOOK_SCRIPT}</body>`);
+    } else {
+      html = `${html}\n${FONT_HOOK_SCRIPT}`;
+    }
+  }
+  return html;
 });
 
 const postData = () => {
@@ -137,11 +217,50 @@ const postData = () => {
 
 const handleLoad = () => {
   postData();
+  scheduleFontSync(latestVisibleText.value);
+};
+
+const postFontCss = (cssText: string) => {
+  if (!iframeRef.value?.contentWindow) return;
+  iframeRef.value.contentWindow.postMessage(
+    buildCharacterSheetFontCssMessage(cssText),
+    '*',
+  );
+};
+
+const syncCharacterSheetFonts = async (visibleText: string) => {
+  if (!hasTemplateFonts.value) {
+    postFontCss('');
+    return;
+  }
+  const seq = fontSyncSeq.value + 1;
+  fontSyncSeq.value = seq;
+  try {
+    const cssText = await resolveCharacterSheetFontCss(props.html, visibleText);
+    if (seq !== fontSyncSeq.value) return;
+    postFontCss(cssText);
+  } catch (error) {
+    console.warn('人物卡模板字体加载失败', error);
+  }
+};
+
+const scheduleFontSync = (visibleText: string) => {
+  latestVisibleText.value = visibleText || '';
+  if (fontSyncTimer.value) {
+    clearTimeout(fontSyncTimer.value);
+  }
+  fontSyncTimer.value = setTimeout(() => {
+    void syncCharacterSheetFonts(latestVisibleText.value);
+  }, 80);
 };
 
 const handleMessage = (e: MessageEvent) => {
   if (!iframeRef.value?.contentWindow) return;
   if (e.source !== iframeRef.value.contentWindow) return;
+  if (e.data?.type === 'SEALCHAT_FONT_TEXT' && e.data?.windowId === props.windowId) {
+    scheduleFontSync(String(e.data?.payload?.text || ''));
+    return;
+  }
   if (e.data?.type !== 'SEALCHAT_EVENT') return;
   if (e.data?.windowId !== props.windowId) return;
   const incoming = e.data as SealChatEvent;
@@ -180,6 +299,13 @@ watch(
   { deep: true }
 );
 
+watch(
+  () => props.html,
+  () => {
+    scheduleFontSync(latestVisibleText.value);
+  },
+);
+
 onMounted(() => {
   window.addEventListener('message', handleMessage);
   if (iframeRef.value?.contentDocument?.readyState === 'complete') {
@@ -189,6 +315,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('message', handleMessage);
+  if (fontSyncTimer.value) {
+    clearTimeout(fontSyncTimer.value);
+  }
 });
 </script>
 

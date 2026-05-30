@@ -15,7 +15,6 @@ export interface PlatformFontAsset {
   subsetObjectKey?: string
   manifestStorageType?: string
   manifestObjectKey?: string
-  previewText?: string
   sourceFileName?: string
   sourceMimeType?: string
   sourceSize?: number
@@ -72,7 +71,6 @@ export interface PlatformFontCreatePayload {
   family?: string
   weight?: string
   style?: string
-  previewText?: string
 }
 
 export interface PlatformFontUpdatePayload {
@@ -80,7 +78,6 @@ export interface PlatformFontUpdatePayload {
   family?: string
   weight?: string
   style?: string
-  previewText?: string
   status?: PlatformFontStatus
   deliveryMode?: PlatformFontDeliveryMode
   lastError?: string

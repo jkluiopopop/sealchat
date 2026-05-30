@@ -57,7 +57,9 @@ watch(() => [props.worldId, props.visible] as const, async ([id, visible]) => {
       allowMemberEditKeywords: detail.world?.allowMemberEditKeywords ?? false,
       strictWhisperPrivacy: detail.world?.strictWhisperPrivacy ?? true,
       channelDefaultDiceMode: detail.world?.channelDefaultDiceMode || 'builtin',
+      channelDefaultBotIds: Array.isArray((detail.world as any)?.channelDefaultBotIds) ? (detail.world as any).channelDefaultBotIds : [],
       channelDefaultBotId: detail.world?.channelDefaultBotId || '',
+      channelDefaultEventBotIds: Array.isArray((detail.world as any)?.channelDefaultEventBotIds) ? (detail.world as any).channelDefaultEventBotIds : [],
       characterCardBadgeTemplate: detail.world?.characterCardBadgeTemplate ?? '',
     };
   } catch (e: any) {
@@ -68,6 +70,10 @@ watch(() => [props.worldId, props.visible] as const, async ([id, visible]) => {
 const save = async () => {
   if (form.value.channelDefaultDiceMode === 'bot' && !form.value.channelDefaultBotId) {
     message.error('选择 BOT 掷骰时必须指定默认 BOT');
+    return;
+  }
+  if (form.value.channelDefaultDiceMode === 'bot' && (!Array.isArray(form.value.channelDefaultBotIds) || form.value.channelDefaultBotIds.length === 0)) {
+    message.error('请至少绑定一个 BOT');
     return;
   }
   loading.value = true;
@@ -160,7 +166,9 @@ const getDescriptionCountLabel = (value?: string) => {
             </div>
             <WorldDiceDefaultsFields
               v-model:mode="form.channelDefaultDiceMode"
+              v-model:bot-ids="form.channelDefaultBotIds"
               v-model:bot-id="form.channelDefaultBotId"
+              v-model:event-bot-ids="form.channelDefaultEventBotIds"
               :bot-select-options="botSelectOptions"
               :bot-options-loading="botOptionsLoading"
               title="新频道默认掷骰方式"

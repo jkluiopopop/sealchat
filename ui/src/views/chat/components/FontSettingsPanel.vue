@@ -67,7 +67,6 @@ const {
   fonts: platformFonts,
   selectedId: selectedPlatformFontId,
   menuClass: 'font-settings-platform-font-select__menu',
-  showPreviewText: false,
 })
 
 const renderLocalFontLabel = (option: LocalFontOption) => {

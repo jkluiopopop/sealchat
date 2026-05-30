@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -31,7 +32,6 @@ type PlatformFontCreateInput struct {
 	Family      string
 	Weight      string
 	Style       string
-	PreviewText string
 	CreatedBy   string
 }
 
@@ -40,7 +40,6 @@ type PlatformFontUpdateInput struct {
 	Family       *string
 	Weight       *string
 	Style        *string
-	PreviewText  *string
 	Status       *model.PlatformFontStatus
 	DeliveryMode *model.PlatformFontDeliveryMode
 	LastError    *string
@@ -73,7 +72,7 @@ type PlatformFontSubsetManifestData struct {
 
 type PlatformFontSubsetUploadFile struct {
 	Name        string
-	LocalPath    string
+	LocalPath   string
 	ContentType string
 }
 
@@ -81,6 +80,97 @@ type PlatformFontSubsetPackageInput struct {
 	ActorID  string
 	Manifest PlatformFontSubsetManifestData
 	Files    []PlatformFontSubsetUploadFile
+}
+
+func NormalizePlatformFontSubsetManifestURLs(
+	fontID string,
+	webURL string,
+	manifest *PlatformFontSubsetManifestData,
+) *PlatformFontSubsetManifestData {
+	if manifest == nil {
+		return nil
+	}
+	normalized := *manifest
+	if relative := firstNonEmptyPlatformFontValue(normalized.CssName, normalized.Entry, normalized.CssUrl); relative != "" {
+		normalized.CssUrl = normalizePlatformFontSubsetManifestURL(fontID, webURL, relative)
+	}
+	if len(normalized.FontUrls) > 0 {
+		fontURLs := make([]string, 0, len(normalized.FontUrls))
+		for idx, rawURL := range normalized.FontUrls {
+			fallback := ""
+			if idx < len(normalized.FontFiles) {
+				fallback = normalized.FontFiles[idx]
+			}
+			fontURLs = append(fontURLs, normalizePlatformFontSubsetManifestURL(fontID, webURL, firstNonEmptyPlatformFontValue(rawURL, fallback)))
+		}
+		normalized.FontUrls = fontURLs
+	}
+	if len(normalized.Chunks) > 0 {
+		chunks := make([]PlatformFontSubsetManifestChunk, len(normalized.Chunks))
+		for idx, chunk := range normalized.Chunks {
+			updated := chunk
+			updated.Url = normalizePlatformFontSubsetManifestURL(fontID, webURL, firstNonEmptyPlatformFontValue(chunk.Url, chunk.Name))
+			chunks[idx] = updated
+		}
+		normalized.Chunks = chunks
+	}
+	return &normalized
+}
+
+func normalizePlatformFontSubsetManifestURL(fontID string, webURL string, raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if isAbsolutePlatformFontSubsetURL(trimmed) {
+		return trimmed
+	}
+	relative := normalizePlatformFontSubsetPath(trimmed)
+	if relative == "" {
+		return trimmed
+	}
+	webRoot := normalizePlatformFontWebRoot(webURL)
+	subPath := path.Join(webRoot, "api/v1/platform-fonts", fontID, "subset", relative)
+	if !strings.HasPrefix(subPath, "/") {
+		return "/" + subPath
+	}
+	return subPath
+}
+
+func isAbsolutePlatformFontSubsetURL(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(lower, "http://") ||
+		strings.HasPrefix(lower, "https://") ||
+		strings.HasPrefix(lower, "//") ||
+		strings.HasPrefix(lower, "data:") ||
+		strings.HasPrefix(lower, "blob:")
+}
+
+func normalizePlatformFontWebRoot(webURL string) string {
+	webRoot := strings.TrimSpace(webURL)
+	if webRoot == "" || webRoot == "/" {
+		return "/"
+	}
+	if !strings.HasPrefix(webRoot, "/") {
+		webRoot = "/" + webRoot
+	}
+	for strings.HasPrefix(webRoot, "//") {
+		webRoot = webRoot[1:]
+	}
+	webRoot = strings.TrimRight(webRoot, "/")
+	if webRoot == "" {
+		return "/"
+	}
+	return webRoot
+}
+
+func firstNonEmptyPlatformFontValue(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func ensurePlatformFontAdmin(actorID string) error {
@@ -252,18 +342,19 @@ func PlatformFontCreateFromUpload(fileHeader *multipart.FileHeader, input Platfo
 	}
 	fileName := strings.TrimSpace(fileHeader.Filename)
 	item := &model.PlatformFontAsset{
-		DisplayName:  normalizePlatformFontName(input.DisplayName, strings.TrimSuffix(fileName, filepath.Ext(fileName)), 120),
-		Family:       normalizePlatformFontName(input.Family, strings.TrimSuffix(fileName, filepath.Ext(fileName)), 120),
-		Weight:       normalizePlatformFontWeight(input.Weight),
-		Style:        normalizePlatformFontStyle(input.Style),
-		Status:       model.PlatformFontStatusProcessing,
-		DeliveryMode: model.PlatformFontDeliverySingle,
-		PreviewText:  normalizePlatformFontName(input.PreviewText, "永字八法", 120),
-		SourceFileName: fileName,
-		SourceMimeType: mimeType,
-		SourceSize:     fileHeader.Size,
-		CreatedBy:      input.CreatedBy,
-		UpdatedBy:      input.CreatedBy,
+		DisplayName:       normalizePlatformFontName(input.DisplayName, strings.TrimSuffix(fileName, filepath.Ext(fileName)), 120),
+		Family:            normalizePlatformFontName(input.Family, strings.TrimSuffix(fileName, filepath.Ext(fileName)), 120),
+		Weight:            normalizePlatformFontWeight(input.Weight),
+		Style:             normalizePlatformFontStyle(input.Style),
+		Status:            model.PlatformFontStatusProcessing,
+		DeliveryMode:      model.PlatformFontDeliverySingle,
+		SourceFileName:    fileName,
+		SourceMimeType:    mimeType,
+		SourceSize:        fileHeader.Size,
+		StorageFileCount:  1,
+		StorageTotalBytes: fileHeader.Size,
+		CreatedBy:         input.CreatedBy,
+		UpdatedBy:         input.CreatedBy,
 	}
 	item.Init()
 	if item.DisplayName == "" || item.Family == "" {
@@ -340,9 +431,6 @@ func PlatformFontUpdate(id string, input PlatformFontUpdateInput) (*model.Platfo
 	}
 	if input.Style != nil {
 		updates["style"] = normalizePlatformFontStyle(*input.Style)
-	}
-	if input.PreviewText != nil {
-		updates["preview_text"] = normalizePlatformFontName(*input.PreviewText, item.PreviewText, 120)
 	}
 	if input.Status != nil {
 		updates["status"] = *input.Status
@@ -423,6 +511,10 @@ func PlatformFontSaveSubsetPackage(id string, input PlatformFontSubsetPackageInp
 	}
 	if _, ok := filesByName[normalizedEntry]; !ok {
 		return nil, fmt.Errorf("%w: 缺少入口样式文件 %s", ErrPlatformFontInvalid, normalizedEntry)
+	}
+	uniqueFiles := make([]PlatformFontSubsetUploadFile, 0, len(filesByName))
+	for _, file := range filesByName {
+		uniqueFiles = append(uniqueFiles, file)
 	}
 
 	normalizedChunks := make([]PlatformFontSubsetManifestChunk, 0, len(input.Manifest.Chunks))
@@ -522,6 +614,12 @@ func PlatformFontSaveSubsetPackage(id string, input PlatformFontSubsetPackageInp
 		cleanupPersisted()
 		return nil, err
 	}
+	storageFileCount, storageTotalBytes, err := calcPlatformFontStorageStats(item, uniqueFiles, len(manifestBytes))
+	if err != nil {
+		_ = os.Remove(manifestTempPath)
+		cleanupPersisted()
+		return nil, err
+	}
 	manifestLocation, err := PersistPlatformFontFile(manifestTempPath, manifestObjectKey, "application/json")
 	if err != nil {
 		_ = os.Remove(manifestTempPath)
@@ -542,6 +640,8 @@ func PlatformFontSaveSubsetPackage(id string, input PlatformFontSubsetPackageInp
 		"manifest_storage_type": manifestLocation.StorageType,
 		"manifest_object_key":   manifestLocation.ObjectKey,
 		"subset_count":          len(normalizedChunks),
+		"storage_file_count":    storageFileCount,
+		"storage_total_bytes":   storageTotalBytes,
 		"last_error":            "",
 		"updated_by":            input.ActorID,
 		"last_published_at":     &now,
@@ -584,4 +684,28 @@ func detectPlatformFontSubsetContentType(name string, explicit ...string) string
 	default:
 		return "application/octet-stream"
 	}
+}
+
+func calcPlatformFontStorageStats(item *model.PlatformFontAsset, files []PlatformFontSubsetUploadFile, manifestBytes int) (int64, int64, error) {
+	var count int64 = 1
+	totalBytes := item.SourceSize
+	for _, file := range files {
+		if strings.TrimSpace(file.LocalPath) == "" {
+			continue
+		}
+		info, err := os.Stat(file.LocalPath)
+		if err != nil {
+			return 0, 0, err
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		count++
+		totalBytes += info.Size()
+	}
+	if manifestBytes > 0 {
+		count++
+		totalBytes += int64(manifestBytes)
+	}
+	return count, totalBytes, nil
 }
