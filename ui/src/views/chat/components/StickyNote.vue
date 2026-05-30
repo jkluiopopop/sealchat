@@ -773,7 +773,7 @@ function isEditingScopeTarget(target: Node | null) {
   if (targetElement?.closest('.mention-dropdown, .tiptap-bubble-menu')) {
     return true
   }
-  if (editorRef.value?.hasOpenOverlay?.() && targetElement?.closest('.n-popover, .n-modal, [role="dialog"]')) {
+  if (editorRef.value?.hasOpenOverlay?.() && targetElement?.closest('.n-popover, .n-modal, .n-base-select-menu, .tiptap-platform-font-select__menu, [role="dialog"]')) {
     return true
   }
   return false

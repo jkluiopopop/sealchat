@@ -1509,6 +1509,7 @@ const refreshPlatformFonts = async () => {
 };
 
 const applyPlatformFont = async (fontId: string | null) => {
+  markOverlayInteraction();
   if (!fontId) {
     runEditorCommandWithSelection((chain) => {
       chain.setMark('textStyle', {
@@ -1780,6 +1781,8 @@ const hasOpenOverlay = () => {
     || textColorPopoverShow.value
     || blockTypePopoverShow.value
     || fontSizePopoverShow.value
+    || fontSelectorExpanded.value
+    || desktopFontSelectorExpanded.value
     || linkModalShow.value
     || quickIFormModalShow.value;
 };
