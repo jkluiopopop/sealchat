@@ -10,6 +10,7 @@ import { useIFormStore } from '@/stores/iform';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import AudioDrawer from '@/components/audio/AudioDrawer.vue';
 import { formatSplitChannelDisplayName, type SplitChannelDisplayLike } from '@/views/split/splitChannelDisplay';
+import type { SplitSessionPaneSnapshot } from '@/utils/splitSessionStorage';
 
 type PaneId = 'A' | 'B';
 type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
@@ -45,19 +46,6 @@ type SplitChannelNode = {
   children?: SplitChannelNode[];
 };
 
-type SplitSessionPaneSnapshot = {
-  mode: 'chat' | 'web';
-  worldId: string;
-  channelId: string;
-  webUrl: string;
-  filterState: FilterState;
-  searchPanelVisible: boolean;
-  stickyNoteVisible: boolean;
-  characterCardVisible: boolean;
-  audioStudioDrawerVisible: boolean;
-  embedPanelActive: boolean;
-};
-
 const route = useRoute();
 const chat = useChatStore();
 const channelSearch = useChannelSearchStore();
@@ -69,12 +57,12 @@ const audioStudio = useAudioStudioStore();
 const paneId = computed(() => (typeof route.query.paneId === 'string' ? route.query.paneId : '') as PaneId | '');
 const initialWorldId = computed(() => (typeof route.query.worldId === 'string' ? route.query.worldId : ''));
 const initialChannelId = computed(() => (typeof route.query.channelId === 'string' ? route.query.channelId : ''));
+const splitScopeWorldId = computed(() => (typeof route.query.scopeWorldId === 'string' ? route.query.scopeWorldId : ''));
 const initialNotifyOwner = computed(() => (route.query.notifyOwner === '1' || route.query.notifyOwner === 'true'));
 const initialAudioOwner = computed(() => {
   if (route.query.audioOwner === undefined) return true;
   return route.query.audioOwner === '1' || route.query.audioOwner === 'true';
 });
-
 const chatViewRef = ref<any>(null);
 const initializing = ref(false);
 const restoringSession = ref(false);
@@ -240,6 +228,17 @@ const normalizePresenceMap = (map: any): Record<string, PresenceData> => {
   }, {});
 };
 
+const currentIdentityId = computed(() => {
+  const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+  return channelId ? chat.getActiveIdentityId(channelId) : '';
+});
+
+const currentIdentityVariantId = computed(() => {
+  const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+  const identityId = currentIdentityId.value;
+  return channelId && identityId ? chat.getActiveIdentityVariantId(channelId, identityId) : '';
+});
+
 const postState = (type: 'sealchat.embed.ready' | 'sealchat.embed.state') => {
   if (!paneId.value) return;
   const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
@@ -269,6 +268,8 @@ const postState = (type: 'sealchat.embed.ready' | 'sealchat.embed.state') => {
     currentChannelUnread,
     audioStudioDrawerVisible: !!audioStudio.drawerVisible,
     filterState: normalizeFilterState(toRaw(chat.filterState)),
+    identityId: currentIdentityId.value,
+    identityVariantId: currentIdentityVariantId.value,
     roleOptions: normalizeRoleOptions(toRaw(roleOptions.value)),
     canImport: isOwnerOrAdmin.value,
     channelTree: normalizeChannelTree(buildChannelTree()),
@@ -297,6 +298,35 @@ const syncAudioStudioContext = () => {
 
 const syncChannelSessionRestoreOverride = (filterState: FilterState | null | undefined) => {
   chat.setChannelSessionRestoreFilterOverride(normalizeFilterState(filterState).icFilter);
+};
+
+const restoreSplitPaneIdentitySnapshot = async (snapshot: SplitSessionPaneSnapshot) => {
+  const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+  const identityId = typeof snapshot.identityId === 'string' ? snapshot.identityId.trim() : '';
+  const identityVariantId = typeof snapshot.identityVariantId === 'string' ? snapshot.identityVariantId.trim() : '';
+  if (!channelId || !identityId) {
+    return;
+  }
+  const identities = await chat.loadChannelIdentities(channelId, false);
+  const targetIdentity = Array.isArray(identities)
+    ? identities.find((item) => String(item?.id || '') === identityId)
+    : null;
+  if (!targetIdentity) {
+    return;
+  }
+  chat.setActiveIdentity(channelId, identityId, undefined, {
+    persist: false,
+    syncIcOocFromRole: false,
+  });
+  const variantsByIdentity = await chat.loadChannelIdentityVariants(channelId, false);
+  const variants = variantsByIdentity?.[identityId] || [];
+  if (!identityVariantId) {
+    chat.setActiveIdentityVariant(channelId, identityId, '', undefined, { persist: false });
+    return;
+  }
+  if (variants.some((item) => String(item?.id || '') === identityVariantId)) {
+    chat.setActiveIdentityVariant(channelId, identityId, identityVariantId, undefined, { persist: false });
+  }
 };
 
 const postFocus = () => {
@@ -438,6 +468,7 @@ const handleMessage = async (event: MessageEvent) => {
         await chat.channelSwitchTo(snapshot.channelId);
       }
       chat.setFilterState(normalizeFilterState(snapshot.filterState));
+      await restoreSplitPaneIdentitySnapshot(snapshot);
       if (chatViewRef.value?.setSearchPanelVisibleForShell) {
         chatViewRef.value.setSearchPanelVisibleForShell(!!snapshot.searchPanelVisible);
       } else if (snapshot.searchPanelVisible && chatViewRef.value?.openPanelForShell) {
@@ -547,6 +578,14 @@ watch(
     postStateThrottled('sealchat.embed.state');
   },
   { deep: true },
+);
+
+watch(
+  () => [currentIdentityId.value, currentIdentityVariantId.value] as const,
+  () => {
+    if (restoringSession.value) return;
+    postStateThrottled('sealchat.embed.state');
+  },
 );
 
 watch(

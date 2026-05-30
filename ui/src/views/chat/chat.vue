@@ -41,7 +41,8 @@ import { useAudioStudioStore } from '@/stores/audioStudio';
 import { usePushNotificationStore } from '@/stores/pushNotification';
 import {
   buildIcOocSplitScopeWorldId,
-  createIcOocSplitSessionSnapshot,
+  readSplitSessionSnapshot,
+  resolveIcOocSplitSessionSnapshot,
   writeSplitSessionSnapshot,
 } from '@/utils/splitSessionStorage';
 import { uploadImageAttachment } from './composables/useAttachmentUploader';
@@ -231,17 +232,39 @@ const openIcOocSplitView = async (side: 'left' | 'right') => {
     return;
   }
   const scopeWorldId = buildIcOocSplitScopeWorldId(worldId);
-  const snapshot = createIcOocSplitSessionSnapshot(
+  const existingSnapshot = readSplitSessionSnapshot(scopeWorldId);
+  const activeIdentityId = chat.getActiveIdentityId(currentChannelId);
+  const activeIdentityVariantId = activeIdentityId
+    ? chat.getActiveIdentityVariantId(currentChannelId, activeIdentityId)
+    : '';
+  const snapshot = resolveIcOocSplitSessionSnapshot(
     scopeWorldId,
     worldId,
     currentChannelId,
     side === 'right' ? 'ooc-left' : 'ic-left',
+    existingSnapshot,
+    {
+      mode: chat.icMode === 'ooc' ? 'ooc' : 'ic',
+      identityId: activeIdentityId,
+      identityVariantId: activeIdentityVariantId,
+      filterState: {
+        icFilter: chat.filterState.icFilter,
+        showArchived: chat.filterState.showArchived,
+        roleIds: [...chat.filterState.roleIds],
+      },
+    },
   );
-  if (!writeSplitSessionSnapshot(scopeWorldId, snapshot)) {
+  const writeOk = writeSplitSessionSnapshot(scopeWorldId, snapshot);
+  if (!writeOk) {
     message.error('初始化场内外分屏失败');
     return;
   }
-  await openSplitRoute(scopeWorldId, worldId, currentChannelId, currentChannelId);
+  await openSplitRoute(
+    scopeWorldId,
+    worldId,
+    snapshot.panes.A.channelId || currentChannelId,
+    snapshot.panes.B.channelId || currentChannelId,
+  );
 };
 
 const toggleStickyNotes = () => {

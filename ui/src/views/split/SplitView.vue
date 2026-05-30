@@ -62,6 +62,8 @@ type EmbedStateMessage = {
   currentChannelUnread?: number;
   audioStudioDrawerVisible?: boolean;
   filterState?: FilterState;
+  identityId?: string;
+  identityVariantId?: string;
   roleOptions?: RoleOption[];
   canImport?: boolean;
   channelTree?: SplitChannelNode[];
@@ -123,6 +125,8 @@ interface PaneState {
   currentChannelUnread: number;
   audioStudioDrawerVisible: boolean;
   filterState: FilterState;
+  identityId: string;
+  identityVariantId: string;
   roleOptions: RoleOption[];
   canImport: boolean;
   channelTree: SplitChannelNode[];
@@ -180,6 +184,7 @@ const resolveScopeWorldIdFromRoute = () => {
   if (scopeWorldId) return scopeWorldId;
   return typeof route.query.worldId === 'string' ? route.query.worldId.trim() : '';
 };
+const isIcOocPresetScopeWorldId = (scopeWorldId: string) => scopeWorldId.includes('::preset:ic-ooc');
 const normalizeUrl = (value: string) => value.trim();
 const isHttpUrl = (value: string) => {
   try {
@@ -253,6 +258,8 @@ const paneA = reactive<PaneState>({
   currentChannelUnread: 0,
   audioStudioDrawerVisible: false,
   filterState: { ...defaultFilterState },
+  identityId: '',
+  identityVariantId: '',
   roleOptions: [],
   canImport: false,
   channelTree: [],
@@ -286,6 +293,8 @@ const paneB = reactive<PaneState>({
   currentChannelUnread: 0,
   audioStudioDrawerVisible: false,
   filterState: { ...defaultFilterState },
+  identityId: '',
+  identityVariantId: '',
   roleOptions: [],
   canImport: false,
   channelTree: [],
@@ -361,6 +370,7 @@ watch(
 const buildEmbedSrc = (pane: PaneState) => {
   const params = new URLSearchParams();
   params.set('paneId', pane.id);
+  if (splitScopeWorldId.value) params.set('scopeWorldId', splitScopeWorldId.value);
   if (pane.worldId) params.set('worldId', pane.worldId);
   if (pane.channelId) params.set('channelId', pane.channelId);
   if (notifyOwnerPaneId.value === pane.id) params.set('notifyOwner', '1');
@@ -368,7 +378,8 @@ const buildEmbedSrc = (pane: PaneState) => {
   // 不能直接用 import.meta.env.BASE_URL（vite base='./' 时会变成 ./#/embed，导致 iframe 请求落到 /app/ 而非 /app/index.html）
   // 这里用当前页面的 pathname+search，确保与 split 同一份 HTML（支持 /index.html#/split、/subdir/#/split 等部署形态）
   const base = typeof window === 'undefined' ? '/' : `${window.location.pathname}${window.location.search}`;
-  return `${base}#/embed?${params.toString()}`;
+  const src = `${base}#/embed?${params.toString()}`;
+  return src;
 };
 
 const buildPaneSrc = (pane: PaneState) => {
@@ -425,6 +436,8 @@ const buildPaneSessionSnapshot = (pane: PaneState): SplitSessionPaneSnapshot => 
   channelId: pane.channelId || '',
   webUrl: pane.webUrl || '',
   filterState: normalizeFilterState(pane.filterState),
+  identityId: pane.identityId || '',
+  identityVariantId: pane.identityVariantId || '',
   searchPanelVisible: !!pane.searchPanelVisible,
   stickyNoteVisible: !!pane.stickyNoteVisible,
   characterCardVisible: !!pane.characterCardVisible,
@@ -482,6 +495,8 @@ const applyPaneSnapshotToState = (pane: PaneState, snapshot: SplitSessionPaneSna
   pane.channelId = snapshot.channelId;
   pane.webUrl = snapshot.webUrl;
   pane.filterState = normalizeFilterState(snapshot.filterState);
+  pane.identityId = snapshot.identityId || '';
+  pane.identityVariantId = snapshot.identityVariantId || '';
   pane.searchPanelVisible = !!snapshot.searchPanelVisible;
   pane.stickyNoteVisible = !!snapshot.stickyNoteVisible;
   pane.characterCardVisible = !!snapshot.characterCardVisible;
@@ -550,6 +565,8 @@ const handleEmbedMessage = (event: MessageEvent) => {
     if (typeof msg.currentChannelUnread === 'number') target.currentChannelUnread = msg.currentChannelUnread;
     if (typeof msg.audioStudioDrawerVisible === 'boolean') target.audioStudioDrawerVisible = msg.audioStudioDrawerVisible;
     if (msg.filterState) target.filterState = { ...msg.filterState };
+    if (typeof msg.identityId === 'string') target.identityId = msg.identityId;
+    if (typeof msg.identityVariantId === 'string') target.identityVariantId = msg.identityVariantId;
     if (Array.isArray(msg.roleOptions)) target.roleOptions = msg.roleOptions;
     if (typeof msg.canImport === 'boolean') target.canImport = msg.canImport;
     if (Array.isArray(msg.channelTree)) target.channelTree = msg.channelTree;

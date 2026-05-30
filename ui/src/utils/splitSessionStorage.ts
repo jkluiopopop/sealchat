@@ -14,11 +14,20 @@ export interface SplitSessionPaneSnapshot {
   channelId: string
   webUrl: string
   filterState: SplitSessionFilterState
+  identityId: string
+  identityVariantId: string
   searchPanelVisible: boolean
   stickyNoteVisible: boolean
   characterCardVisible: boolean
   audioStudioDrawerVisible: boolean
   embedPanelActive: boolean
+}
+
+export interface IcOocSplitEntryChannelState {
+  mode: 'ic' | 'ooc'
+  identityId: string
+  identityVariantId: string
+  filterState?: SplitSessionFilterState
 }
 
 export interface SplitSessionSnapshot {
@@ -56,6 +65,8 @@ export const createDefaultSplitSessionPaneSnapshot = (): SplitSessionPaneSnapsho
   channelId: '',
   webUrl: '',
   filterState: createDefaultSplitSessionFilterState(),
+  identityId: '',
+  identityVariantId: '',
   searchPanelVisible: false,
   stickyNoteVisible: false,
   characterCardVisible: false,
@@ -125,6 +136,77 @@ export const createIcOocSplitSessionSnapshot = (
   return snapshot
 }
 
+const isIcOocSplitPaneFilter = (value: unknown): value is 'ic' | 'ooc' => value === 'ic' || value === 'ooc'
+
+export const resolveIcOocSplitSessionSnapshot = (
+  scopeWorldId: string,
+  worldId: string,
+  channelId: string,
+  layout: 'ic-left' | 'ooc-left' = 'ic-left',
+  existingSnapshot?: SplitSessionSnapshot | null,
+  entryChannelState?: IcOocSplitEntryChannelState | null,
+): SplitSessionSnapshot => {
+  const normalizedExisting = existingSnapshot
+    ? normalizeSplitSessionSnapshot(scopeWorldId, existingSnapshot)
+    : null
+  const normalizedWorldId = worldId.trim()
+  const normalizedChannelId = channelId.trim()
+  const expectedAFilter = layout === 'ooc-left' ? 'ooc' : 'ic'
+  const expectedBFilter = layout === 'ooc-left' ? 'ic' : 'ooc'
+  const canReuseIdentityState =
+    normalizedExisting
+    && isIcOocSplitPaneFilter(normalizedExisting.panes.A.filterState.icFilter)
+    && isIcOocSplitPaneFilter(normalizedExisting.panes.B.filterState.icFilter)
+    && normalizedExisting.panes.A.filterState.icFilter !== normalizedExisting.panes.B.filterState.icFilter
+    && normalizedExisting.panes.A.worldId === normalizedWorldId
+    && normalizedExisting.panes.B.worldId === normalizedWorldId
+    && normalizedExisting.panes.A.channelId === normalizedChannelId
+    && normalizedExisting.panes.B.channelId === normalizedChannelId
+  const snapshot = canReuseIdentityState
+    ? {
+      ...normalizedExisting,
+      panes: {
+        A: {
+          ...normalizedExisting.panes.A,
+          worldId: normalizedWorldId,
+          channelId: normalizedChannelId,
+          filterState: {
+            ...normalizedExisting.panes.A.filterState,
+            icFilter: expectedAFilter,
+          },
+        },
+        B: {
+          ...normalizedExisting.panes.B,
+          worldId: normalizedWorldId,
+          channelId: normalizedChannelId,
+          filterState: {
+            ...normalizedExisting.panes.B.filterState,
+            icFilter: expectedBFilter,
+          },
+        },
+      },
+    }
+    : createIcOocSplitSessionSnapshot(scopeWorldId, worldId, channelId, layout)
+  snapshot.panes.A.filterState.icFilter = expectedAFilter
+  snapshot.panes.B.filterState.icFilter = expectedBFilter
+  if (entryChannelState) {
+    const targetPaneId = entryChannelState.mode === expectedAFilter ? 'A' : 'B'
+    const targetPane = snapshot.panes[targetPaneId]
+    const normalizedEntryFilterState = normalizeFilterState(entryChannelState.filterState)
+    targetPane.identityId = normalizeOptionalId(entryChannelState.identityId)
+    targetPane.identityVariantId = targetPane.identityId
+      ? normalizeOptionalId(entryChannelState.identityVariantId)
+      : ''
+    targetPane.filterState = {
+      ...targetPane.filterState,
+      showArchived: normalizedEntryFilterState.showArchived,
+      roleIds: normalizedEntryFilterState.roleIds,
+      icFilter: targetPane.filterState.icFilter,
+    }
+  }
+  return snapshot
+}
+
 export interface SplitSessionPaneRestoreObservedState {
   mode: SplitPaneMode
   worldId: string
@@ -156,6 +238,8 @@ const normalizeFilterState = (value: unknown): SplitSessionFilterState => {
   }
 }
 
+const normalizeOptionalId = (value: unknown): string => typeof value === 'string' ? value.trim() : ''
+
 const normalizePaneSnapshot = (value: unknown): SplitSessionPaneSnapshot => {
   const raw = typeof value === 'object' && value !== null ? value as Partial<SplitSessionPaneSnapshot> : {}
   return {
@@ -164,6 +248,8 @@ const normalizePaneSnapshot = (value: unknown): SplitSessionPaneSnapshot => {
     channelId: typeof raw.channelId === 'string' ? raw.channelId : '',
     webUrl: typeof raw.webUrl === 'string' ? raw.webUrl : '',
     filterState: normalizeFilterState(raw.filterState),
+    identityId: normalizeOptionalId(raw.identityId),
+    identityVariantId: normalizeOptionalId(raw.identityVariantId),
     searchPanelVisible: !!raw.searchPanelVisible,
     stickyNoteVisible: !!raw.stickyNoteVisible,
     characterCardVisible: !!raw.characterCardVisible,

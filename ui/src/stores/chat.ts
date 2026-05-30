@@ -68,7 +68,6 @@ const notifyNormalDrain = () => {
   const waiters = normalDrainWaiters.splice(0);
   waiters.forEach((resolve) => resolve());
 };
-
 type ChannelUnreadStatePayload = {
   counts: Record<string, number>;
   mentions: Record<string, boolean>;
@@ -2670,13 +2669,22 @@ export const useChatStore = defineStore({
           preferIdentityModeMapping: false,
         };
       }
+      const currentActiveIdentityId = String(this.activeChannelIdentity[scopeKey] || '').trim();
+      const shouldPreferCurrentActiveIdentity = (
+        !restoreState.useStoredIdentity
+        && currentActiveIdentityId.length > 0
+        && items.some((item) => item.id === currentActiveIdentityId)
+      );
       const config = this.getChannelIcOocRoleConfig(channelId, targetUserId);
       const restored = resolveChannelRestorePreference({
         storedMode: restoreState.mode,
-        storedIdentityId: restoreState.useStoredIdentity ? readChannelIdentityFromStorage(scopeKey) : '',
+        storedIdentityId: shouldPreferCurrentActiveIdentity
+          ? currentActiveIdentityId
+          : (restoreState.useStoredIdentity ? readChannelIdentityFromStorage(scopeKey) : ''),
         defaultIdentityId: defaultItem?.id || '',
         icRoleId: config.icRoleId,
         oocRoleId: config.oocRoleId,
+        preferStoredIdentity: shouldPreferCurrentActiveIdentity,
         validIdentityIds: items.map((item) => item.id),
       });
       if (restored.identityId) {
@@ -2876,7 +2884,13 @@ export const useChatStore = defineStore({
       }
     },
 
-    setActiveIdentityVariant(channelId: string, identityId: string, variantId: string, targetUserId?: string | null) {
+    setActiveIdentityVariant(
+      channelId: string,
+      identityId: string,
+      variantId: string,
+      targetUserId?: string | null,
+      options?: { persist?: boolean },
+    ) {
       const scopeKey = this.resolveChannelIdentityScopeKey(channelId, targetUserId);
       if (!scopeKey || !identityId) {
         return;
@@ -2889,7 +2903,9 @@ export const useChatStore = defineStore({
         ...this.activeChannelIdentityVariant,
         [scopeKey]: perChannel,
       };
-      writeChannelIdentityVariantToStorage(scopeKey, identityId, variantId || '');
+      if (options?.persist !== false) {
+        writeChannelIdentityVariantToStorage(scopeKey, identityId, variantId || '');
+      }
     },
 
     /**

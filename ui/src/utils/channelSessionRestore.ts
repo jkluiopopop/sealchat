@@ -6,6 +6,7 @@ export interface ChannelRestorePreferenceOptions {
   defaultIdentityId?: string | null
   icRoleId?: string | null
   oocRoleId?: string | null
+  preferStoredIdentity?: boolean
   validIdentityIds?: string[]
 }
 
@@ -65,10 +66,13 @@ export const resolveChannelRestorePreference = (
   const fallbackIdentityId = defaultIdentityId && validSet.has(defaultIdentityId)
     ? defaultIdentityId
     : (validIdentityIds[0] || '')
+  const preferStoredIdentity = options.preferStoredIdentity === true
 
   return {
     mode,
-    identityId: preferredMappedIdentityId || preferredStoredIdentityId || fallbackIdentityId,
-    preferIdentityModeMapping: !!preferredMappedIdentityId,
+    identityId: preferStoredIdentity
+      ? (preferredStoredIdentityId || preferredMappedIdentityId || fallbackIdentityId)
+      : (preferredMappedIdentityId || preferredStoredIdentityId || fallbackIdentityId),
+    preferIdentityModeMapping: preferStoredIdentity ? false : !!preferredMappedIdentityId,
   }
 }
