@@ -770,6 +770,222 @@ body[data-colorize='body'] .viewer-message__body {
   box-shadow: none;
 }
 
+.export-sticky-note {
+  margin: 0.5rem 0;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border-soft);
+  border-left: 4px solid var(--export-sticky-note-accent, var(--accent));
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  white-space: normal;
+}
+
+.export-sticky-note__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.export-sticky-note__title {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.export-sticky-note__type {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.export-sticky-note__body {
+  color: var(--text-primary);
+}
+
+.export-sticky-note__body > :first-child {
+  margin-top: 0;
+}
+
+.export-sticky-note__body > :last-child {
+  margin-bottom: 0;
+}
+
+.export-sticky-note__list {
+  margin: 0;
+  padding-left: 1.35rem;
+}
+
+.export-sticky-note__list-item--checked {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.export-sticky-note__empty {
+  color: var(--text-muted);
+}
+
+.export-sticky-note-counter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  padding: 0.35rem 0;
+}
+
+.export-sticky-note-counter__button {
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--border-soft);
+  color: var(--text-secondary);
+}
+
+.export-sticky-note-counter__value {
+  min-width: 4.8rem;
+  padding: 0.35rem 0.65rem;
+  text-align: center;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 1.2rem;
+  background: var(--surface-background);
+}
+
+.export-sticky-note-slider {
+  padding: 0.3rem 0.15rem;
+}
+
+.export-sticky-note-slider__value {
+  text-align: center;
+  font-weight: 700;
+  margin-bottom: 0.45rem;
+}
+
+.export-sticky-note-slider__track {
+  height: 0.55rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border-soft);
+}
+
+.export-sticky-note-slider__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--export-sticky-note-accent, var(--accent));
+}
+
+.export-sticky-note-slider__range {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.35rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.export-sticky-note-timer {
+  display: grid;
+  justify-items: center;
+  gap: 0.45rem;
+  padding: 0.25rem 0;
+}
+
+.export-sticky-note-timer__display {
+  font-family: var(--font-code);
+  font-size: 1.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.export-sticky-note-timer__meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.export-sticky-note-clock {
+  display: flex;
+  justify-content: center;
+  padding: 0.25rem 0;
+}
+
+.export-sticky-note-clock__dial {
+  width: 7rem;
+  height: 7rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: conic-gradient(var(--export-sticky-note-accent, var(--accent)) 0deg var(--export-sticky-note-clock-filled), var(--border-soft) var(--export-sticky-note-clock-filled) 360deg);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.export-sticky-note-clock__center {
+  width: 2.4rem;
+  height: 2.4rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-background);
+  border: 1px solid var(--border-soft);
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.export-sticky-note-round {
+  display: grid;
+  justify-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0;
+}
+
+.export-sticky-note-round__label,
+.export-sticky-note-round__direction {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.export-sticky-note-round__value {
+  font-size: 2rem;
+  line-height: 1;
+  font-weight: 800;
+}
+
+.export-sticky-note-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.export-sticky-note-list__item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.18rem 0;
+}
+
+.export-sticky-note-list__checkbox {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  font-size: 0.78rem;
+  line-height: 1;
+}
+
+.export-sticky-note-list__item--checked .export-sticky-note-list__text {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
 .viewer-nav {
   display: flex;
   justify-content: space-between;

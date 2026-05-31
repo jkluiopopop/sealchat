@@ -82,6 +82,8 @@ type quickFormatRenderOptions struct {
 
 const diceLogVersion = 105
 
+var stickyNoteEmbedURLPattern = regexp.MustCompile(`^https?://[^\s<>"']*#/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)\?([^\s#]+)$`)
+
 var formatterRegistry = map[string]exportFormatter{
 	"json": jsonFormatter{},
 	"txt":  textFormatter{},
@@ -124,12 +126,20 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 	}
 	identityResolver := newIdentityResolver(job.ChannelID)
 	imageLayoutResolver := newExportImageLayoutResolver(job.ChannelID)
+	stickyNoteResolver := newStickyNoteExportResolver(job.ChannelID)
 	exportMessages := make([]ExportMessage, 0, len(messages))
 	for _, msg := range messages {
 		if msg == nil {
 			continue
 		}
-		plainContent := buildFilteredPlainContent(msg.Content, includeImages)
+		originalContent := msg.Content
+		exportContent := originalContent
+		var htmlContent string
+		if expanded, ok := stickyNoteResolver.render(originalContent, includeImages); ok {
+			exportContent = expanded.Plain
+			htmlContent = expanded.HTML
+		}
+		plainContent := buildFilteredPlainContent(exportContent, includeImages)
 		if plainContent == "" {
 			continue
 		}
@@ -137,14 +147,14 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 		if !includeDiceCommand && !isBotMessage && isSingleLineDiceCommand(plainContent) {
 			continue
 		}
-		originalContent := msg.Content
-		var htmlContent string
-		if shouldDisableInlineCodeForBotCommand(originalContent) {
-			htmlContent = renderBotCommandRawHTML(originalContent)
-		} else if html, ok := convertTipTapToHTML(originalContent); ok {
-			htmlContent = html
-		} else {
-			htmlContent = enhancePlainContentForHTMLExport(originalContent)
+		if htmlContent == "" {
+			if shouldDisableInlineCodeForBotCommand(originalContent) {
+				htmlContent = renderBotCommandRawHTML(originalContent)
+			} else if html, ok := convertTipTapToHTML(originalContent); ok {
+				htmlContent = html
+			} else {
+				htmlContent = enhancePlainContentForHTMLExport(originalContent)
+			}
 		}
 		// 将 <at> 标签转换为带样式的 HTML
 		htmlContent = convertAtTagsToHTML(htmlContent)
@@ -165,7 +175,7 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			IsArchived:       msg.IsArchived,
 			IsBot:            msg.User != nil && msg.User.IsBot,
 			CreatedAt:        msg.CreatedAt,
-			Content:          originalContent,
+			Content:          exportContent,
 			ContentHTML:      htmlContent,
 			WhisperTargets:   extractWhisperTargets(msg, job.ChannelID, identityResolver),
 		})
@@ -195,6 +205,729 @@ func buildExportPayload(job *model.MessageExportJobModel, channelName string, me
 			"merge_messages":        job.MergeMessages,
 			"without_timestamp":     job.WithoutTimestamp,
 		},
+	}
+}
+
+type stickyNoteExportRender struct {
+	Plain string
+	HTML  string
+}
+
+type stickyNoteExportResolver struct {
+	channelID string
+	cache     map[string]*model.StickyNoteModel
+}
+
+type stickyNoteEmbedTarget struct {
+	WorldID   string
+	ChannelID string
+	NoteID    string
+	RawLink   string
+}
+
+type stickyNoteExportAdapter struct {
+	TypeLabel string
+	Plain     func(note *model.StickyNoteModel, includeImages bool) string
+	HTML      func(note *model.StickyNoteModel, includeImages bool) string
+}
+
+var stickyNoteExportAdapters = map[model.StickyNoteType]stickyNoteExportAdapter{
+	model.StickyNoteTypeText: {
+		TypeLabel: "富文本便签",
+		Plain:     renderTextStickyNotePlain,
+		HTML:      renderTextStickyNoteHTML,
+	},
+	model.StickyNoteTypeCounter: {
+		TypeLabel: "计数器便签",
+		Plain:     renderCounterStickyNotePlain,
+		HTML:      renderCounterStickyNoteHTML,
+	},
+	model.StickyNoteTypeList: {
+		TypeLabel: "清单便签",
+		Plain:     renderListStickyNotePlain,
+		HTML:      renderListStickyNoteHTML,
+	},
+	model.StickyNoteTypeSlider: {
+		TypeLabel: "滑条便签",
+		Plain:     renderSliderStickyNotePlain,
+		HTML:      renderSliderStickyNoteHTML,
+	},
+	model.StickyNoteTypeChat: {
+		TypeLabel: "聊天便签",
+		Plain:     renderTextStickyNotePlain,
+		HTML:      renderTextStickyNoteHTML,
+	},
+	model.StickyNoteTypeTimer: {
+		TypeLabel: "计时器便签",
+		Plain:     renderTimerStickyNotePlain,
+		HTML:      renderTimerStickyNoteHTML,
+	},
+	model.StickyNoteTypeClock: {
+		TypeLabel: "时钟便签",
+		Plain:     renderClockStickyNotePlain,
+		HTML:      renderClockStickyNoteHTML,
+	},
+	model.StickyNoteTypeRoundCounter: {
+		TypeLabel: "回合计数便签",
+		Plain:     renderRoundCounterStickyNotePlain,
+		HTML:      renderRoundCounterStickyNoteHTML,
+	},
+}
+
+func newStickyNoteExportResolver(channelID string) *stickyNoteExportResolver {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return nil
+	}
+	return &stickyNoteExportResolver{
+		channelID: channelID,
+		cache:     make(map[string]*model.StickyNoteModel),
+	}
+}
+
+func (r *stickyNoteExportResolver) render(content string, includeImages bool) (stickyNoteExportRender, bool) {
+	if r == nil {
+		return stickyNoteExportRender{}, false
+	}
+	targets, ok := parseOnlyStickyNoteEmbedTargets(content)
+	if !ok || len(targets) == 0 {
+		return stickyNoteExportRender{}, false
+	}
+	plainParts := make([]string, 0, len(targets))
+	htmlParts := make([]string, 0, len(targets))
+	for _, target := range targets {
+		if target.ChannelID != r.channelID {
+			return stickyNoteExportRender{}, false
+		}
+		note := r.load(target.NoteID)
+		if note == nil || strings.TrimSpace(note.ChannelID) != r.channelID {
+			return stickyNoteExportRender{}, false
+		}
+		adapter := resolveStickyNoteExportAdapter(note.NoteType)
+		plain := buildStickyNoteExportPlain(note, adapter, includeImages)
+		html := buildStickyNoteExportHTML(note, adapter, includeImages)
+		if strings.TrimSpace(plain) == "" && strings.TrimSpace(html) == "" {
+			return stickyNoteExportRender{}, false
+		}
+		plainParts = append(plainParts, plain)
+		htmlParts = append(htmlParts, html)
+	}
+	return stickyNoteExportRender{
+		Plain: strings.Join(plainParts, "\n\n"),
+		HTML:  strings.Join(htmlParts, ""),
+	}, true
+}
+
+func (r *stickyNoteExportResolver) load(noteID string) *model.StickyNoteModel {
+	noteID = strings.TrimSpace(noteID)
+	if noteID == "" {
+		return nil
+	}
+	if note, ok := r.cache[noteID]; ok {
+		return note
+	}
+	note, err := model.StickyNoteGet(noteID)
+	if err != nil {
+		r.cache[noteID] = nil
+		return nil
+	}
+	r.cache[noteID] = note
+	return note
+}
+
+func parseSingleStickyNoteEmbedTarget(content string) (stickyNoteEmbedTarget, bool) {
+	targets, ok := parseOnlyStickyNoteEmbedTargets(content)
+	if !ok || len(targets) != 1 {
+		return stickyNoteEmbedTarget{}, false
+	}
+	return targets[0], true
+}
+
+func parseOnlyStickyNoteEmbedTargets(content string) ([]stickyNoteEmbedTarget, bool) {
+	candidate := normalizeStickyNoteEmbedCandidate(content)
+	if candidate == "" {
+		return nil, false
+	}
+	parts := splitStickyNoteEmbedOnlyParts(candidate)
+	if len(parts) == 0 {
+		return nil, false
+	}
+	targets := make([]stickyNoteEmbedTarget, 0, len(parts))
+	for _, part := range parts {
+		target, ok := parseStickyNoteEmbedTargetPart(part)
+		if !ok {
+			return nil, false
+		}
+		targets = append(targets, target)
+	}
+	return targets, true
+}
+
+func parseStickyNoteEmbedTargetPart(candidate string) (stickyNoteEmbedTarget, bool) {
+	candidate = trimStickyNoteLinkWrapper(candidate)
+	if candidate == "" || containsUnicodeSpace(candidate) {
+		return stickyNoteEmbedTarget{}, false
+	}
+	match := stickyNoteEmbedURLPattern.FindStringSubmatch(candidate)
+	if len(match) != 4 {
+		return stickyNoteEmbedTarget{}, false
+	}
+	query, err := neturl.ParseQuery(strings.ReplaceAll(match[3], "&amp;", "&"))
+	if err != nil {
+		return stickyNoteEmbedTarget{}, false
+	}
+	noteID := strings.TrimSpace(query.Get("snote"))
+	if noteID == "" {
+		return stickyNoteEmbedTarget{}, false
+	}
+	return stickyNoteEmbedTarget{
+		WorldID:   match[1],
+		ChannelID: match[2],
+		NoteID:    noteID,
+		RawLink:   candidate,
+	}, true
+}
+
+func splitStickyNoteEmbedOnlyParts(candidate string) []string {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return nil
+	}
+	fields := strings.Fields(candidate)
+	if len(fields) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(fields))
+	for _, field := range fields {
+		part := trimStickyNoteLinkWrapper(field)
+		if part == "" {
+			return nil
+		}
+		parts = append(parts, part)
+	}
+	return parts
+}
+
+func trimStickyNoteLinkWrapper(input string) string {
+	result := strings.TrimSpace(strings.ReplaceAll(input, "&amp;", "&"))
+	for {
+		trimmed := strings.TrimSpace(result)
+		if len(trimmed) >= 2 {
+			switch {
+			case strings.HasPrefix(trimmed, "(") && strings.HasSuffix(trimmed, ")"):
+				result = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+				continue
+			case strings.HasPrefix(trimmed, "（") && strings.HasSuffix(trimmed, "）"):
+				result = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "（"), "）"))
+				continue
+			}
+		}
+		return trimmed
+	}
+}
+
+func normalizeStickyNoteEmbedCandidate(content string) string {
+	candidate := strings.TrimSpace(strings.ReplaceAll(content, "&amp;", "&"))
+	if candidate == "" {
+		return ""
+	}
+	if _, ok := parseStickyNoteEmbedURLCandidate(candidate); ok {
+		return candidate
+	}
+	if plain, ok := extractTipTapPlainText(candidate); ok {
+		return strings.TrimSpace(strings.ReplaceAll(plain, "&amp;", "&"))
+	}
+	return candidate
+}
+
+func parseStickyNoteEmbedURLCandidate(candidate string) (stickyNoteEmbedTarget, bool) {
+	match := stickyNoteEmbedURLPattern.FindStringSubmatch(candidate)
+	if len(match) != 4 {
+		return stickyNoteEmbedTarget{}, false
+	}
+	return stickyNoteEmbedTarget{WorldID: match[1], ChannelID: match[2], RawLink: candidate}, true
+}
+
+func containsUnicodeSpace(input string) bool {
+	for _, r := range input {
+		if unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveStickyNoteExportAdapter(noteType model.StickyNoteType) stickyNoteExportAdapter {
+	if adapter, ok := stickyNoteExportAdapters[noteType]; ok {
+		return adapter
+	}
+	return stickyNoteExportAdapter{
+		TypeLabel: "便签",
+		Plain:     renderTextStickyNotePlain,
+		HTML:      renderTextStickyNoteHTML,
+	}
+}
+
+func buildStickyNoteExportPlain(note *model.StickyNoteModel, adapter stickyNoteExportAdapter, includeImages bool) string {
+	if note == nil {
+		return ""
+	}
+	title := strings.TrimSpace(note.Title)
+	if title == "" {
+		title = "未命名便签"
+	}
+	body := ""
+	if adapter.Plain != nil {
+		body = adapter.Plain(note, includeImages)
+	}
+	body = normalizePlainText(body)
+	if body == "" {
+		body = "（空便签）"
+	}
+	return normalizePlainText(fmt.Sprintf("[便签: %s]\n%s", title, body))
+}
+
+func buildStickyNoteExportHTML(note *model.StickyNoteModel, adapter stickyNoteExportAdapter, includeImages bool) string {
+	if note == nil {
+		return ""
+	}
+	title := strings.TrimSpace(note.Title)
+	if title == "" {
+		title = "未命名便签"
+	}
+	label := adapter.TypeLabel
+	if label == "" {
+		label = "便签"
+	}
+	body := ""
+	if adapter.HTML != nil {
+		body = adapter.HTML(note, includeImages)
+	}
+	if strings.TrimSpace(body) == "" {
+		body = `<p class="export-sticky-note__empty">（空便签）</p>`
+	}
+	color := resolveStickyNoteExportColor(note.Color)
+	return `<section class="export-sticky-note export-sticky-note--` + htmlEscape(normalizeStickyNoteColorName(note.Color)) + `" style="--export-sticky-note-accent:` + htmlEscape(color) + `">` +
+		`<header class="export-sticky-note__header">` +
+		`<span class="export-sticky-note__title">` + htmlEscape(title) + `</span>` +
+		`<span class="export-sticky-note__type">` + htmlEscape(label) + `</span>` +
+		`</header>` +
+		`<div class="export-sticky-note__body">` + body + `</div>` +
+		`</section>`
+}
+
+func renderTextStickyNotePlain(note *model.StickyNoteModel, includeImages bool) string {
+	if note == nil {
+		return ""
+	}
+	if strings.TrimSpace(note.Content) != "" {
+		return buildFilteredPlainContent(note.Content, includeImages)
+	}
+	return buildFilteredPlainContent(note.ContentText, includeImages)
+}
+
+func renderTextStickyNoteHTML(note *model.StickyNoteModel, includeImages bool) string {
+	if note == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(note.Content)
+	if raw == "" {
+		raw = strings.TrimSpace(note.ContentText)
+	}
+	if raw == "" {
+		return ""
+	}
+	var rendered string
+	if html, ok := convertTipTapToHTML(raw); ok {
+		rendered = html
+	} else {
+		rendered = enhancePlainContentForHTMLExport(raw)
+	}
+	if !includeImages {
+		rendered = stripImageTagsFromHTML(rendered)
+	}
+	return rendered
+}
+
+func renderDefaultTypedStickyNoteHTML(note *model.StickyNoteModel, includeImages bool) string {
+	plain := resolveTypedStickyNotePlain(note, includeImages)
+	if plain == "" {
+		return renderTextStickyNoteHTML(note, includeImages)
+	}
+	lines := strings.Split(plain, "\n")
+	var buf strings.Builder
+	buf.WriteString("<ul>")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		buf.WriteString("<li>")
+		buf.WriteString(htmlEscape(line))
+		buf.WriteString("</li>")
+	}
+	buf.WriteString("</ul>")
+	return buf.String()
+}
+
+func resolveTypedStickyNotePlain(note *model.StickyNoteModel, includeImages bool) string {
+	switch note.NoteType {
+	case model.StickyNoteTypeCounter:
+		return renderCounterStickyNotePlain(note, includeImages)
+	case model.StickyNoteTypeList:
+		return renderListStickyNotePlain(note, includeImages)
+	case model.StickyNoteTypeSlider:
+		return renderSliderStickyNotePlain(note, includeImages)
+	case model.StickyNoteTypeTimer:
+		return renderTimerStickyNotePlain(note, includeImages)
+	case model.StickyNoteTypeClock:
+		return renderClockStickyNotePlain(note, includeImages)
+	case model.StickyNoteTypeRoundCounter:
+		return renderRoundCounterStickyNotePlain(note, includeImages)
+	default:
+		return renderTextStickyNotePlain(note, includeImages)
+	}
+}
+
+func renderCounterStickyNotePlain(note *model.StickyNoteModel, includeImages bool) string {
+	var data struct {
+		Value float64 `json:"value"`
+		Max   float64 `json:"max"`
+	}
+	if !decodeStickyNoteTypeData(note, &data) {
+		return renderTextStickyNotePlain(note, includeImages)
+	}
+	if data.Max > 0 {
+		return fmt.Sprintf("计数: %s / %s", formatStickyNoteNumber(data.Value), formatStickyNoteNumber(data.Max))
+	}
+	return "计数: " + formatStickyNoteNumber(data.Value)
+}
+
+func renderCounterStickyNoteHTML(note *model.StickyNoteModel, includeImages bool) string {
+	var data struct {
+		Value float64 `json:"value"`
+		Max   float64 `json:"max"`
+	}
+	if !decodeStickyNoteTypeData(note, &data) {
+		return renderTextStickyNoteHTML(note, includeImages)
+	}
+	display := formatStickyNoteNumber(data.Value)
+	if data.Max > 0 {
+		display += "/" + formatStickyNoteNumber(data.Max)
+	}
+	return `<div class="export-sticky-note-counter">` +
+		`<span class="export-sticky-note-counter__button">-</span>` +
+		`<span class="export-sticky-note-counter__value">` + htmlEscape(display) + `</span>` +
+		`<span class="export-sticky-note-counter__button">+</span>` +
+		`</div>`
+}
+
+func renderListStickyNotePlain(note *model.StickyNoteModel, includeImages bool) string {
+	var data struct {
+		Items []struct {
+			Content string `json:"content"`
+			Checked bool   `json:"checked"`
+			Indent  int    `json:"indent"`
+		} `json:"items"`
+	}
+	if !decodeStickyNoteTypeData(note, &data) || len(data.Items) == 0 {
+		return renderTextStickyNotePlain(note, includeImages)
+	}
+	lines := make([]string, 0, len(data.Items))
+	for _, item := range data.Items {
+		text := normalizePlainText(item.Content)
+		if text == "" {
+			continue
+		}
+		prefix := "[ ] "
+		if item.Checked {
+			prefix = "[x] "
+		}
+		if item.Indent > 0 {
+			prefix += strings.Repeat("  ", item.Indent)
+		}
+		lines = append(lines, prefix+text)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderListStickyNoteHTML(note *model.StickyNoteModel, includeImages bool) string {
+	plain := renderListStickyNotePlain(note, includeImages)
+	if plain == "" {
+		return renderTextStickyNoteHTML(note, includeImages)
+	}
+	var buf strings.Builder
+	buf.WriteString(`<ul class="export-sticky-note__list">`)
+	for _, line := range strings.Split(plain, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		className := "export-sticky-note-list__item"
+		if strings.HasPrefix(line, "[x]") {
+			className += " export-sticky-note-list__item--checked"
+		}
+		buf.WriteString(`<li class="` + className + `">`)
+		checked := strings.HasPrefix(line, "[x]")
+		text := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "[x]"), "[ ]"))
+		if strings.HasPrefix(line, "[ ]") {
+			text = strings.TrimSpace(strings.TrimPrefix(line, "[ ]"))
+		}
+		box := " "
+		if checked {
+			box = "✓"
+		}
+		buf.WriteString(`<span class="export-sticky-note-list__checkbox">` + box + `</span>`)
+		buf.WriteString(`<span class="export-sticky-note-list__text">` + htmlEscape(text) + `</span>`)
+		buf.WriteString("</li>")
+	}
+	buf.WriteString("</ul>")
+	return buf.String()
+}
+
+func renderSliderStickyNotePlain(note *model.StickyNoteModel, includeImages bool) string {
+	var data struct {
+		Value float64 `json:"value"`
+		Min   float64 `json:"min"`
+		Max   float64 `json:"max"`
+		Step  float64 `json:"step"`
+	}
+	if !decodeStickyNoteTypeData(note, &data) {
+		return renderTextStickyNotePlain(note, includeImages)
+	}
+	return fmt.Sprintf("滑条: %s（范围 %s-%s，步进 %s）", formatStickyNoteNumber(data.Value), formatStickyNoteNumber(data.Min), formatStickyNoteNumber(data.Max), formatStickyNoteNumber(data.Step))
+}
+
+func renderSliderStickyNoteHTML(note *model.StickyNoteModel, includeImages bool) string {
+	var data struct {
+		Value float64 `json:"value"`
+		Min   float64 `json:"min"`
+		Max   float64 `json:"max"`
+		Step  float64 `json:"step"`
+	}
+	if !decodeStickyNoteTypeData(note, &data) {
+		return renderTextStickyNoteHTML(note, includeImages)
+	}
+	percent := 0.0
+	if data.Max > data.Min {
+		percent = ((data.Value - data.Min) / (data.Max - data.Min)) * 100
+	}
+	percent = clampFloat(percent, 0, 100)
+	return `<div class="export-sticky-note-slider">` +
+		`<div class="export-sticky-note-slider__value">` + htmlEscape(formatStickyNoteNumber(data.Value)) + `</div>` +
+		`<div class="export-sticky-note-slider__track"><div class="export-sticky-note-slider__fill" style="width:` + formatStickyNotePercent(percent) + `%"></div></div>` +
+		`<div class="export-sticky-note-slider__range"><span>` + htmlEscape(formatStickyNoteNumber(data.Min)) + `</span><span>` + htmlEscape(formatStickyNoteNumber(data.Max)) + `</span></div>` +
+		`</div>`
+}
+
+func renderTimerStickyNotePlain(note *model.StickyNoteModel, includeImages bool) string {
+	var data struct {
+		StartTime  float64 `json:"startTime"`
+		BaseValue  float64 `json:"baseValue"`
+		Direction  string  `json:"direction"`
+		Running    bool    `json:"running"`
+		ResetValue float64 `json:"resetValue"`
+	}
+	if !decodeStickyNoteTypeData(note, &data) {
+		return renderTextStickyNotePlain(note, includeImages)
+	}
+	state := "已暂停"
+	if data.Running {
+		state = "运行中"
+	}
+	direction := "正计时"
+	if data.Direction == "down" {
+		direction = "倒计时"
+	}
+	current := stickyNoteTimerCurrentValue(data.StartTime, data.BaseValue, data.Direction, data.Running)
+	return fmt.Sprintf("计时器: %s，%s，当前值 %s，重置值 %s", state, direction, formatStickyNoteDuration(current), formatStickyNoteDuration(data.ResetValue))
+}
+
+func renderTimerStickyNoteHTML(note *model.StickyNoteModel, includeImages bool) string {
+	var data struct {
+		StartTime  float64 `json:"startTime"`
+		BaseValue  float64 `json:"baseValue"`
+		Direction  string  `json:"direction"`
+		Running    bool    `json:"running"`
+		ResetValue float64 `json:"resetValue"`
+	}
+	if !decodeStickyNoteTypeData(note, &data) {
+		return renderTextStickyNoteHTML(note, includeImages)
+	}
+	current := stickyNoteTimerCurrentValue(data.StartTime, data.BaseValue, data.Direction, data.Running)
+	status := "已暂停"
+	if data.Running {
+		status = "运行中"
+	}
+	direction := "正计时"
+	if data.Direction == "down" {
+		direction = "倒计时"
+	}
+	return `<div class="export-sticky-note-timer">` +
+		`<div class="export-sticky-note-timer__display">` + htmlEscape(formatStickyNoteDuration(current)) + `</div>` +
+		`<div class="export-sticky-note-timer__meta"><span>` + htmlEscape(status) + `</span><span>` + htmlEscape(direction) + `</span><span>重置 ` + htmlEscape(formatStickyNoteDuration(data.ResetValue)) + `</span></div>` +
+		`</div>`
+}
+
+func renderClockStickyNotePlain(note *model.StickyNoteModel, includeImages bool) string {
+	var data struct {
+		Segments float64 `json:"segments"`
+		Filled   float64 `json:"filled"`
+	}
+	if !decodeStickyNoteTypeData(note, &data) {
+		return renderTextStickyNotePlain(note, includeImages)
+	}
+	return fmt.Sprintf("时钟: %s / %s", formatStickyNoteNumber(data.Filled), formatStickyNoteNumber(data.Segments))
+}
+
+func renderClockStickyNoteHTML(note *model.StickyNoteModel, includeImages bool) string {
+	var data struct {
+		Segments float64 `json:"segments"`
+		Filled   float64 `json:"filled"`
+	}
+	if !decodeStickyNoteTypeData(note, &data) {
+		return renderTextStickyNoteHTML(note, includeImages)
+	}
+	segments := clampFloat(data.Segments, 1, 120)
+	filled := clampFloat(data.Filled, 0, segments)
+	filledDeg := 0.0
+	if segments > 0 {
+		filledDeg = (filled / segments) * 360
+	}
+	return `<div class="export-sticky-note-clock">` +
+		`<div class="export-sticky-note-clock__dial" style="--export-sticky-note-clock-filled:` + formatStickyNotePercent(filledDeg) + `deg;--export-sticky-note-clock-step:` + formatStickyNotePercent(360/segments) + `deg">` +
+		`<div class="export-sticky-note-clock__center">` + htmlEscape(formatStickyNoteNumber(filled)) + `/` + htmlEscape(formatStickyNoteNumber(segments)) + `</div>` +
+		`</div>` +
+		`</div>`
+}
+
+func renderRoundCounterStickyNotePlain(note *model.StickyNoteModel, includeImages bool) string {
+	var data struct {
+		Round     float64 `json:"round"`
+		Direction string  `json:"direction"`
+		Limit     float64 `json:"limit"`
+	}
+	if !decodeStickyNoteTypeData(note, &data) {
+		return renderTextStickyNotePlain(note, includeImages)
+	}
+	direction := "递增"
+	if data.Direction == "down" {
+		direction = "递减"
+	}
+	if data.Limit > 0 {
+		return fmt.Sprintf("回合: %s（%s，限制 %s）", formatStickyNoteNumber(data.Round), direction, formatStickyNoteNumber(data.Limit))
+	}
+	return fmt.Sprintf("回合: %s（%s）", formatStickyNoteNumber(data.Round), direction)
+}
+
+func renderRoundCounterStickyNoteHTML(note *model.StickyNoteModel, includeImages bool) string {
+	var data struct {
+		Round     float64 `json:"round"`
+		Direction string  `json:"direction"`
+		Limit     float64 `json:"limit"`
+	}
+	if !decodeStickyNoteTypeData(note, &data) {
+		return renderTextStickyNoteHTML(note, includeImages)
+	}
+	display := formatStickyNoteNumber(data.Round)
+	if data.Limit > 0 {
+		display += "/" + formatStickyNoteNumber(data.Limit)
+	}
+	direction := "递增"
+	if data.Direction == "down" {
+		direction = "递减"
+	}
+	return `<div class="export-sticky-note-round">` +
+		`<div class="export-sticky-note-round__label">回合</div>` +
+		`<div class="export-sticky-note-round__value">` + htmlEscape(display) + `</div>` +
+		`<div class="export-sticky-note-round__direction">` + htmlEscape(direction) + `</div>` +
+		`</div>`
+}
+
+func decodeStickyNoteTypeData(note *model.StickyNoteModel, target any) bool {
+	if note == nil || strings.TrimSpace(note.TypeData) == "" || target == nil {
+		return false
+	}
+	return json.Unmarshal([]byte(note.TypeData), target) == nil
+}
+
+func formatStickyNoteNumber(value float64) string {
+	if value == float64(int64(value)) {
+		return strconv.FormatInt(int64(value), 10)
+	}
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func formatStickyNotePercent(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func clampFloat(value, min, max float64) float64 {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
+}
+
+func stickyNoteTimerCurrentValue(startTime, baseValue float64, direction string, running bool) float64 {
+	if !running || startTime <= 0 {
+		return baseValue
+	}
+	elapsed := float64(time.Now().UnixMilli()-int64(startTime)) / 1000
+	if direction == "down" {
+		return baseValue - elapsed
+	}
+	return baseValue + elapsed
+}
+
+func formatStickyNoteDuration(seconds float64) string {
+	total := int64(seconds)
+	if seconds < 0 && seconds != float64(total) {
+		total--
+	}
+	sign := ""
+	if total < 0 {
+		sign = "-"
+		total = -total
+	}
+	hours := total / 3600
+	minutes := (total % 3600) / 60
+	secs := total % 60
+	return fmt.Sprintf("%s%02d:%02d:%02d", sign, hours, minutes, secs)
+}
+
+func normalizeStickyNoteColorName(color string) string {
+	color = strings.ToLower(strings.TrimSpace(color))
+	if color == "" {
+		return "yellow"
+	}
+	for _, r := range color {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' {
+			return "custom"
+		}
+	}
+	return color
+}
+
+func resolveStickyNoteExportColor(color string) string {
+	switch normalizeStickyNoteColorName(color) {
+	case "yellow":
+		return "#f59e0b"
+	case "pink":
+		return "#ec4899"
+	case "green":
+		return "#22c55e"
+	case "blue":
+		return "#3b82f6"
+	case "purple":
+		return "#a855f7"
+	case "orange":
+		return "#f97316"
+	default:
+		return "#64748b"
 	}
 }
 
@@ -2560,6 +3293,37 @@ var exportHTMLTemplate = htmltemplate.Must(htmltemplate.New("export_html").Funcs
     .content img { max-width: 100%; height: auto; border-radius: 4px; }
     .mention-capsule { display: inline; background-color: rgba(59, 130, 246, 0.1); color: #3b82f6; padding: 0 0.35em; border-radius: 4px; font-weight: 500; }
     .mention-capsule--all { background-color: rgba(239, 68, 68, 0.1); color: #ef4444; }
+    .export-sticky-note { margin: 0.6em 0; padding: 0.75em 0.9em; border: 1px solid rgba(15,23,42,0.12); border-left: 4px solid var(--export-sticky-note-accent,#64748b); border-radius: 6px; background: color-mix(in srgb, var(--export-sticky-note-accent,#64748b) 9%, #fff); white-space: normal; }
+    .export-sticky-note__header { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75em; margin-bottom: 0.4em; }
+    .export-sticky-note__title { font-weight: 700; color: #111827; }
+    .export-sticky-note__type { font-size: 0.78em; color: #64748b; white-space: nowrap; }
+    .export-sticky-note__body { color: #1f2937; }
+    .export-sticky-note__body > :first-child { margin-top: 0; }
+    .export-sticky-note__body > :last-child { margin-bottom: 0; }
+    .export-sticky-note__list { margin: 0; padding-left: 1.35em; }
+    .export-sticky-note__list-item--checked { color: #64748b; text-decoration: line-through; }
+    .export-sticky-note__empty { color: #64748b; }
+    .export-sticky-note-counter { display: flex; align-items: center; justify-content: center; gap: 0.55em; padding: 0.35em 0; }
+    .export-sticky-note-counter__button { width: 2em; height: 2em; display: inline-flex; align-items: center; justify-content: center; border-radius: 999px; background: rgba(15,23,42,0.09); color: #334155; }
+    .export-sticky-note-counter__value { min-width: 4.8em; padding: 0.35em 0.65em; text-align: center; border: 1px solid rgba(15,23,42,0.18); border-radius: 6px; font-weight: 700; font-size: 1.2em; background: rgba(255,255,255,0.62); }
+    .export-sticky-note-slider { padding: 0.3em 0.15em; }
+    .export-sticky-note-slider__value { text-align: center; font-weight: 700; margin-bottom: 0.45em; }
+    .export-sticky-note-slider__track { height: 0.55em; overflow: hidden; border-radius: 999px; background: rgba(15,23,42,0.12); }
+    .export-sticky-note-slider__fill { height: 100%; border-radius: inherit; background: var(--export-sticky-note-accent,#64748b); }
+    .export-sticky-note-slider__range { display: flex; justify-content: space-between; margin-top: 0.35em; font-size: 0.82em; color: #64748b; }
+    .export-sticky-note-timer { display: grid; justify-items: center; gap: 0.45em; padding: 0.25em 0; }
+    .export-sticky-note-timer__display { font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size: 1.7em; font-weight: 700; letter-spacing: 0.08em; }
+    .export-sticky-note-timer__meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.45em; font-size: 0.82em; color: #64748b; }
+    .export-sticky-note-clock { display: flex; justify-content: center; padding: 0.25em 0; }
+    .export-sticky-note-clock__dial { width: 7em; height: 7em; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--export-sticky-note-accent,#64748b) 0deg var(--export-sticky-note-clock-filled), rgba(15,23,42,0.1) var(--export-sticky-note-clock-filled) 360deg); box-shadow: inset 0 0 0 1px rgba(15,23,42,0.16); }
+    .export-sticky-note-clock__center { width: 2.4em; height: 2.4em; display: grid; place-items: center; border-radius: 50%; background: rgba(255,255,255,0.88); border: 1px solid rgba(15,23,42,0.18); font-weight: 700; font-size: 0.9em; }
+    .export-sticky-note-round { display: grid; justify-items: center; gap: 0.35em; padding: 0.25em 0; }
+    .export-sticky-note-round__label, .export-sticky-note-round__direction { font-size: 0.82em; color: #64748b; }
+    .export-sticky-note-round__value { font-size: 2em; line-height: 1; font-weight: 800; }
+    .export-sticky-note-list { list-style: none; margin: 0; padding: 0; }
+    .export-sticky-note-list__item { display: flex; align-items: center; gap: 0.45em; padding: 0.18em 0; }
+    .export-sticky-note-list__checkbox { width: 1em; height: 1em; flex: none; display: inline-grid; place-items: center; border-radius: 3px; border: 1px solid rgba(15,23,42,0.28); font-size: 0.78em; line-height: 1; }
+    .export-sticky-note-list__item--checked .export-sticky-note-list__text { color: #64748b; text-decoration: line-through; }
   </style>
 </head>
 <body>
