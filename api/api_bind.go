@@ -28,6 +28,8 @@ import (
 
 var appConfig *utils.AppConfig
 var appFs afero.Fs
+var serveAppWithOptionalCertificateForInit = serveAppWithOptionalCertificate
+var startOneBotReverseRuntimeForInit = startOneBotReverseRuntime
 
 // SyncConfigToDB 将配置同步到数据库
 func SyncConfigToDB(config *utils.AppConfig, source string) {
@@ -401,6 +403,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	// 必须在 v1Auth.Use(SignCheckMiddleware) 之前注册。
 	// Fiber 同前缀 group middleware 会按注册顺序吞掉后续路由；若放在后面，playToken 请求会先被 SignCheckMiddleware 拦成 401。
 	v1.Get("/audio/stream/:id", OptionalSignCheckMiddleware, AudioAssetStream)
+	// 平台字体会被嵌入页直接拉取，必须在 v1Auth.Use(SignCheckMiddleware) 之前注册。
+	// 若放在后面，iframe / 外部嵌入场景会先被 SignCheckMiddleware 拦成 401。
+	v1.Get("/platform-fonts", PlatformFontListPublicHandler)
+	v1.Get("/platform-fonts/:id/meta", PlatformFontMetaHandler)
+	v1.Get("/platform-fonts/:id/file", PlatformFontFileHandler)
+	v1.Get("/platform-fonts/:id/subset-manifest", PlatformFontSubsetManifestHandler)
+	v1.Get("/platform-fonts/:id/subset/*", PlatformFontSubsetFileHandler)
 
 	v1Auth := v1.Group("")
 	v1Auth.Use(SignCheckMiddleware)
@@ -670,12 +679,6 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Post("/chat/export/:taskId/retry", ChatExportRetry)
 	v1Auth.Post("/chat/export/test", ChatExportTest)
 	v1Auth.Post("/chat/export/:taskId/upload", ChatExportUpload)
-	v1Auth.Get("/platform-fonts", PlatformFontListPublicHandler)
-	v1Auth.Get("/platform-fonts/:id/meta", PlatformFontMetaHandler)
-	v1Auth.Get("/platform-fonts/:id/file", PlatformFontFileHandler)
-	v1Auth.Get("/platform-fonts/:id/subset-manifest", PlatformFontSubsetManifestHandler)
-	v1Auth.Get("/platform-fonts/:id/subset/*", PlatformFontSubsetFileHandler)
-
 	// 聊天记录导入
 	chatImport := v1Auth.Group("/channels/:channelId/import")
 	chatImport.Get("/templates", ChatImportTemplates)
@@ -843,7 +846,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 
 	websocketWorks(app, config.WebUrl)
 	oneBotWSWorks(app, config.WebUrl)
-	startOneBotReverseRuntime()
+	startOneBotReverseRuntimeForInit()
 
-	return serveAppWithOptionalCertificate(app, config)
+	return serveAppWithOptionalCertificateForInit(app, config)
 }
