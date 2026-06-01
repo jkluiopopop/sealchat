@@ -1,6 +1,7 @@
 export type StoredChannelIcOocMode = 'ic' | 'ooc'
 
 export interface ChannelRestorePreferenceOptions {
+  currentIdentityId?: string | null
   storedMode?: string | null
   storedIdentityId?: string | null
   defaultIdentityId?: string | null
@@ -58,21 +59,26 @@ export const resolveChannelRestorePreference = (
     ? options.validIdentityIds.map((id) => normalizeId(id)).filter(Boolean)
     : []
   const validSet = new Set(validIdentityIds)
+  const currentIdentityId = normalizeId(options.currentIdentityId)
   const mappedIdentityId = normalizeId(mode === 'ooc' ? options.oocRoleId : options.icRoleId)
   const storedIdentityId = normalizeId(options.storedIdentityId)
   const defaultIdentityId = normalizeId(options.defaultIdentityId)
+  const preferredCurrentIdentityId = currentIdentityId && validSet.has(currentIdentityId) ? currentIdentityId : ''
   const preferredMappedIdentityId = mappedIdentityId && validSet.has(mappedIdentityId) ? mappedIdentityId : ''
   const preferredStoredIdentityId = storedIdentityId && validSet.has(storedIdentityId) ? storedIdentityId : ''
   const fallbackIdentityId = defaultIdentityId && validSet.has(defaultIdentityId)
     ? defaultIdentityId
     : (validIdentityIds[0] || '')
   const preferStoredIdentity = options.preferStoredIdentity === true
+  const preservedCurrentIdentity = preferredCurrentIdentityId || ''
 
   return {
     mode,
-    identityId: preferStoredIdentity
-      ? (preferredStoredIdentityId || preferredMappedIdentityId || fallbackIdentityId)
-      : (preferredMappedIdentityId || preferredStoredIdentityId || fallbackIdentityId),
-    preferIdentityModeMapping: preferStoredIdentity ? false : !!preferredMappedIdentityId,
+    identityId: preservedCurrentIdentity || (
+      preferStoredIdentity
+        ? (preferredStoredIdentityId || preferredMappedIdentityId || fallbackIdentityId)
+        : (preferredMappedIdentityId || preferredStoredIdentityId || fallbackIdentityId)
+    ),
+    preferIdentityModeMapping: preservedCurrentIdentity ? false : (preferStoredIdentity ? false : !!preferredMappedIdentityId),
   }
 }

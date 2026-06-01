@@ -2642,6 +2642,11 @@ export const useChatStore = defineStore({
       const scopeKey = this.resolveChannelIdentityScopeKey(channelId, targetUserId);
       const defaultItem = items.find(item => item.isDefault) || items[0];
       const restoreState = this.resolveChannelSessionRestoreMode(channelId, targetUserId);
+      const currentActiveIdentityId = String(this.activeChannelIdentity[scopeKey] || '').trim();
+      const hasCurrentActiveIdentity = (
+        currentActiveIdentityId.length > 0
+        && items.some((item) => item.id === currentActiveIdentityId)
+      );
       if (!scopeKey) {
         this.setIcMode(restoreState.mode, channelId, targetUserId, { persist: restoreState.useStoredIdentity });
         return {
@@ -2652,9 +2657,11 @@ export const useChatStore = defineStore({
       }
       if (scopeKey !== channelId) {
         const savedActive = readChannelIdentityFromStorage(scopeKey);
-        const activeId = savedActive && items.some(item => item.id === savedActive)
-          ? savedActive
-          : (defaultItem?.id || '');
+        const activeId = hasCurrentActiveIdentity
+          ? currentActiveIdentityId
+          : (savedActive && items.some(item => item.id === savedActive)
+            ? savedActive
+            : (defaultItem?.id || ''));
         if (activeId) {
           this.setActiveIdentity(channelId, activeId, targetUserId);
         } else {
@@ -2669,22 +2676,15 @@ export const useChatStore = defineStore({
           preferIdentityModeMapping: false,
         };
       }
-      const currentActiveIdentityId = String(this.activeChannelIdentity[scopeKey] || '').trim();
-      const shouldPreferCurrentActiveIdentity = (
-        !restoreState.useStoredIdentity
-        && currentActiveIdentityId.length > 0
-        && items.some((item) => item.id === currentActiveIdentityId)
-      );
       const config = this.getChannelIcOocRoleConfig(channelId, targetUserId);
       const restored = resolveChannelRestorePreference({
         storedMode: restoreState.mode,
-        storedIdentityId: shouldPreferCurrentActiveIdentity
-          ? currentActiveIdentityId
-          : (restoreState.useStoredIdentity ? readChannelIdentityFromStorage(scopeKey) : ''),
+        currentIdentityId: hasCurrentActiveIdentity ? currentActiveIdentityId : '',
+        storedIdentityId: restoreState.useStoredIdentity ? readChannelIdentityFromStorage(scopeKey) : '',
         defaultIdentityId: defaultItem?.id || '',
         icRoleId: config.icRoleId,
         oocRoleId: config.oocRoleId,
-        preferStoredIdentity: shouldPreferCurrentActiveIdentity,
+        preferStoredIdentity: false,
         validIdentityIds: items.map((item) => item.id),
       });
       if (restored.identityId) {
