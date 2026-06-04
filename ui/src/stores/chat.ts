@@ -271,6 +271,11 @@ interface ChatState {
     selectedIds: Set<string>;
     rangeAnchorId: string | null;
     rangeModeEnabled: boolean; // 范围选择模式：首条是起点，第二条是终点
+    relocate: {
+      active: boolean;
+      sourceMessageIds: string[];
+      targetMessageId: string | null;
+    };
   } | null;
   // 当前频道的第一条未读消息信息
   firstUnreadInfo: {
@@ -4703,6 +4708,27 @@ export const useChatStore = defineStore({
       return data;
     },
 
+    async messageRelocateBatch(
+      channel_id: string,
+      payload: { messageIds: string[]; targetMessageId: string; placement?: 'after'; clientOpId?: string },
+    ) {
+      if (!this.curChannel?.id || !Array.isArray(payload.messageIds) || payload.messageIds.length === 0) {
+        return;
+      }
+      const resp = await this.sendAPI('message.relocate.batch', {
+        channel_id,
+        message_ids: payload.messageIds,
+        target_message_id: payload.targetMessageId,
+        placement: payload.placement || 'after',
+        client_op_id: payload.clientOpId || '',
+      });
+      const data = resp?.data as { message_ids?: string[]; target_message_id?: string } | undefined;
+      if (!data || !Array.isArray(data.message_ids) || data.message_ids.length === 0 || !data.target_message_id) {
+        throw new Error('重定位失败：未找到目标消息或无权限操作');
+      }
+      return data;
+    },
+
     async messageCreate(
       content: string,
       quote_id?: string,
@@ -5811,6 +5837,11 @@ export const useChatStore = defineStore({
         selectedIds: new Set(anchorMessageId ? [anchorMessageId] : []),
         rangeAnchorId: anchorMessageId ?? null,
         rangeModeEnabled: false,
+        relocate: {
+          active: false,
+          sourceMessageIds: [],
+          targetMessageId: null,
+        },
       };
     },
 
@@ -5820,6 +5851,9 @@ export const useChatStore = defineStore({
 
     toggleMessageSelection(messageId: string) {
       if (!this.multiSelect) {
+        return;
+      }
+      if (this.multiSelect.relocate.active) {
         return;
       }
       if (this.multiSelect.selectedIds.has(messageId)) {
@@ -5851,6 +5885,11 @@ export const useChatStore = defineStore({
       }
       this.multiSelect.selectedIds.clear();
       this.multiSelect.rangeAnchorId = null;
+      this.multiSelect.relocate = {
+        active: false,
+        sourceMessageIds: [],
+        targetMessageId: null,
+      };
     },
 
     isMessageSelected(messageId: string): boolean {
@@ -5859,11 +5898,56 @@ export const useChatStore = defineStore({
 
     toggleRangeMode() {
       if (!this.multiSelect) return;
+      if (this.multiSelect.relocate.active) {
+        return;
+      }
       this.multiSelect.rangeModeEnabled = !this.multiSelect.rangeModeEnabled;
       // 开启范围模式时清空锚点，等待用户选择起点
       if (this.multiSelect.rangeModeEnabled) {
         this.multiSelect.rangeAnchorId = null;
       }
+    },
+
+    startMultiSelectRelocate(sourceMessageIds: string[]) {
+      if (!this.multiSelect) {
+        return;
+      }
+      const ids = Array.from(new Set((sourceMessageIds || []).map(id => String(id || '').trim()).filter(Boolean)));
+      if (!ids.length) {
+        return;
+      }
+      this.multiSelect.rangeModeEnabled = false;
+      this.multiSelect.rangeAnchorId = null;
+      this.multiSelect.relocate = {
+        active: true,
+        sourceMessageIds: ids,
+        targetMessageId: null,
+      };
+    },
+
+    setMultiSelectRelocateTarget(messageId: string | null) {
+      if (!this.multiSelect) {
+        return;
+      }
+      this.multiSelect.relocate.targetMessageId = String(messageId || '').trim() || null;
+    },
+
+    cancelMultiSelectRelocate() {
+      if (!this.multiSelect) {
+        return;
+      }
+      this.multiSelect.relocate = {
+        active: false,
+        sourceMessageIds: [],
+        targetMessageId: null,
+      };
+    },
+
+    isRelocateSourceMessage(messageId: string): boolean {
+      if (!this.multiSelect?.relocate.active) {
+        return false;
+      }
+      return this.multiSelect.relocate.sourceMessageIds.includes(String(messageId || '').trim());
     },
 
     // 范围选择处理：点击消息时调用

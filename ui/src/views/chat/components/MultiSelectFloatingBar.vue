@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { NIcon, NTooltip } from 'naive-ui';
-import { Copy, Archive, Trash, Photo, BoxMultiple, X, ArrowsVertical, ArrowBarToDown, DotsVertical } from '@vicons/tabler';
+import { Copy, Archive, Trash, Photo, BoxMultiple, X, ArrowsVertical, ArrowBarToDown, DotsVertical, Focus2 } from '@vicons/tabler';
 import { useChatStore } from '@/stores/chat';
 
 const chat = useChatStore();
@@ -12,15 +12,18 @@ const emit = defineEmits<{
   (e: 'delete'): void;
   (e: 'copy-image'): void;
   (e: 'move-to-bottom'): void;
+  (e: 'relocate'): void;
   (e: 'select-all'): void;
   (e: 'range-select'): void;
   (e: 'cancel'): void;
+  (e: 'cancel-relocate'): void;
 }>();
 
 const selectedCount = computed(() => chat.multiSelect?.selectedIds.size ?? 0);
 const hasSelection = computed(() => selectedCount.value > 0);
 const isActive = computed(() => chat.multiSelect?.active ?? false);
 const rangeModeEnabled = computed(() => chat.multiSelect?.rangeModeEnabled ?? false);
+const relocateActive = computed(() => chat.multiSelect?.relocate?.active ?? false);
 const tooltipZIndex = 2200;
 const tooltipPlacement = 'top';
 const FLOATING_BAR_MARGIN = 12;
@@ -206,10 +209,21 @@ const handleToggleRangeMode = () => {
 
       <div class="multi-select-bar__info">
         <span class="multi-select-bar__count">已选 {{ selectedCount }} 条</span>
-        <span v-if="rangeHint" class="multi-select-bar__hint">{{ rangeHint }}</span>
+        <span v-if="relocateActive" class="multi-select-bar__hint">请选择目标消息</span>
+        <span v-else-if="rangeHint" class="multi-select-bar__hint">{{ rangeHint }}</span>
       </div>
       
       <div class="multi-select-bar__actions">
+        <template v-if="relocateActive">
+          <button
+            class="multi-select-bar__button multi-select-bar__button--cancel"
+            @click="emit('cancel-relocate')"
+          >
+            <n-icon :size="16"><X /></n-icon>
+            <span>取消重定位</span>
+          </button>
+        </template>
+        <template v-else>
         <n-tooltip trigger="hover" :z-index="tooltipZIndex" :placement="tooltipPlacement">
           <template #trigger>
             <button
@@ -285,6 +299,21 @@ const handleToggleRangeMode = () => {
           将选中消息移动到当前列表底部，并保持原有顺序
         </n-tooltip>
 
+        <n-tooltip trigger="hover" :z-index="tooltipZIndex" :placement="tooltipPlacement">
+          <template #trigger>
+            <button
+              class="multi-select-bar__button"
+              :class="{ 'is-disabled': !hasSelection }"
+              :disabled="!hasSelection"
+              @click="emit('relocate')"
+            >
+              <n-icon :size="16"><Focus2 /></n-icon>
+              <span>重定位</span>
+            </button>
+          </template>
+          选择目标消息后，将选中消息移动到该消息下方并保持顺序
+        </n-tooltip>
+
         <div class="multi-select-bar__divider"></div>
 
         <n-tooltip trigger="hover" :z-index="tooltipZIndex" :placement="tooltipPlacement">
@@ -321,6 +350,7 @@ const handleToggleRangeMode = () => {
           <n-icon :size="16"><X /></n-icon>
           <span>取消</span>
         </button>
+        </template>
       </div>
     </div>
   </Transition>

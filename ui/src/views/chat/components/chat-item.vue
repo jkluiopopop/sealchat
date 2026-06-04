@@ -1205,7 +1205,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel', 'toggle-select', 'range-click', 'image-layout-edit-state-change', 'retry-send', 'reedit-revoked', 'edit-inline-image']);
+const emit = defineEmits(['avatar-longpress', 'avatar-click', 'edit', 'edit-save', 'edit-cancel', 'toggle-select', 'range-click', 'relocate-target-pick', 'image-layout-edit-state-change', 'retry-send', 'reedit-revoked', 'edit-inline-image']);
 
 const timestampTicker = ref(Date.now());
 const inlineTimestampText = computed(() => {
@@ -1501,6 +1501,13 @@ const effectiveIsSelected = computed(() => {
     return chat.multiSelect.selectedIds.has(props.item.id);
   }
   return false;
+});
+const relocateModeActive = computed(() => chat.multiSelect?.relocate?.active ?? false);
+const effectiveIsRelocateTarget = computed(() => {
+  if (!relocateModeActive.value || !props.item?.id) {
+    return false;
+  }
+  return chat.multiSelect?.relocate?.targetMessageId === props.item.id;
 });
 
 const hoverTimestampVisible = ref(false);
@@ -2970,6 +2977,14 @@ const handleSelectToggle = (e: MouseEvent) => {
 // Handle click on message block in multi-select mode
 const handleMessageClick = (e: MouseEvent) => {
   if (!effectiveMultiSelectMode.value || !props.item?.id) return;
+
+  if (relocateModeActive.value) {
+    if (chat.isRelocateSourceMessage(props.item.id)) {
+      return;
+    }
+    emit('relocate-target-pick', props.item.id);
+    return;
+  }
   
   // If in range mode, use range selection
   if (chat.multiSelect?.rangeModeEnabled) {
@@ -3491,7 +3506,8 @@ const handleRetrySend = () => {
       { 'chat-item--merged': props.isMerged },
       { 'chat-item--body-only': props.bodyOnly },
       { 'chat-item--multiselect': effectiveMultiSelectMode },
-      { 'chat-item--selected': effectiveIsSelected }
+      { 'chat-item--selected': effectiveIsSelected },
+      { 'chat-item--relocate-target': effectiveIsRelocateTarget }
     ]"
     @mouseenter="handleTimestampHoverStart"
     @mouseleave="handleTimestampHoverEnd"
@@ -4000,6 +4016,17 @@ const handleRetrySend = () => {
 
 :root[data-display-palette='night'] .chat-item--selected {
   background-color: rgba(59, 130, 246, 0.15);
+}
+
+.chat-item--relocate-target {
+  background-color: rgba(16, 185, 129, 0.12);
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.35);
+}
+
+:root[data-display-palette='night'] .chat-item--relocate-target {
+  background-color: rgba(16, 185, 129, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.45);
 }
 
 .chat-item > .right {

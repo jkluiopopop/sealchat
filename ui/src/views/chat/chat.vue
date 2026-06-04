@@ -12558,6 +12558,7 @@ const handleChannelSwitchEvent = (e: any) => {
   resetWindowState('live');
   pinnedRows.value = [];
   chat.clearMessageInsertTarget();
+  chat.cancelMultiSelectRelocate();
   resetDragState();
   localReorderOps.clear();
   showButton.value = false;
@@ -12586,6 +12587,7 @@ const handleChannelContextCleared = () => {
   resetWindowState('live');
   pinnedRows.value = [];
   chat.clearMessageInsertTarget();
+  chat.cancelMultiSelectRelocate();
   resetDragState();
   localReorderOps.clear();
   showButton.value = false;
@@ -12672,6 +12674,9 @@ chatEvent.on('message-removed', (e?: Event) => {
       }
   }
   rows.value = rows.value.filter((msg) => !(msg as any).is_deleted);
+  if (chat.multiSelect?.relocate.active && chat.isRelocateSourceMessage(targetId)) {
+    chat.cancelMultiSelectRelocate();
+  }
   if (chat.isMessageInsertTarget(removedChannelId, targetId)) {
     chat.clearMessageInsertTarget(removedChannelId);
   }
@@ -14205,6 +14210,14 @@ const getMultiSelectedMessages = () => {
   return rows.value.filter(row => selected.includes(row.id));
 };
 
+const getMultiSelectedMessageIdsInDisplayOrder = () => {
+  const selected = chat.multiSelect?.selectedIds;
+  if (!selected?.size) return [];
+  return rows.value
+    .map(row => row.id)
+    .filter((id): id is string => Boolean(id) && selected.has(id));
+};
+
 const handleMultiSelectCopy = async () => {
   const messages = getMultiSelectedMessages();
   if (!messages.length) {
@@ -14384,6 +14397,69 @@ const handleMultiSelectMoveToBottom = async () => {
   } catch (error) {
     message.error((error as Error)?.message || '置底失败');
   }
+};
+
+const handleMultiSelectRelocate = () => {
+  const messageIds = getMultiSelectedMessageIdsInDisplayOrder();
+  if (!messageIds.length) {
+    message.warning('请先选择消息');
+    return;
+  }
+  chat.startMultiSelectRelocate(messageIds);
+};
+
+const handleCancelMultiSelectRelocate = () => {
+  chat.cancelMultiSelectRelocate();
+};
+
+const handleRelocateTargetPick = (messageId: string) => {
+  const relocate = chat.multiSelect?.relocate;
+  if (!relocate?.active) {
+    return;
+  }
+  const targetId = String(messageId || '').trim();
+  if (!targetId) {
+    return;
+  }
+  if (relocate.sourceMessageIds.includes(targetId)) {
+    message.warning('不能定位到已选消息内部');
+    return;
+  }
+  const channelId = chat.curChannel?.id;
+  if (!channelId) {
+    message.error('当前频道不可用');
+    return;
+  }
+  chat.setMultiSelectRelocateTarget(targetId);
+  const targetMessage = rows.value.find(row => row.id === targetId);
+  const targetSummary = (() => {
+    const raw = typeof targetMessage?.content === 'string' ? targetMessage.content.replace(/<[^>]*>/g, '').trim() : '';
+    if (raw) {
+      return raw.length > 32 ? `${raw.slice(0, 32)}...` : raw;
+    }
+    return '该消息';
+  })();
+  const messageIds = relocate.sourceMessageIds.slice();
+  dialog.warning({
+    title: '批量重定位',
+    content: `确定将选中的 ${messageIds.length} 条消息移动到“${targetSummary}”下方吗？`,
+    positiveText: '移动',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await chat.messageRelocateBatch(channelId, {
+          messageIds,
+          targetMessageId: targetId,
+          placement: 'after',
+          clientOpId: nanoid(),
+        });
+        message.success(`已重定位 ${messageIds.length} 条消息`);
+        chat.exitMultiSelectMode();
+      } catch (error) {
+        message.error((error as Error)?.message || '重定位失败');
+      }
+    },
+  });
 };
 
 const handleMultiSelectAll = () => {
@@ -15245,6 +15321,7 @@ onBeforeUnmount(() => {
                 @retry-send="retrySendMessage"
                 @image-layout-edit-state-change="handleImageLayoutEditStateChange"
                 @edit-inline-image="handleMessageInlineImageEdit"
+                @relocate-target-pick="handleRelocateTargetPick"
               />
             </div>
           </div>
@@ -15342,6 +15419,7 @@ onBeforeUnmount(() => {
                     @retry-send="retrySendMessage"
                     @image-layout-edit-state-change="handleImageLayoutEditStateChange"
                     @edit-inline-image="handleMessageInlineImageEdit"
+                    @relocate-target-pick="handleRelocateTargetPick"
                   />
                 </div>
               </div>
@@ -15380,6 +15458,7 @@ onBeforeUnmount(() => {
                 @retry-send="retrySendMessage"
                 @image-layout-edit-state-change="handleImageLayoutEditStateChange"
                 @edit-inline-image="handleMessageInlineImageEdit"
+                @relocate-target-pick="handleRelocateTargetPick"
               />
             </template>
             <template v-else>
@@ -15416,6 +15495,7 @@ onBeforeUnmount(() => {
                 @retry-send="retrySendMessage"
                 @image-layout-edit-state-change="handleImageLayoutEditStateChange"
                 @edit-inline-image="handleMessageInlineImageEdit"
+                @relocate-target-pick="handleRelocateTargetPick"
               />
             </template>
           </div>
@@ -16609,7 +16689,9 @@ onBeforeUnmount(() => {
     @delete="handleMultiSelectDelete"
     @copy-image="handleMultiSelectCopyImage"
     @move-to-bottom="handleMultiSelectMoveToBottom"
+    @relocate="handleMultiSelectRelocate"
     @select-all="handleMultiSelectAll"
+    @cancel-relocate="handleCancelMultiSelectRelocate"
   />
   <GalleryPanel @insert="handleGalleryInsert" />
   <CharacterCardPanel v-model:visible="characterCardPanelVisible" :channel-id="chat.curChannel?.id" />
