@@ -510,6 +510,11 @@ body .n-dialog.sc-fluid-modal.sc-fluid-modal--xwide {
   --sc-modal-width: min(1240px, calc(100vw - var(--sc-modal-side-gap)));
 }
 
+body .n-card.sc-fluid-modal.sc-fluid-modal--display-settings,
+body .n-dialog.sc-fluid-modal.sc-fluid-modal--display-settings {
+  --sc-modal-width: min(1120px, calc(100vw - var(--sc-modal-side-gap)));
+}
+
 body .sc-fluid-modal .sc-modal-table-scroll {
   width: 100%;
   min-width: 0;

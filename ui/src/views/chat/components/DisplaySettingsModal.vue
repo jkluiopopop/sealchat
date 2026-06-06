@@ -60,6 +60,16 @@ const transferMenuOptions = [
   { label: '导出当前配置', key: 'export' },
   { label: '导入 JSON / ZIP', key: 'import' },
 ]
+type DisplaySettingsCategory = 'appearance' | 'reading' | 'input' | 'role' | 'terms' | 'other'
+const displaySettingsCategoryOptions: Array<{ label: string; value: DisplaySettingsCategory }> = [
+  { label: '外观', value: 'appearance' },
+  { label: '阅读', value: 'reading' },
+  { label: '输入', value: 'input' },
+  { label: '角色', value: 'role' },
+  { label: '术语', value: 'terms' },
+  { label: '其他', value: 'other' },
+]
+const activeSettingsCategory = ref<DisplaySettingsCategory>('appearance')
 const layoutModeOptions: Array<{ label: string; value: DisplaySettings['layout'] }> = [
   { label: '气泡模式', value: 'bubble' },
   { label: '紧凑模式', value: 'compact' },
@@ -293,6 +303,12 @@ const flushAutoSave = () => {
   emit('save', next)
 }
 
+const handleSaveSettings = () => {
+  clearAutoSaveTimer()
+  flushAutoSave()
+  message.success('设置已保存')
+}
+
 const handleExportSettings = async () => {
   if (transferProcessing.value) return
   transferProcessing.value = true
@@ -411,16 +427,32 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
 
 <template>
   <n-modal
-    class="display-settings-modal"
+    class="display-settings-modal sc-fluid-modal sc-fluid-modal--display-settings"
     preset="card"
     :show="props.visible"
     title="常规设置"
-    :style="{ width: 'min(880px, 96vw)' }"
+    :style="{ width: 'min(1120px, calc(100vw - 32px))' }"
     @update:show="emit('update:visible', $event)"
   >
     <div class="display-settings">
       <p class="display-settings__autosave-hint">更改会自动保存并立即生效。</p>
-      <section class="display-settings__section">
+      <div class="display-settings__category-switch" role="tablist" aria-label="常规设置分类">
+        <button
+          v-for="option in displaySettingsCategoryOptions"
+          :key="option.value"
+          type="button"
+          class="display-settings__category-tab"
+          :class="{ 'display-settings__category-tab--active': activeSettingsCategory === option.value }"
+          :aria-selected="activeSettingsCategory === option.value"
+          role="tab"
+          @click="activeSettingsCategory = option.value"
+        >
+          {{ option.label }}
+        </button>
+      </div>
+
+      <div class="display-settings__content">
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">版式</p>
@@ -444,7 +476,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">主题</p>
@@ -468,7 +500,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section display-settings__section--wide">
         <header>
           <div>
             <p class="section-title">主题管理</p>
@@ -533,7 +565,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">全局字体</p>
@@ -550,7 +582,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">头像显示</p>
@@ -611,7 +643,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">简洁输入框</p>
@@ -624,7 +656,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'other'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">频道未读小蓝点</p>
@@ -637,7 +669,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">BOT 徽标样式</p>
@@ -669,7 +701,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">头像装饰性能</p>
@@ -682,7 +714,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section display-settings__section--wide">
         <header>
           <div>
             <p class="section-title">合并连续消息</p>
@@ -695,7 +727,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">拖拽指示线</p>
@@ -708,7 +740,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">移动端拖动需长按</p>
@@ -721,7 +753,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">新消息弱高亮</p>
@@ -734,7 +766,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">实时预览</p>
@@ -747,7 +779,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">置顶消息显示</p>
@@ -760,7 +792,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">输入时自动滚动</p>
@@ -773,7 +805,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">时间戳显示</p>
@@ -796,7 +828,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         <p class="control-desc control-desc--hint">鼠标移入消息约 2 秒后会临时显示时间戳。</p>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">快捷键管理</p>
@@ -808,7 +840,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-button>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'role'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">角色快捷切换</p>
@@ -830,7 +862,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'role'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">身份差分快捷切换</p>
@@ -852,7 +884,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'other'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">禁用浏览器右键菜单</p>
@@ -865,7 +897,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">输入与发送</p>
@@ -890,7 +922,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         <p class="control-desc control-desc--hint">Shift + Enter 始终换行</p>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">快捷画廊点击动作</p>
@@ -903,7 +935,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">快捷画廊分页</p>
@@ -926,7 +958,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'role'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">场内场外自动切换</p>
@@ -974,7 +1006,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         <p class="control-desc control-desc--hint">频道角色配置独立保存，切换频道时自动加载对应配置</p>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'terms'" class="display-settings__section display-settings__section--wide">
         <header>
           <div>
             <p class="section-title">术语高亮</p>
@@ -1060,7 +1092,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section display-settings__section--wide">
         <header>
           <div>
             <p class="section-title">排版（字号 / 行距 / 字距）</p>
@@ -1133,7 +1165,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section display-settings__section--wide">
         <header>
           <div>
             <p class="section-title">气泡与段落间距</p>
@@ -1206,7 +1238,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section display-settings__section--wide">
         <header>
           <div>
             <p class="section-title">气泡内边距</p>
@@ -1261,7 +1293,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'other'" class="display-settings__section">
         <header>
           <div>
             <p class="section-title">功能教程</p>
@@ -1275,7 +1307,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
 
 
 
-      <section class="display-settings__section">
+      <section v-if="activeSettingsCategory === 'appearance'" class="display-settings__section display-settings__section--wide">
         <header class="preview-header">
           <div>
             <p class="section-title">实时预览</p>
@@ -1306,6 +1338,8 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </div>
       </section>
 
+      </div>
+
       <input
         ref="importFileInputRef"
         class="display-settings__hidden-file-input"
@@ -1329,6 +1363,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         <n-space size="small">
           <n-button quaternary size="small" text-color="#fff" @click="handleClose">关闭</n-button>
           <n-button tertiary size="small" text-color="#fff" @click="handleRestoreDefaults">恢复默认</n-button>
+          <n-button type="primary" size="small" @click="handleSaveSettings">保存</n-button>
         </n-space>
       </n-space>
     </div>
@@ -1349,12 +1384,14 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
 
 .display-settings-modal :global(.n-card__content) {
   max-width: 100%;
+  overflow: hidden;
 }
 
 .display-settings {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  max-height: min(76vh, 760px);
   color: var(--sc-text-primary);
 }
 
@@ -1365,22 +1402,76 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
   color: var(--sc-text-secondary);
 }
 
-.display-settings__controls {
+.display-settings__category-switch {
   display: flex;
-  flex-direction: column;
+  gap: 0.35rem;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 0.2rem;
+  min-height: 2.5rem;
+  border: 1px solid var(--sc-border-mute);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--sc-bg-surface) 82%, transparent);
+  scrollbar-width: thin;
+}
+
+.display-settings__category-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 4.5rem;
+  height: 2rem;
+  padding: 0 0.85rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sc-text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.display-settings__category-tab:hover {
+  color: var(--sc-text-primary);
+  background: color-mix(in srgb, var(--sc-bg-elevated) 88%, var(--sc-text-primary) 12%);
+}
+
+.display-settings__category-tab--active {
+  color: #fff;
+  background: #3388de;
+  box-shadow: 0 1px 4px rgba(51, 136, 222, 0.28);
+}
+
+.display-settings__content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  align-content: start;
+  gap: 1rem;
+  scrollbar-gutter: stable;
+}
+
+.display-settings__controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
 }
 
 .control-field {
   display: flex;
-  justify-content: space-between;
-  gap: 1.25rem;
-  align-items: flex-start;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 0.55rem;
+  min-width: 0;
 }
 
 .control-field > div:first-child {
-  flex: 0 0 220px;
+  min-width: 0;
 }
 
 .control-title {
@@ -1398,12 +1489,11 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
 }
 
 .control-input {
-  flex: 1;
-  min-width: 280px;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 0.6rem;
   align-items: center;
+  min-width: 0;
 }
 
 .control-input :deep(.n-slider) {
@@ -1419,6 +1509,10 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 0.45rem;
+}
+
+.display-settings__section--wide {
+  grid-column: 1 / -1;
 }
 
 .section-title {
@@ -1618,13 +1712,20 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
 .theme-management-mode-grid {
   margin-bottom: 0.75rem;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 180px));
+  justify-content: start;
   gap: 0.5rem;
 }
 
 .setting-mode-button,
 .theme-mode-button {
-  min-height: 40px;
+  width: 100%;
+  min-height: 32px;
+}
+
+.layout-mode-grid,
+.palette-mode-grid {
+  grid-template-columns: repeat(2, minmax(120px, 180px));
 }
 
 .setting-mode-button__label,
@@ -1645,7 +1746,7 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
 }
 
 .bot-badge-style-button {
-  min-height: 44px;
+  min-height: 34px;
 }
 
 .bot-badge-style-button__inner {
@@ -1734,8 +1835,16 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
 }
 
 .display-settings__footer {
-  margin-top: 0.5rem;
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 0 -2px -2px;
+  padding: 0.75rem 2px 0.1rem;
   width: 100%;
+  border-top: 1px solid var(--sc-border-mute);
+  background:
+    linear-gradient(to bottom, transparent, var(--sc-bg-elevated) 22%),
+    var(--sc-bg-elevated);
 }
 
 .display-settings__hidden-file-input {
@@ -1743,8 +1852,35 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
 }
 
 @media (max-width: 720px) {
-  .control-field {
+  .display-settings {
+    max-height: min(82vh, 720px);
+  }
+
+  .display-settings__category-switch {
+    margin-right: -0.15rem;
+  }
+
+  .display-settings__category-tab {
+    min-width: 4rem;
+    padding: 0 0.7rem;
+  }
+
+  .display-settings__content {
+    grid-template-columns: 1fr;
+  }
+
+  .display-settings__controls {
+    grid-template-columns: 1fr;
+  }
+
+  .display-settings__footer {
     flex-direction: column;
+    align-items: stretch !important;
+    gap: 0.6rem !important;
+  }
+
+  .display-settings__footer :deep(.n-space) {
+    justify-content: flex-end;
   }
 
   .theme-management-row,
@@ -1757,14 +1893,14 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .setting-mode-grid,
+  .theme-management-mode-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .theme-management-summary {
     flex: none;
     min-width: 0;
-    width: 100%;
-  }
-
-  .control-field > div:first-child {
-    flex: 1;
     width: 100%;
   }
 
