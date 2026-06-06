@@ -1011,6 +1011,43 @@ func AudioPlaybackStateSet(c *fiber.Ctx) error {
 }
 
 func AdminAudioAssetList(c *fiber.Ctx) error {
+	result, err := service.AdminAudioListAssets(buildAdminAudioAssetFiltersFromQuery(c))
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取平台音频素材失败")
+	}
+	return c.JSON(result)
+}
+
+func AudioManageAssetList(c *fiber.Ctx) error {
+	user, isSystemAdmin, ok, err := getAudioManageUser(c)
+	if !ok {
+		return err
+	}
+	result, err := service.AudioManageListAssets(service.AudioManageAssetFilters{
+		AdminAudioAssetFilters: buildAdminAudioAssetFiltersFromQuery(c),
+		ActorID:                user.ID,
+		IsSystemAdmin:          isSystemAdmin,
+	})
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取音频素材管理列表失败")
+	}
+	return c.JSON(result)
+}
+
+func getAudioManageUser(c *fiber.Ctx) (*model.UserModel, bool, bool, error) {
+	user := getCurUser(c)
+	if user == nil {
+		return nil, false, false, wrapErrorStatus(c, fiber.StatusUnauthorized, nil, "未登录")
+	}
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	cfg := utils.GetConfig()
+	if !isSystemAdmin && (cfg == nil || !cfg.Audio.AllowWorldAudioWorkbench) {
+		return nil, false, false, wrapErrorStatus(c, fiber.StatusForbidden, nil, "音频工作台仅管理员可用")
+	}
+	return user, isSystemAdmin, true, nil
+}
+
+func buildAdminAudioAssetFiltersFromQuery(c *fiber.Ctx) service.AdminAudioAssetFilters {
 	filters := service.AdminAudioAssetFilters{
 		Query:      strings.TrimSpace(c.Query("query")),
 		QueryField: strings.TrimSpace(c.Query("queryField")),
@@ -1037,11 +1074,7 @@ func AdminAudioAssetList(c *fiber.Ctx) error {
 	if inactiveDays := c.QueryInt("inactiveDays", 0); inactiveDays > 0 {
 		filters.InactiveDays = inactiveDays
 	}
-	result, err := service.AdminAudioListAssets(filters)
-	if err != nil {
-		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取平台音频素材失败")
-	}
-	return c.JSON(result)
+	return filters
 }
 
 func AdminAudioAssetUsageGet(c *fiber.Ctx) error {
@@ -1067,6 +1100,29 @@ func AdminAudioAssetUsageGet(c *fiber.Ctx) error {
 	})
 }
 
+func AudioManageAssetUsageGet(c *fiber.Ctx) error {
+	id := strings.TrimSpace(c.Params("id"))
+	if id == "" {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少资源ID")
+	}
+	user, isSystemAdmin, ok, err := getAudioManageUser(c)
+	if !ok {
+		return err
+	}
+	item, err := service.AudioManageGetAssetUsage(user.ID, id, isSystemAdmin)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "素材不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取素材引用信息失败")
+	}
+	return c.JSON(fiber.Map{
+		"item":         item.AudioAsset,
+		"usageSummary": item.UsageSummary,
+		"safeToDelete": item.SafeToDelete,
+	})
+}
+
 func AdminAudioAssetDeleteSafe(c *fiber.Ctx) error {
 	id := strings.TrimSpace(c.Params("id"))
 	if id == "" {
@@ -1084,6 +1140,27 @@ func AdminAudioAssetDeleteSafe(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "已删除", "impact": impact})
 }
 
+func AudioManageAssetDeleteSafe(c *fiber.Ctx) error {
+	id := strings.TrimSpace(c.Params("id"))
+	if id == "" {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, nil, "缺少资源ID")
+	}
+	user, isSystemAdmin, ok, err := getAudioManageUser(c)
+	if !ok {
+		return err
+	}
+	hard := c.QueryBool("hard")
+	impact, err := service.AudioManageDeleteAsset(user.ID, id, isSystemAdmin, hard)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "素材不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "删除素材失败")
+	}
+	broadcastAdminAudioDetachedScopes(user, impact)
+	return c.JSON(fiber.Map{"message": "已删除", "impact": impact})
+}
+
 func AdminAudioAssetBulkDeleteSafe(c *fiber.Ctx) error {
 	var req struct {
 		IDs  []string `json:"ids"`
@@ -1097,6 +1174,26 @@ func AdminAudioAssetBulkDeleteSafe(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "批量安全删除失败")
 	}
 	broadcastAdminAudioDetachedScopes(getCurUser(c), &service.AudioDeleteImpact{PlaybackScopeLabels: result.PlaybackScopeLabels})
+	return c.JSON(result)
+}
+
+func AudioManageAssetBulkDeleteSafe(c *fiber.Ctx) error {
+	var req struct {
+		IDs  []string `json:"ids"`
+		Hard bool     `json:"hard"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体格式错误")
+	}
+	user, isSystemAdmin, ok, err := getAudioManageUser(c)
+	if !ok {
+		return err
+	}
+	result, err := service.AudioManageDeleteAssets(user.ID, req.IDs, isSystemAdmin, req.Hard)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "批量安全删除失败")
+	}
+	broadcastAdminAudioDetachedScopes(user, &service.AudioDeleteImpact{PlaybackScopeLabels: result.PlaybackScopeLabels})
 	return c.JSON(result)
 }
 

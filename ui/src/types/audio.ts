@@ -76,6 +76,10 @@ export interface AdminAudioAssetListResult {
   creatorOptions: AdminAudioFilterOption[];
 }
 
+export interface AudioManageAssetListResult extends AdminAudioAssetListResult {
+  quota?: AudioQuotaSummary | null;
+}
+
 export interface AdminAudioQuotaItem {
   userId: string;
   username: string;

@@ -81,6 +81,9 @@
           </template>
           新建文件夹
         </n-button>
+        <n-button size="small" secondary @click="openAssetManagement" v-if="audio.canManage">
+          素材管理
+        </n-button>
       </div>
 
       <n-alert v-if="audio.networkMode !== 'normal'" class="audio-library__alert" type="warning" closable>
@@ -130,6 +133,7 @@
           </div>
           <div class="audio-library__folder-actions" v-if="audio.canManage && !folderPanelCollapsed">
             <n-button quaternary size="tiny" @click="openCreateFolder">新建</n-button>
+            <n-button quaternary size="tiny" @click="openAssetManagement">素材管理</n-button>
             <n-button quaternary size="tiny" :disabled="!currentFolder" @click="openRenameFolder">重命名</n-button>
             <n-button
               quaternary
@@ -491,6 +495,14 @@
         </n-space>
       </template>
     </n-modal>
+
+    <AudioAssetManagementDialog
+      v-model:show="assetManagementVisible"
+      endpoint-base="/api/v1/audio/manage/assets"
+      title="音频素材管理"
+      show-quota
+      @changed="handleAssetManagementChanged"
+    />
   </div>
 </template>
 
@@ -526,6 +538,7 @@ import { useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
 import { copyTextWithResult } from '@/utils/clipboard';
 import UploadPanel from './UploadPanel.vue';
+import AudioAssetManagementDialog from './AudioAssetManagementDialog.vue';
 
 const audio = useAudioStudioStore();
 const chat = useChatStore();
@@ -596,6 +609,7 @@ const detailPanelCollapsed = ref(false);
 const detailDrawerVisible = ref(false);
 const folderDrawerVisible = ref(false);
 const uploadDrawerVisible = ref(false);
+const assetManagementVisible = ref(false);
 const dragUploadActive = ref(false);
 const dragUploadDepth = ref(0);
 const folderEditMode = ref(false);
@@ -1170,6 +1184,15 @@ async function handleRefresh() {
   message.success('素材列表已刷新');
 }
 
+function openAssetManagement() {
+  assetManagementVisible.value = true;
+}
+
+async function handleAssetManagementChanged() {
+  await audio.fetchFolders();
+  await audio.fetchAssets({ pagination: { page: audio.assetPagination.page }, silent: false });
+}
+
 function openUploadPanel() {
   uploadDrawerVisible.value = true;
 }
@@ -1419,7 +1442,7 @@ function confirmDeleteAsset(asset: AudioAsset) {
 }
 
 function copyStream(id: string) {
-  const url = audio.buildStreamUrl(id);
+  const url = audio.buildRawStreamUrl(id);
   void copyTextWithResult(url, {
     onSuccess: () => {
       message.success('播放链接已复制');

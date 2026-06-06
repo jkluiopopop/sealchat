@@ -115,6 +115,17 @@ type AdminAudioAssetListResult struct {
 	CreatorOptions []AdminAudioFilterOption  `json:"creatorOptions"`
 }
 
+type AudioManageAssetFilters struct {
+	AdminAudioAssetFilters
+	ActorID       string
+	IsSystemAdmin bool
+}
+
+type AudioManageAssetListResult struct {
+	AdminAudioAssetListResult
+	Quota *AudioQuotaSummary `json:"quota,omitempty"`
+}
+
 type AdminAudioCleanupPreview struct {
 	ThresholdBefore            time.Time                 `json:"thresholdBefore"`
 	TotalCandidates            int                       `json:"totalCandidates"`
@@ -1835,9 +1846,16 @@ func appendUniqueStrings(base []string, values ...string) []string {
 }
 
 func AdminAudioListAssets(filters AdminAudioAssetFilters) (*AdminAudioAssetListResult, error) {
+	return listAudioAssetManagementItems(filters, nil)
+}
+
+func listAudioAssetManagementItems(filters AdminAudioAssetFilters, applyScope func(*gorm.DB) *gorm.DB) (*AdminAudioAssetListResult, error) {
 	filters.normalize()
 	db := model.GetDB()
 	q := db.Model(&model.AudioAsset{}).Where("deleted_at IS NULL")
+	if applyScope != nil {
+		q = applyScope(q)
+	}
 	if filters.Scope != "" {
 		q = q.Where("scope = ?", filters.Scope)
 	}
@@ -1899,6 +1917,144 @@ func AdminAudioListAssets(filters AdminAudioAssetFilters) (*AdminAudioAssetListR
 		WorldOptions:   worldOptions,
 		CreatorOptions: creatorOptions,
 	}, nil
+}
+
+func AudioManageListAssets(filters AudioManageAssetFilters) (*AudioManageAssetListResult, error) {
+	actorID := strings.TrimSpace(filters.ActorID)
+	if actorID == "" {
+		return nil, errors.New("用户ID不能为空")
+	}
+	var managedWorldIDs []string
+	var err error
+	if !filters.IsSystemAdmin {
+		managedWorldIDs, err = ListManagedWorldIDs(actorID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	result, err := listAudioAssetManagementItems(filters.AdminAudioAssetFilters, func(q *gorm.DB) *gorm.DB {
+		if filters.IsSystemAdmin {
+			return q
+		}
+		if len(managedWorldIDs) == 0 {
+			return q.Where("created_by = ?", actorID)
+		}
+		return q.Where("(created_by = ? OR (scope = ? AND world_id IN ?))", actorID, model.AudioScopeWorld, managedWorldIDs)
+	})
+	if err != nil {
+		return nil, err
+	}
+	quota, err := GetAudioQuotaSummary(actorID)
+	if err != nil {
+		return nil, err
+	}
+	return &AudioManageAssetListResult{
+		AdminAudioAssetListResult: *result,
+		Quota:                     quota,
+	}, nil
+}
+
+func AudioManageGetAssetUsage(actorID, assetID string, isSystemAdmin bool) (*AdminAudioAssetListItem, error) {
+	asset, err := audioManageGetScopedAsset(actorID, assetID, isSystemAdmin)
+	if err != nil {
+		return nil, err
+	}
+	items, err := buildAdminAudioAssetItems([]*model.AudioAsset{asset})
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &items[0], nil
+}
+
+func AudioManageDeleteAsset(actorID, assetID string, isSystemAdmin bool, hard bool) (*AudioDeleteImpact, error) {
+	if _, err := audioManageGetScopedAsset(actorID, assetID, isSystemAdmin); err != nil {
+		return nil, err
+	}
+	return AdminAudioDeleteAsset(assetID, hard)
+}
+
+func AudioManageDeleteAssets(actorID string, assetIDs []string, isSystemAdmin bool, hard bool) (*AudioBulkDeleteResult, error) {
+	scopedIDs := make([]string, 0, len(assetIDs))
+	result := &AudioBulkDeleteResult{
+		SuccessIDs: make([]string, 0, len(assetIDs)),
+		Failed:     make([]AudioBulkDeleteFailure, 0),
+	}
+	seen := map[string]struct{}{}
+	for _, rawID := range assetIDs {
+		id := strings.TrimSpace(rawID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		if _, err := audioManageGetScopedAsset(actorID, id, isSystemAdmin); err != nil {
+			result.Failed = append(result.Failed, AudioBulkDeleteFailure{
+				AssetID: id,
+				Reason:  "素材不存在或无权管理",
+			})
+			continue
+		}
+		scopedIDs = append(scopedIDs, id)
+	}
+	if len(scopedIDs) > 0 {
+		deleted, err := AdminAudioDeleteAssets(scopedIDs, hard)
+		if err != nil {
+			return nil, err
+		}
+		result.SuccessIDs = append(result.SuccessIDs, deleted.SuccessIDs...)
+		result.Failed = append(result.Failed, deleted.Failed...)
+		result.DetachedSceneCount += deleted.DetachedSceneCount
+		result.DetachedPlaybackStateCount += deleted.DetachedPlaybackStateCount
+		result.DetachedReferencedAssetCount += deleted.DetachedReferencedAssetCount
+		result.PlaybackScopeLabels = appendUniqueStrings(result.PlaybackScopeLabels, deleted.PlaybackScopeLabels...)
+	}
+	result.SuccessCount = len(result.SuccessIDs)
+	result.FailedCount = len(result.Failed)
+	return result, nil
+}
+
+func audioManageGetScopedAsset(actorID, assetID string, isSystemAdmin bool) (*model.AudioAsset, error) {
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" {
+		return nil, errors.New("用户ID不能为空")
+	}
+	asset, err := AudioGetAsset(assetID)
+	if err != nil {
+		return nil, err
+	}
+	ok, err := audioManageAssetInScope(actorID, asset, isSystemAdmin)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return asset, nil
+}
+
+func audioManageAssetInScope(actorID string, asset *model.AudioAsset, isSystemAdmin bool) (bool, error) {
+	if isSystemAdmin {
+		return true, nil
+	}
+	if asset == nil {
+		return false, nil
+	}
+	if strings.TrimSpace(asset.CreatedBy) == actorID {
+		return true, nil
+	}
+	if asset.Scope != model.AudioScopeWorld {
+		return false, nil
+	}
+	worldID := strings.TrimSpace(normalizeOptionalString(asset.WorldID))
+	if worldID == "" {
+		return false, nil
+	}
+	return IsWorldAdmin(worldID, actorID), nil
 }
 
 func normalizeAdminAudioQueryField(value string) string {

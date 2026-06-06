@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -863,6 +864,44 @@ func IsWorldAdmin(worldID, userID string) bool {
 
 func IsWorldMember(worldID, userID string) bool {
 	return worldRoleEquals(worldID, userID, "")
+}
+
+func ListManagedWorldIDs(userID string) ([]string, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return []string{}, nil
+	}
+	ids := map[string]struct{}{}
+	var ownedWorlds []model.WorldModel
+	if err := model.GetDB().
+		Where("owner_id = ? AND status = ?", userID, "active").
+		Find(&ownedWorlds).Error; err != nil {
+		return nil, err
+	}
+	for _, world := range ownedWorlds {
+		if strings.TrimSpace(world.ID) != "" {
+			ids[world.ID] = struct{}{}
+		}
+	}
+
+	var memberships []model.WorldMemberModel
+	if err := model.GetDB().
+		Where("user_id = ? AND role IN ?", userID, []string{model.WorldRoleOwner, model.WorldRoleAdmin}).
+		Find(&memberships).Error; err != nil {
+		return nil, err
+	}
+	for _, member := range memberships {
+		if strings.TrimSpace(member.WorldID) != "" {
+			ids[member.WorldID] = struct{}{}
+		}
+	}
+
+	out := make([]string, 0, len(ids))
+	for id := range ids {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func getActiveWorldMember(worldID, userID string) (*model.WorldMemberModel, error) {
