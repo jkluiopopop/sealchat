@@ -278,7 +278,8 @@ export const useUtilsStore = defineStore({
       page?: number;
       pageSize?: number;
       keyword?: string;
-      type?: string
+      type?: string;
+      status?: string;
     }) {
       const user = useUserStore();
       const resp = await api.get('api/v1/admin/user-list', {
@@ -427,6 +428,15 @@ export const useUtilsStore = defineStore({
     async userDisable(id: string) {
       const user = useUserStore();
       const resp = await api.post(`api/v1/admin/user-disable`, null, {
+        headers: { 'Authorization': user.token },
+        params: { id },
+      })
+      return resp
+    },
+
+    async userDelete(id: string) {
+      const user = useUserStore();
+      const resp = await api.post(`api/v1/admin/user-delete`, null, {
         headers: { 'Authorization': user.token },
         params: { id },
       })

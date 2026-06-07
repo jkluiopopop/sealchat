@@ -28,6 +28,7 @@ const pageSize = ref(20);
 const total = ref(0);
 const keyword = ref('');
 const userType = ref('user'); // '', 'user', 'bot'
+const userStatus = ref('');
 const loading = ref(false);
 const data = ref<UserInfo[]>([]);
 
@@ -36,6 +37,12 @@ const typeOptions = [
   { label: '全部', value: '' },
   { label: '普通用户', value: 'user' },
   { label: 'BOT', value: 'bot' }
+];
+
+const statusOptions = [
+  { label: '全部状态', value: '' },
+  { label: '正常', value: 'active' },
+  { label: '已停用', value: 'disabled' }
 ];
 
 onMounted(async () => {
@@ -49,7 +56,8 @@ const refresh = async () => {
       page: page.value,
       pageSize: pageSize.value,
       keyword: keyword.value,
-      type: userType.value
+      type: userType.value,
+      status: userStatus.value,
     });
     data.value = resp.data.items || [];
     total.value = resp.data.total || 0;
@@ -70,6 +78,11 @@ const handleSearch = () => {
 
 // 类型筛选变化
 const handleTypeChange = () => {
+  page.value = 1;
+  refresh();
+}
+
+const handleStatusChange = () => {
   page.value = 1;
   refresh();
 }
@@ -151,6 +164,25 @@ const tryUserEnable = (i: UserInfo) => {
     },
     onNegativeClick: () => {
     }
+  })
+}
+
+const tryUserDelete = (i: UserInfo) => {
+  dialog.error({
+    title: '删除用户',
+    content: '删除后将隐藏该用户、移除其世界与频道关系、删除其上传的音频素材并自动解除相关引用。此操作不会物理清空历史消息等数据。确定继续吗？',
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await utils.userDelete(i.id);
+        message.success('删除成功');
+        refresh();
+      } catch (error) {
+        const respError = (error as any)?.response?.data;
+        message.error((respError?.error || respError?.message || '删除失败'));
+      }
+    },
   })
 }
 
@@ -267,13 +299,16 @@ const columns = ref([
   },
   {
     title: '操作',
-    width: 160,
+    width: 220,
     render: (row: UserInfo) => {
       const isDisabled = row.disabled;
       return <div class="flex space-x-2">
         <n-button type="warning" size="small" onClick={() => tryUserResetPassword(row)}>重置密码</n-button>
         {!isDisabled ? <n-button type="error" size="small" onClick={() => tryUserDisable(row)}>停用</n-button> :
-          <n-button type="success" size="small" onClick={() => tryUserEnable(row)}>启用</n-button>}
+          <>
+            <n-button type="success" size="small" onClick={() => tryUserEnable(row)}>启用</n-button>
+            <n-button type="error" size="small" onClick={() => tryUserDelete(row)}>删除</n-button>
+          </>}
       </div>
     }
   }
@@ -304,6 +339,14 @@ const columns = ref([
           placeholder="用户类型"
           style="width: 120px"
           @update:value="handleTypeChange"
+        />
+
+        <n-select
+          v-model:value="userStatus"
+          :options="statusOptions"
+          placeholder="用户状态"
+          style="width: 140px"
+          @update:value="handleStatusChange"
         />
         
         <n-button @click="refresh" :loading="loading">

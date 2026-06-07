@@ -718,6 +718,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1AuthAdmin.Get("/admin/user-list", AdminUserList)
 	v1AuthAdmin.Post("/admin/user-disable", AdminUserDisable)
 	v1AuthAdmin.Post("/admin/user-enable", AdminUserEnable)
+	v1AuthAdmin.Post("/admin/user-delete", AdminUserDelete)
 	v1AuthAdmin.Post("/admin/user-password-reset", AdminUserResetPassword)
 	v1AuthAdmin.Post("/admin/user-role-link-by-user-id", AdminUserRoleLinkByUserId)
 	v1AuthAdmin.Post("/admin/user-role-unlink-by-user-id", AdminUserRoleUnlinkByUserId)

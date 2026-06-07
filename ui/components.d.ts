@@ -11,6 +11,7 @@ declare module 'vue' {
     AnnouncementEditorModal: typeof import('./src/components/announcement/AnnouncementEditorModal.vue')['default']
     AnnouncementManagerModal: typeof import('./src/components/announcement/AnnouncementManagerModal.vue')['default']
     AnnouncementPopupModal: typeof import('./src/components/announcement/AnnouncementPopupModal.vue')['default']
+    AudioAssetManagementDialog: typeof import('./src/components/audio/AudioAssetManagementDialog.vue')['default']
     AudioAssetManager: typeof import('./src/components/audio/AudioAssetManager.vue')['default']
     AudioDrawer: typeof import('./src/components/audio/AudioDrawer.vue')['default']
     AudioSearchBar: typeof import('./src/components/audio/AudioSearchBar.vue')['default']

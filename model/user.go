@@ -197,7 +197,7 @@ func verifyUserPassword(user *UserModel, password string) error {
 // 登录认证（仅用户名）
 func UserAuthenticate(username, password string) (*UserModel, error) {
 	var user UserModel
-	if err := db.Where("username = ?", username).First(&user).Error; err != nil {
+	if err := db.Where("username = ? AND deleted_at IS NULL", username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrInvalidCredentials
 		}
@@ -212,7 +212,7 @@ func UserAuthenticate(username, password string) (*UserModel, error) {
 // 登录认证（用户名/昵称/邮箱）
 func UserAuthenticateByAccount(account, password string) (*UserModel, error) {
 	var user UserModel
-	if err := db.Where("username = ?", account).First(&user).Error; err == nil {
+	if err := db.Where("username = ? AND deleted_at IS NULL", account).First(&user).Error; err == nil {
 		if err := verifyUserPassword(&user, password); err != nil {
 			return nil, err
 		}
@@ -223,7 +223,7 @@ func UserAuthenticateByAccount(account, password string) (*UserModel, error) {
 
 	if strings.Contains(account, "@") {
 		email := strings.ToLower(account)
-		if err := db.Where("email = ?", email).First(&user).Error; err == nil {
+		if err := db.Where("email = ? AND deleted_at IS NULL", email).First(&user).Error; err == nil {
 			if err := verifyUserPassword(&user, password); err != nil {
 				return nil, err
 			}
@@ -234,7 +234,7 @@ func UserAuthenticateByAccount(account, password string) (*UserModel, error) {
 	}
 
 	var users []UserModel
-	if err := db.Where("nickname = ?", account).Find(&users).Error; err != nil {
+	if err := db.Where("nickname = ? AND deleted_at IS NULL", account).Find(&users).Error; err != nil {
 		return nil, err
 	}
 	if len(users) == 0 {
@@ -301,7 +301,7 @@ func UserVerifyAccessToken(tokenString string) (*UserModel, error) {
 
 	// 查询用户
 	var user UserModel
-	if err := db.Where("id = ?", accessToken.UserID).Limit(1).Find(&user).Error; err != nil {
+	if err := db.Where("id = ? AND deleted_at IS NULL", accessToken.UserID).Limit(1).Find(&user).Error; err != nil {
 		return nil, fmt.Errorf("user not found")
 	}
 
@@ -331,7 +331,7 @@ func UserRefreshAccessToken(tokenID string) (string, error) {
 // UserGetEx 获取用户信息
 func UserGetEx(id string) (*UserModel, error) {
 	var user UserModel
-	result := db.Where("id = ?", id).Limit(1).Find(&user)
+	result := db.Where("id = ? AND deleted_at IS NULL", id).Limit(1).Find(&user)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("用户不存在")
@@ -348,7 +348,7 @@ func UserGetByUsername(username string) (*UserModel, error) {
 		return nil, fmt.Errorf("用户名不能为空")
 	}
 	var user UserModel
-	result := db.Where("username = ?", trimmed).Limit(1).Find(&user)
+	result := db.Where("username = ? AND deleted_at IS NULL", trimmed).Limit(1).Find(&user)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, fmt.Errorf("用户不存在")

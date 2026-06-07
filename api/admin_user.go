@@ -33,6 +33,7 @@ func AdminUserList(c *fiber.Ctx) error {
 	pageSize, _ := strconv.Atoi(c.Query("pageSize", "20"))
 	keyword := c.Query("keyword", "")
 	userType := c.Query("type", "") // "bot", "user", "" (all)
+	status := c.Query("status", "")
 
 	// 参数校验
 	if page < 1 {
@@ -44,7 +45,7 @@ func AdminUserList(c *fiber.Ctx) error {
 
 	db := model.GetDB()
 	var total int64
-	query := db.Model(&model.UserModel{})
+	query := db.Model(&model.UserModel{}).Where("deleted_at IS NULL")
 
 	// 搜索过滤
 	if keyword != "" {
@@ -57,6 +58,13 @@ func AdminUserList(c *fiber.Ctx) error {
 		query = query.Where("is_bot = ?", true)
 	} else if userType == "user" {
 		query = query.Where("is_bot = ?", false)
+	}
+
+	switch status {
+	case "active":
+		query = query.Where("disabled = ?", false)
+	case "disabled":
+		query = query.Where("disabled = ?", true)
 	}
 
 	query.Count(&total)
@@ -118,6 +126,52 @@ func AdminUserEnable(c *fiber.Ctx) error {
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"message": "用户已成功启用",
+	})
+}
+
+func AdminUserDelete(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermFuncAdminUserEdit) {
+		return nil
+	}
+
+	userID := strings.TrimSpace(c.Query("id"))
+	if userID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "用户ID不能为空",
+		})
+	}
+
+	operator := getCurUser(c)
+	if operator == nil || strings.TrimSpace(operator.ID) == "" {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "未登录",
+		})
+	}
+
+	err := service.AdminUserSoftDelete(userID, operator.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrAdminUserDeleteNotFound):
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "用户不存在"})
+		case errors.Is(err, service.ErrAdminUserDeleteAlreadyGone):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "用户已删除"})
+		case errors.Is(err, service.ErrAdminUserDeleteNotDisabled):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "请先停用用户，再执行删除"})
+		case errors.Is(err, service.ErrAdminUserDeleteSelf):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "不能删除当前登录管理员"})
+		case errors.Is(err, service.ErrAdminUserDeleteBot):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "暂不支持删除 BOT 用户"})
+		case errors.Is(err, service.ErrAdminUserDeleteLastAdmin):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "至少保留一个平台管理员"})
+		case errors.Is(err, service.ErrAdminUserDeleteOwnsWorld):
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "该用户仍拥有激活中的世界，请先转移世界所有权"})
+		default:
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "删除用户失败"})
+		}
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "用户已删除",
 	})
 }
 
