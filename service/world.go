@@ -840,15 +840,21 @@ func WorldLeave(worldID, userID string) error {
 		return errors.New("世界拥有者无法退出，请先转移所有权或删除世界")
 	}
 	db := model.GetDB()
-	if err := db.Where("world_id = ? AND user_id = ?", worldID, userID).Delete(&model.WorldMemberModel{}).Error; err != nil {
-		return err
-	}
-	if err := revokeWorldChannelRoles(worldID, userID); err != nil {
-		return err
-	}
-	_ = db.Where("world_id = ? AND user_id = ?", worldID, userID).Delete(&model.WorldFavoriteModel{})
-	_ = db.Where("world_id = ? AND user_id = ?", worldID, userID).Delete(&model.WorldArchiveModel{})
-	return nil
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("world_id = ? AND user_id = ?", worldID, userID).Delete(&model.WorldMemberModel{}).Error; err != nil {
+			return err
+		}
+		if err := removeWorldChannelMemberships(tx, worldID, userID); err != nil {
+			return err
+		}
+		if err := tx.Where("world_id = ? AND user_id = ?", worldID, userID).Delete(&model.WorldFavoriteModel{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("world_id = ? AND user_id = ?", worldID, userID).Delete(&model.WorldArchiveModel{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func IsWorldOwner(worldID, userID string) bool {
@@ -1304,6 +1310,39 @@ func revokeWorldChannelRoles(worldID, userID string) error {
 			return err
 		}
 		if err := removeChannelRoleLink(userID, ch.ID, "spectator"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeWorldChannelMemberships(tx *gorm.DB, worldID, userID string) error {
+	var channelIDs []string
+	if err := tx.Model(&model.ChannelModel{}).
+		Where("world_id = ? AND status = ? AND is_private = ?", worldID, "active", false).
+		Pluck("id", &channelIDs).Error; err != nil {
+		return err
+	}
+	roleIDs := make([]string, 0, len(channelIDs)*3)
+	for _, channelID := range channelIDs {
+		if strings.TrimSpace(channelID) == "" {
+			continue
+		}
+		roleIDs = append(roleIDs,
+			fmt.Sprintf("ch-%s-admin", channelID),
+			fmt.Sprintf("ch-%s-spectator", channelID),
+			fmt.Sprintf("ch-%s-member", channelID),
+		)
+	}
+	if len(channelIDs) > 0 {
+		if err := tx.Where("user_id = ? AND channel_id IN ?", userID, channelIDs).Delete(&model.MemberModel{}).Error; err != nil {
+			return err
+		}
+	}
+	if len(roleIDs) > 0 {
+		if err := tx.Unscoped().
+			Where("user_id = ? AND role_id IN ?", userID, roleIDs).
+			Delete(&model.UserRoleMappingModel{}).Error; err != nil {
 			return err
 		}
 	}
