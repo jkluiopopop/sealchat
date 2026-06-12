@@ -31,12 +31,30 @@ const wait = (ms: number) => new Promise<void>((resolve) => {
 const isTruthyNumber = (value: unknown) => Number.isFinite(Number(value)) && Number(value) > 0;
 const isAnimatedEnterMode = (mode?: PerformanceEnterMode) => mode === 'blur' || mode === 'typewriter';
 const isImmediateEnterMode = (mode?: PerformanceEnterMode) => !mode || mode === 'normal';
-const resolveEnterDelay = (speed?: number) => {
+export const resolveEnterDelay = (mode?: PerformanceEnterMode, speed?: number) => {
   if (!Number.isFinite(Number(speed))) {
-    return 60;
+    return mode === 'typewriter' ? 120 : 60;
   }
   const normalized = Math.max(1, Math.min(9, Number(speed)));
-  return Math.round(180 - normalized * 16);
+  const baseDelay = Math.round(180 - normalized * 16);
+  if (mode === 'typewriter') {
+    return Math.round(baseDelay * 1.55 + 22);
+  }
+  return baseDelay;
+};
+
+const TYPEWRITER_LIGHT_PUNCTUATION = new Set(['，', ',', '、', '；', ';', '：', ':']);
+const TYPEWRITER_HEAVY_PUNCTUATION = new Set(['。', '.', '！', '!', '？', '?', '…']);
+
+export const resolveTypewriterPauseExtra = (char: string, speed?: number) => {
+  const normalized = Math.max(1, Math.min(9, Number.isFinite(Number(speed)) ? Number(speed) : 5));
+  if (TYPEWRITER_LIGHT_PUNCTUATION.has(char)) {
+    return Math.round(34 + (10 - normalized) * 8);
+  }
+  if (TYPEWRITER_HEAVY_PUNCTUATION.has(char)) {
+    return Math.round(76 + (10 - normalized) * 14);
+  }
+  return 0;
 };
 
 const findNearestAnimatedContext = (instructions: PerformanceInstruction[], index: number) => {
@@ -176,7 +194,11 @@ export const createTwinLayerPlayback = (
           visibleText += entry.char;
           options.onChar?.(entry as TwinLayerPlaybackChar);
           if (!fastForward) {
-            await wait(resolveEnterDelay(entry.effects.enterSpeed));
+            const baseDelay = resolveEnterDelay(mode, entry.effects.enterSpeed);
+            const extraDelay = mode === 'typewriter'
+              ? resolveTypewriterPauseExtra(entry.char, entry.effects.enterSpeed)
+              : 0;
+            await wait(baseDelay + extraDelay);
           }
           continue;
         }

@@ -59,6 +59,7 @@ import {
   resolveIdentityMetaOutlineStyle,
   resolveIdentityMetaStyle,
 } from '@/utils/identityMetaContrast'
+import { shouldAutoplayPerformanceMessage } from '@/components/chat/performanceAutoplay';
 
 type EditingPreviewInfo = {
   userId: string;
@@ -3475,14 +3476,11 @@ const showSendingIndicator = computed(() => (
 ));
 const canRetrySend = computed(() => props.isSelf && messageSendStatus.value === 'failed');
 const shouldAutoplayPerformance = computed(() => {
-  if (messageSendStatus.value === 'sending') {
-    return true;
-  }
-  const createdAt = String(props.item?.createdAt || '').trim();
-  if (!createdAt || !props.isSelf) {
-    return false;
-  }
-  return Math.abs(dayjs().diff(dayjs(createdAt), 'second')) <= 8;
+  return shouldAutoplayPerformanceMessage(
+    props.item?.createdAt,
+    props.isSelf,
+    messageSendStatus.value,
+  );
 });
 
 const handleRetrySend = () => {

@@ -54,6 +54,14 @@ const instructions = computed(() => {
   return parsePerformanceInstructions(doc);
 });
 
+const hasBlurBackdrop = computed(() => instructions.value.some((entry) => (
+  entry.type === 'char' && entry.effects.enterMode === 'blur'
+)));
+
+const hasTypewriterEnter = computed(() => instructions.value.some((entry) => (
+  entry.type === 'char' && entry.effects.enterMode === 'typewriter'
+)));
+
 const baseHtml = computed(() => {
   if (!props.content) {
     return '';
@@ -72,6 +80,8 @@ const syncDom = () => {
   root.classList.toggle('is-waiting', waiting.value);
   root.classList.toggle('is-playing', playing.value);
   root.classList.toggle('is-completed', completed.value);
+  root.classList.toggle('has-blur-backdrop', hasBlurBackdrop.value);
+  root.classList.toggle('has-typewriter', hasTypewriterEnter.value);
 };
 
 const clearOverlayDom = () => {
@@ -174,8 +184,10 @@ const appendChar = (entry: TwinLayerPlaybackChar) => {
   span.className = 'twin-layer-message__char';
   applyVisualMarks(span, entry.marks);
   span.style.setProperty('--performance-char-index', String(entry.index));
+  const glyph = document.createElement('span');
+  glyph.className = 'twin-layer-message__char-glyph';
   if (entry.effects.effect) {
-    span.classList.add(`fx-${entry.effects.effect}`);
+    glyph.classList.add(`fx-${entry.effects.effect}`);
   }
   if (entry.effects.enterMode) {
     span.classList.add(`enter-${entry.effects.enterMode}`);
@@ -186,7 +198,8 @@ const appendChar = (entry: TwinLayerPlaybackChar) => {
   if (Number.isFinite(Number(entry.effects.toneIntensity))) {
     span.style.setProperty('--performance-tone-intensity', String(Number(entry.effects.toneIntensity)));
   }
-  span.textContent = entry.char;
+  glyph.textContent = entry.char;
+  span.appendChild(glyph);
   host.appendChild(span);
 };
 
@@ -319,12 +332,38 @@ onBeforeUnmount(() => {
   filter: blur(0.6px);
   user-select: none;
   pointer-events: none;
+  transition: opacity 180ms ease, filter 180ms ease;
+}
+
+.twin-layer-message.has-blur-backdrop:not(.is-completed) .twin-layer-message__base {
+  opacity: 0.16;
+  filter: blur(3px);
+}
+
+.twin-layer-message.has-typewriter:not(.is-completed) .twin-layer-message__base {
+  opacity: 0;
+  filter: none;
+}
+
+.twin-layer-message.has-typewriter:not(.is-completed) .twin-layer-message__base .tiptap-performance {
+  opacity: 0;
+}
+
+.twin-layer-message.is-completed .twin-layer-message__base {
+  opacity: 1;
+  filter: none;
 }
 
 .twin-layer-message__overlay {
   position: absolute;
   inset: 0;
   pointer-events: auto;
+  transition: opacity 180ms ease;
+}
+
+.twin-layer-message.is-completed .twin-layer-message__overlay {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .twin-layer-message.is-waiting .twin-layer-message__overlay {
@@ -353,6 +392,11 @@ onBeforeUnmount(() => {
   font-weight: var(--performance-tone-weight);
   letter-spacing: var(--performance-tone-spacing);
   filter: brightness(var(--performance-tone-brightness));
+}
+
+.twin-layer-message__char-glyph {
+  display: inline-block;
+  transform-origin: center;
 }
 
 .twin-layer-message__char--code {
@@ -467,17 +511,12 @@ onBeforeUnmount(() => {
 @keyframes performance-enter-typewriter {
   0% {
     opacity: 0;
-    transform: var(--performance-scale) translateY(0.38em) scale(0.94);
-    filter: blur(5px) brightness(1.18);
-  }
-  62% {
-    opacity: 1;
-    transform: var(--performance-scale) translateY(-0.04em) scale(1.02);
-    filter: blur(1px) brightness(1.08);
+    transform: var(--performance-scale);
+    filter: brightness(var(--performance-tone-brightness));
   }
   100% {
     opacity: 1;
-    transform: var(--performance-scale) translateY(0) scale(1);
+    transform: var(--performance-scale);
     filter: brightness(var(--performance-tone-brightness));
   }
 }
