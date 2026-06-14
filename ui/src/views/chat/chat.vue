@@ -14288,6 +14288,14 @@ const handleMultiSelectArchive = async () => {
     message.warning('请先选择消息');
     return;
   }
+  const confirmed = await dialogAskConfirm(
+    dialog,
+    '批量归档',
+    `确定归档选中的 ${ids.length} 条消息吗？归档后可在归档管理中查看或恢复。`,
+  );
+  if (!confirmed) {
+    return;
+  }
   try {
     await chat.archiveMessages(ids);
     message.success(`已归档 ${ids.length} 条消息`);
@@ -14428,6 +14436,14 @@ const handleMultiSelectMoveToBottom = async () => {
   const messageIds = messages.map((msg) => msg.id).filter((id): id is string => Boolean(id));
   if (!messageIds.length) {
     message.warning('请先选择消息');
+    return;
+  }
+  const confirmed = await dialogAskConfirm(
+    dialog,
+    '批量置底',
+    `确定将选中的 ${messageIds.length} 条消息置底吗？原有相对顺序会保持不变。`,
+  );
+  if (!confirmed) {
     return;
   }
   try {
