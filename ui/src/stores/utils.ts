@@ -1,5 +1,16 @@
 import { defineStore } from "pinia"
-import type { AIConfig, BotOneBotConfig, CertificateConfig, ServerConfig, UserAIProviderProfile, UserInfo } from "@/types";
+import type {
+  AIConfig,
+  AIQuotaPolicyConfig,
+  AdminAIQuotaDetail,
+  AdminAIQuotaListResult,
+  AdminAIUsageLogListResult,
+  BotOneBotConfig,
+  CertificateConfig,
+  ServerConfig,
+  UserAIProviderProfile,
+  UserInfo,
+} from "@/types";
 import { Howl, Howler } from 'howler';
 
 import axiosFactory from "axios"
@@ -378,6 +389,60 @@ export const useUtilsStore = defineStore({
         headers: { 'Authorization': user.token },
       });
       return resp;
+    },
+
+    async adminAIUsageLogs(params?: {
+      page?: number;
+      pageSize?: number;
+      query?: string;
+      featureKey?: string;
+      providerId?: string;
+      model?: string;
+      status?: string;
+      start?: number;
+      end?: number;
+    }) {
+      const user = useUserStore();
+      return await api.get<AdminAIUsageLogListResult>('api/v1/admin/ai/usage-logs', {
+        headers: { 'Authorization': user.token },
+        params,
+      });
+    },
+
+    async adminAIUsageLogsCleanup(payload?: { retentionDays?: number }) {
+      const user = useUserStore();
+      return await api.post<{ affectedRows: number }>('api/v1/admin/ai/usage-logs/cleanup', payload || {}, {
+        headers: { 'Authorization': user.token },
+      });
+    },
+
+    async adminAIQuotaList(params?: { page?: number; pageSize?: number; query?: string }) {
+      const user = useUserStore();
+      return await api.get<AdminAIQuotaListResult>('api/v1/admin/ai-quotas', {
+        headers: { 'Authorization': user.token },
+        params,
+      });
+    },
+
+    async adminAIQuotaGet(userId: string) {
+      const user = useUserStore();
+      return await api.get<AdminAIQuotaDetail>(`api/v1/admin/ai-quotas/${encodeURIComponent(userId)}`, {
+        headers: { 'Authorization': user.token },
+      });
+    },
+
+    async adminAIQuotaUpsert(userId: string, payload: AIQuotaPolicyConfig) {
+      const user = useUserStore();
+      return await api.put<AdminAIQuotaDetail>(`api/v1/admin/ai-quotas/${encodeURIComponent(userId)}`, payload, {
+        headers: { 'Authorization': user.token },
+      });
+    },
+
+    async adminAIQuotaDelete(userId: string) {
+      const user = useUserStore();
+      return await api.delete(`api/v1/admin/ai-quotas/${encodeURIComponent(userId)}`, {
+        headers: { 'Authorization': user.token },
+      });
     },
 
     async userAIProfilesGet() {

@@ -4,6 +4,8 @@ import AdminSettingsAI from './admin-settings-ai.vue'
 import AdminSettingsBot from './admin-settings-bot.vue'
 import AdminSettingsCertificate from './admin-settings-certificate.vue'
 import AdminSettingsAudio from './admin-settings-audio.vue'
+import AdminAIQuotaModal from './components/AdminAIQuotaModal.vue'
+import AdminAIUsageManagementDrawer from './components/AdminAIUsageManagementDrawer.vue'
 import AdminSettingsExternalGlossary from './admin-settings-external-glossary.vue'
 import AdminSettingsStorageOptimization from './admin-settings-storage-optimization.vue'
 import AdminSettingsThemeStyle from './admin-settings-theme-style.vue'
@@ -25,6 +27,8 @@ const storageOptimizationSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const themeStyleSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const certificateSettingsRef = ref<AdminSettingsTabExpose | null>(null);
 const audioDrawerVisible = ref(false);
+const aiOpsDrawerVisible = ref(false);
+const aiQuotaModalVisible = ref(false);
 const lastNonAudioTab = ref<Exclude<AdminTab, 'audio'>>('basic');
 
 const currentSettingsRef = computed<AdminSettingsTabExpose | null>(() => {
@@ -66,6 +70,18 @@ const cancel = () => {
 
 const closeAudioDrawer = () => {
   audioDrawerVisible.value = false;
+}
+
+const openAIOpsDrawer = () => {
+  aiOpsDrawerVisible.value = true;
+}
+
+const openAIQuotaModal = () => {
+  aiQuotaModalVisible.value = true;
+}
+
+const handleOpenQuotaFromDrawer = () => {
+  aiQuotaModalVisible.value = true;
 }
 
 const saveCurrentTab = async () => {
@@ -110,7 +126,11 @@ const saveCurrentTab = async () => {
       </n-tab-pane>
       <n-tab-pane name="audio" tab="音频素材管理" />
       <n-tab-pane name="ai" tab="AI功能管理">
-        <AdminSettingsAI ref="aiSettingsRef" />
+        <AdminSettingsAI
+          ref="aiSettingsRef"
+          @open-usage-management="openAIOpsDrawer"
+          @open-quota-management="openAIQuotaModal"
+        />
       </n-tab-pane>
       <n-tab-pane name="certificate" tab="IP证书管理">
         <admin-settings-certificate ref="certificateSettingsRef" />
@@ -135,6 +155,13 @@ const saveCurrentTab = async () => {
         </div>
       </n-drawer-content>
     </n-drawer>
+
+    <AdminAIUsageManagementDrawer
+      v-model:show="aiOpsDrawerVisible"
+      @open-quota-management="handleOpenQuotaFromDrawer"
+    />
+
+    <AdminAIQuotaModal v-model:show="aiQuotaModalVisible" />
   </div>
 </template>
 

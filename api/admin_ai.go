@@ -2,12 +2,21 @@ package api
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 
+	"sealchat/pm"
 	aiService "sealchat/service/ai"
 	"sealchat/utils"
+)
+
+const (
+	aiQuotaPolicySourceDefault  = "default"
+	aiQuotaPolicySourceOverride = "override"
 )
 
 func AdminAIConfigGet(ctx *fiber.Ctx) error {
@@ -97,4 +106,109 @@ func AdminAIProviderTest(ctx *fiber.Ctx) error {
 		})
 	}
 	return ctx.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "AI provider 不存在"})
+}
+
+func AdminAIUsageLogs(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return c.SendStatus(fiber.StatusForbidden)
+	}
+	result, err := aiService.AdminListUsageLogs(aiService.AdminUsageLogQuery{
+		Page:       c.QueryInt("page", 1),
+		PageSize:   c.QueryInt("pageSize", 20),
+		Query:      c.Query("query"),
+		FeatureKey: c.Query("featureKey"),
+		ProviderID: c.Query("providerId"),
+		Model:      c.Query("model"),
+		Status:     c.Query("status"),
+		StartMS:    int64(c.QueryInt("start", 0)),
+		EndMS:      int64(c.QueryInt("end", 0)),
+	})
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取 AI 调用日志失败")
+	}
+	return c.JSON(result)
+}
+
+func AdminAIUsageLogsCleanup(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return c.SendStatus(fiber.StatusForbidden)
+	}
+	var body struct {
+		RetentionDays int `json:"retentionDays"`
+	}
+	if len(c.Body()) > 0 {
+		if err := c.BodyParser(&body); err != nil {
+			return wrapErrorStatus(c, fiber.StatusBadRequest, err, "AI 日志清理请求解析失败")
+		}
+	}
+	affectedRows, err := aiService.AdminCleanupUsageLogs(body.RetentionDays, time.Now())
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "清理 AI 调用日志失败")
+	}
+	return c.JSON(fiber.Map{"affectedRows": affectedRows})
+}
+
+func AdminAIQuotaList(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return c.SendStatus(fiber.StatusForbidden)
+	}
+	result, err := aiService.AdminListQuotaOverrides(
+		c.QueryInt("page", 1),
+		c.QueryInt("pageSize", 20),
+		c.Query("query"),
+		time.Now(),
+	)
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取 AI 用户配额失败")
+	}
+	return c.JSON(result)
+}
+
+func AdminAIQuotaGet(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return c.SendStatus(fiber.StatusForbidden)
+	}
+	item, err := aiService.AdminGetQuotaDetail(c.Params("userId"), time.Now())
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "用户不存在")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取 AI 用户配额失败")
+	}
+	return c.JSON(item)
+}
+
+func AdminAIQuotaUpsert(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return c.SendStatus(fiber.StatusForbidden)
+	}
+	var req utils.AIQuotaPolicyConfig
+	if err := c.BodyParser(&req); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "AI 用户配额请求解析失败")
+	}
+	user := getCurUser(c)
+	record, err := aiService.AdminUpsertQuotaOverride(c.Params("userId"), user.ID, req)
+	if err != nil {
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "用户不存在")
+		default:
+			return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
+		}
+	}
+	item, err := aiService.AdminGetQuotaDetail(record.UserID, time.Now())
+	if err != nil {
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "读取 AI 用户配额失败")
+	}
+	return c.JSON(item)
+}
+
+func AdminAIQuotaDelete(c *fiber.Ctx) error {
+	if !CanWithSystemRole(c, pm.PermModAdmin) {
+		return c.SendStatus(fiber.StatusForbidden)
+	}
+	if err := aiService.AdminDeleteQuotaOverride(c.Params("userId")); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, err.Error())
+	}
+	return c.JSON(fiber.Map{"message": "AI 用户配额覆盖已删除"})
 }

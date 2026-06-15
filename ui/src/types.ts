@@ -360,6 +360,20 @@ export interface AIProviderConfig {
   weight: number;
 }
 
+export interface AIModelPricingConfig {
+  providerId: string;
+  model: string;
+  promptPricePer1MTokens: number;
+  completionPricePer1MTokens: number;
+  cachePricePer1MTokens: number;
+}
+
+export interface AIQuotaPolicyConfig {
+  dailyLimit?: number | null;
+  monthlyLimit?: number | null;
+  lifetimeLimit?: number | null;
+}
+
 export interface UserAIProviderProfile {
   id: string;
   name: string;
@@ -376,6 +390,9 @@ export interface AIConfig {
   retry: AIRetryConfig;
   providers: AIProviderConfig[];
   features: Record<string, AIFeatureConfig>;
+  pricing: AIModelPricingConfig[];
+  logRetentionDays: number;
+  quotaDefault: AIQuotaPolicyConfig;
 }
 
 export interface AIFeatureCapability {
@@ -384,6 +401,66 @@ export interface AIFeatureCapability {
   defaultPrompt?: string;
   defaultModel?: string;
   params?: AIModelParams;
+}
+
+export interface AdminAIUsageLogItem {
+  id: string;
+  userId: string;
+  usernameSnapshot: string;
+  nicknameSnapshot?: string;
+  featureKey: string;
+  providerId: string;
+  model: string;
+  source: AIRunSource;
+  status: string;
+  promptTokens: number;
+  completionTokens: number;
+  cacheTokens: number;
+  promptPricePer1M: number;
+  completionPricePer1M: number;
+  cachePricePer1M: number;
+  promptCost: number;
+  completionCost: number;
+  cacheCost: number;
+  totalCost: number;
+  latencyMs: number;
+  startedAt: string;
+  finishedAt: string;
+  errorMessage?: string;
+}
+
+export interface AdminAIUsageLogListResult {
+  items: AdminAIUsageLogItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export type AdminAIQuotaPolicySource = 'default' | 'override';
+
+export interface AdminAIQuotaUsageSummary {
+  dailySettled: number;
+  monthlySettled: number;
+  lifetimeSettled: number;
+  activeReserved: number;
+}
+
+export interface AdminAIQuotaDetail {
+  userId: string;
+  username: string;
+  nickname: string;
+  source: AdminAIQuotaPolicySource;
+  defaultPolicy: AIQuotaPolicyConfig;
+  override?: AIQuotaPolicyConfig | null;
+  effectivePolicy: AIQuotaPolicyConfig;
+  usage: AdminAIQuotaUsageSummary;
+}
+
+export interface AdminAIQuotaListResult {
+  items: AdminAIQuotaDetail[];
+  page: number;
+  pageSize: number;
+  total: number;
 }
 
 export interface ServerConfig {

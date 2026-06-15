@@ -326,12 +326,32 @@ type AIProviderConfig struct {
 	Weight  int      `json:"weight" yaml:"weight"`
 }
 
+type AIModelPricingConfig struct {
+	ProviderID                       string  `json:"providerId" yaml:"providerId"`
+	Model                            string  `json:"model" yaml:"model"`
+	PromptPricePer1MTokens           float64 `json:"promptPricePer1MTokens" yaml:"promptPricePer1MTokens"`
+	CompletionPricePer1MTokens       float64 `json:"completionPricePer1MTokens" yaml:"completionPricePer1MTokens"`
+	CachePricePer1MTokens            float64 `json:"cachePricePer1MTokens" yaml:"cachePricePer1MTokens"`
+	LegacyPromptPricePer1KTokens     float64 `json:"-" yaml:"promptPricePer1KTokens,omitempty"`
+	LegacyCompletionPricePer1KTokens float64 `json:"-" yaml:"completionPricePer1KTokens,omitempty"`
+	LegacyCachePricePer1KTokens      float64 `json:"-" yaml:"cachePricePer1KTokens,omitempty"`
+}
+
+type AIQuotaPolicyConfig struct {
+	DailyLimit    *float64 `json:"dailyLimit,omitempty" yaml:"dailyLimit,omitempty"`
+	MonthlyLimit  *float64 `json:"monthlyLimit,omitempty" yaml:"monthlyLimit,omitempty"`
+	LifetimeLimit *float64 `json:"lifetimeLimit,omitempty" yaml:"lifetimeLimit,omitempty"`
+}
+
 type AIConfig struct {
-	Enabled   bool                       `json:"enabled" yaml:"enabled"`
-	Routing   AIRoutingConfig            `json:"routing" yaml:"routing"`
-	Retry     AIRetryConfig              `json:"retry" yaml:"retry"`
-	Providers []AIProviderConfig         `json:"providers" yaml:"providers"`
-	Features  map[string]AIFeatureConfig `json:"features" yaml:"features"`
+	Enabled          bool                       `json:"enabled" yaml:"enabled"`
+	Routing          AIRoutingConfig            `json:"routing" yaml:"routing"`
+	Retry            AIRetryConfig              `json:"retry" yaml:"retry"`
+	Providers        []AIProviderConfig         `json:"providers" yaml:"providers"`
+	Features         map[string]AIFeatureConfig `json:"features" yaml:"features"`
+	Pricing          []AIModelPricingConfig     `json:"pricing" yaml:"pricing"`
+	LogRetentionDays int                        `json:"logRetentionDays" yaml:"logRetentionDays"`
+	QuotaDefault     AIQuotaPolicyConfig        `json:"quotaDefault" yaml:"quotaDefault"`
 }
 
 type PerformanceProfilerConfig struct {
@@ -750,11 +770,14 @@ func normalizeAIIdentifierList(values []string) []string {
 
 func NormalizeAIConfig(cfg AIConfig) AIConfig {
 	result := AIConfig{
-		Enabled:   cfg.Enabled,
-		Routing:   cfg.Routing,
-		Retry:     cfg.Retry,
-		Providers: make([]AIProviderConfig, 0, max(1, len(cfg.Providers))),
-		Features:  make(map[string]AIFeatureConfig, max(2, len(cfg.Features))),
+		Enabled:          cfg.Enabled,
+		Routing:          cfg.Routing,
+		Retry:            cfg.Retry,
+		Providers:        make([]AIProviderConfig, 0, max(1, len(cfg.Providers))),
+		Features:         make(map[string]AIFeatureConfig, max(2, len(cfg.Features))),
+		Pricing:          make([]AIModelPricingConfig, 0, len(cfg.Pricing)),
+		LogRetentionDays: cfg.LogRetentionDays,
+		QuotaDefault:     cfg.QuotaDefault,
 	}
 	if result.Routing.Mode == "" {
 		result.Routing.Mode = AIRoutingModeRoundRobin
@@ -767,6 +790,9 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 	}
 	if result.Retry.MaxDelayMs <= 0 {
 		result.Retry.MaxDelayMs = 3000
+	}
+	if result.LogRetentionDays <= 0 {
+		result.LogRetentionDays = 30
 	}
 
 	sourceProviders := cfg.Providers
@@ -829,7 +855,44 @@ func NormalizeAIConfig(cfg AIConfig) AIConfig {
 		result.Features[featureKey] = feature
 	}
 
+	for _, pricing := range cfg.Pricing {
+		providerID := strings.TrimSpace(pricing.ProviderID)
+		model := strings.TrimSpace(pricing.Model)
+		if providerID == "" || model == "" {
+			continue
+		}
+		promptPricePer1M := pricing.PromptPricePer1MTokens
+		completionPricePer1M := pricing.CompletionPricePer1MTokens
+		cachePricePer1M := pricing.CachePricePer1MTokens
+		if promptPricePer1M == 0 && pricing.LegacyPromptPricePer1KTokens > 0 {
+			promptPricePer1M = pricing.LegacyPromptPricePer1KTokens * 1000
+		}
+		if completionPricePer1M == 0 && pricing.LegacyCompletionPricePer1KTokens > 0 {
+			completionPricePer1M = pricing.LegacyCompletionPricePer1KTokens * 1000
+		}
+		if cachePricePer1M == 0 && pricing.LegacyCachePricePer1KTokens > 0 {
+			cachePricePer1M = pricing.LegacyCachePricePer1KTokens * 1000
+		}
+		result.Pricing = append(result.Pricing, AIModelPricingConfig{
+			ProviderID:                 providerID,
+			Model:                      model,
+			PromptPricePer1MTokens:     promptPricePer1M,
+			CompletionPricePer1MTokens: completionPricePer1M,
+			CachePricePer1MTokens:      cachePricePer1M,
+		})
+	}
+
 	return result
+}
+
+func validateAIQuotaLimit(limit *float64, label string) error {
+	if limit == nil {
+		return nil
+	}
+	if *limit < 0 {
+		return fmt.Errorf("AI %s额度不能小于 0", label)
+	}
+	return nil
 }
 
 func ValidateAIConfig(cfg AIConfig) error {
@@ -842,6 +905,9 @@ func ValidateAIConfig(cfg AIConfig) error {
 	}
 	if cfg.Retry.MaxDelayMs < cfg.Retry.InitialDelayMs {
 		return fmt.Errorf("AI 最大重试延迟不能小于初始延迟")
+	}
+	if cfg.LogRetentionDays <= 0 {
+		return fmt.Errorf("AI 日志保留天数必须大于 0")
 	}
 	if cfg.Routing.Mode != AIRoutingModeRoundRobin {
 		return fmt.Errorf("AI 路由模式无效: %s", cfg.Routing.Mode)
@@ -871,6 +937,31 @@ func ValidateAIConfig(cfg AIConfig) error {
 		if len(provider.Models) == 0 {
 			return fmt.Errorf("AI provider %s 至少需要一个模型", provider.ID)
 		}
+	}
+	seenPricingKeys := make(map[string]struct{}, len(cfg.Pricing))
+	for _, pricing := range cfg.Pricing {
+		providerID := strings.TrimSpace(pricing.ProviderID)
+		model := strings.TrimSpace(pricing.Model)
+		if providerID == "" || model == "" {
+			return fmt.Errorf("AI pricing 的 providerId 与 model 不能为空")
+		}
+		if pricing.PromptPricePer1MTokens < 0 || pricing.CompletionPricePer1MTokens < 0 || pricing.CachePricePer1MTokens < 0 {
+			return fmt.Errorf("AI pricing 单价不能小于 0")
+		}
+		key := providerID + "::" + model
+		if _, exists := seenPricingKeys[key]; exists {
+			return fmt.Errorf("AI pricing 规则重复: %s / %s", providerID, model)
+		}
+		seenPricingKeys[key] = struct{}{}
+	}
+	if err := validateAIQuotaLimit(cfg.QuotaDefault.DailyLimit, "日"); err != nil {
+		return err
+	}
+	if err := validateAIQuotaLimit(cfg.QuotaDefault.MonthlyLimit, "月"); err != nil {
+		return err
+	}
+	if err := validateAIQuotaLimit(cfg.QuotaDefault.LifetimeLimit, "总"); err != nil {
+		return err
 	}
 	for featureKey, feature := range cfg.Features {
 		if strings.TrimSpace(feature.DefaultPrompt) == "" {
@@ -1431,6 +1522,9 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("ai.retry.maxDelayMs", config.AI.Retry.MaxDelayMs)
 		_ = k.Set("ai.providers", config.AI.Providers)
 		_ = k.Set("ai.features", config.AI.Features)
+		_ = k.Set("ai.pricing", config.AI.Pricing)
+		_ = k.Set("ai.logRetentionDays", config.AI.LogRetentionDays)
+		_ = k.Set("ai.quotaDefault", config.AI.QuotaDefault)
 		_ = k.Set("performanceProfiler.enabled", config.PerformanceProfiler.Enabled)
 		_ = k.Set("performanceProfiler.outputDir", config.PerformanceProfiler.OutputDir)
 		_ = k.Set("performanceProfiler.lightSampleIntervalSec", config.PerformanceProfiler.LightSampleIntervalSec)

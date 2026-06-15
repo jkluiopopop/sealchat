@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useUtilsStore } from '@/stores/utils'
-import type { AIConfig, AIFeatureConfig, AIModelParams, AIProviderConfig } from '@/types'
+import type { AIConfig, AIFeatureConfig, AIModelParams, AIModelPricingConfig, AIProviderConfig, AIQuotaPolicyConfig } from '@/types'
 import { cloneDeep } from 'lodash-es'
 import { useMessage } from 'naive-ui'
 import { computed, onMounted, ref } from 'vue'
@@ -28,6 +28,10 @@ const FEATURE_LIST: FeatureMeta[] = [
 
 const utils = useUtilsStore()
 const message = useMessage()
+const emit = defineEmits<{
+  (e: 'open-usage-management'): void
+  (e: 'open-quota-management'): void
+}>()
 
 const defaultFeatureConfig = (featureKey: BuiltinFeatureKey): AIFeatureConfig => ({
   enabled: false,
@@ -76,6 +80,9 @@ const defaultConfig = (): AIConfig => ({
     polish: defaultFeatureConfig('polish'),
     battle_summary: defaultFeatureConfig('battle_summary'),
   },
+  pricing: [],
+  logRetentionDays: 30,
+  quotaDefault: {},
 })
 
 const model = ref<AIConfig>(defaultConfig())
@@ -90,6 +97,14 @@ const featureEditorDraft = ref<AIFeatureConfig>(defaultFeatureConfig('polish'))
 const snapshotOf = (value: AIConfig) => JSON.stringify(value)
 const isModified = computed(() => snapshotOf(model.value) !== originalSnapshot.value)
 const currentFeatureMeta = computed(() => FEATURE_LIST.find((item) => item.key === editingFeatureKey.value) || FEATURE_LIST[0])
+
+const createDefaultPricing = (): AIModelPricingConfig => ({
+  providerId: model.value.providers[0]?.id || 'deepseek-default',
+  model: model.value.providers[0]?.models?.[0] || 'deepseek-v4-flash',
+  promptPricePer1MTokens: 0,
+  completionPricePer1MTokens: 0,
+  cachePricePer1MTokens: 0,
+})
 
 const normalizeFeatureMap = (features?: Partial<Record<BuiltinFeatureKey, AIFeatureConfig>>): Record<BuiltinFeatureKey, AIFeatureConfig> => ({
   polish: {
@@ -116,15 +131,38 @@ const normalizeProvider = (provider: AIProviderConfig, index: number): AIProvide
   weight: Number.isFinite(provider.weight) && provider.weight > 0 ? provider.weight : 1,
 })
 
+const normalizePricing = (pricing?: AIModelPricingConfig[]): AIModelPricingConfig[] => (
+  Array.isArray(pricing)
+    ? pricing.map((item) => ({
+      providerId: item.providerId?.trim() || '',
+      model: item.model?.trim() || '',
+      promptPricePer1MTokens: Number.isFinite(item.promptPricePer1MTokens) ? item.promptPricePer1MTokens : 0,
+      completionPricePer1MTokens: Number.isFinite(item.completionPricePer1MTokens) ? item.completionPricePer1MTokens : 0,
+      cachePricePer1MTokens: Number.isFinite(item.cachePricePer1MTokens) ? item.cachePricePer1MTokens : 0,
+    }))
+    : []
+)
+
+const normalizeQuotaPolicy = (policy?: AIQuotaPolicyConfig): AIQuotaPolicyConfig => ({
+  dailyLimit: typeof policy?.dailyLimit === 'number' ? policy.dailyLimit : null,
+  monthlyLimit: typeof policy?.monthlyLimit === 'number' ? policy.monthlyLimit : null,
+  lifetimeLimit: typeof policy?.lifetimeLimit === 'number' ? policy.lifetimeLimit : null,
+})
+
 const mergeConfig = (incoming?: Partial<AIConfig>): AIConfig => ({
   ...defaultConfig(),
   ...(incoming || {}),
   routing: { ...defaultConfig().routing, ...(incoming?.routing || {}) },
   retry: { ...defaultConfig().retry, ...(incoming?.retry || {}) },
-  providers: Array.isArray(incoming?.providers) && incoming.providers.length
+  providers: Array.isArray(incoming?.providers) && incoming?.providers.length
     ? incoming.providers.map((provider, index) => normalizeProvider(provider, index))
     : defaultConfig().providers,
   features: normalizeFeatureMap(incoming?.features as Partial<Record<BuiltinFeatureKey, AIFeatureConfig>> | undefined),
+  pricing: normalizePricing(incoming?.pricing),
+  logRetentionDays: Number.isFinite(incoming?.logRetentionDays) && (incoming?.logRetentionDays || 0) > 0
+    ? Number(incoming?.logRetentionDays)
+    : 30,
+  quotaDefault: normalizeQuotaPolicy(incoming?.quotaDefault),
 })
 
 const parseCommaList = (value: string): string[] => value
@@ -201,6 +239,21 @@ const removeProvider = (providerId: string) => {
   model.value.providers = model.value.providers.filter((item) => item.id !== providerId)
 }
 
+const addPricing = () => {
+  model.value.pricing.push(createDefaultPricing())
+}
+
+const removePricing = (index: number) => {
+  model.value.pricing.splice(index, 1)
+}
+
+const updateQuotaDefaultLimit = (key: keyof AIQuotaPolicyConfig, value: number | null) => {
+  model.value.quotaDefault = {
+    ...model.value.quotaDefault,
+    [key]: value,
+  }
+}
+
 const openFeatureEditor = (featureKey: BuiltinFeatureKey) => {
   editingFeatureKey.value = featureKey
   featureEditorDraft.value = cloneDeep(model.value.features[featureKey] || defaultFeatureConfig(featureKey))
@@ -240,13 +293,16 @@ defineExpose({
 
 <template>
   <div class="admin-settings-scroll overflow-y-auto pr-2" style="max-height: 61vh; margin-top: 0;">
-    <n-spin :show="loading || saving">
+    <n-spin
+      :show="loading || saving"
+    >
       <n-alert type="info" title="平台 AI 能力" class="admin-ai__notice">
-        默认提供一组 DeepSeek 配置：`https://api.deepseek.com/v1` + `deepseek-v4-flash`。API Key 留空表示保留旧值或等待管理员填写。
+        <p>在此配置平台内置 AI 能力，包括 API Provider、功能开关、模型参数、计费规则等。</p>
+        <p>配置项变更后需点击右上角保存按钮生效；其中 Provider 列表和功能配置支持即时生效。</p>
       </n-alert>
 
       <n-form label-placement="left" label-width="120">
-        <n-collapse class="settings-collapse" :default-expanded-names="['general', 'providers', 'features']">
+        <n-collapse class="settings-collapse">
           <n-collapse-item title="总开关与重试" name="general">
             <n-form-item label="启用平台 AI">
               <n-switch v-model:value="model.enabled" />
@@ -332,6 +388,98 @@ defineExpose({
             </div>
           </n-collapse-item>
 
+          <n-collapse-item title="计费与配额" name="pricing">
+            <n-form-item label="日志保留天数" feedback="系统自动按此保留天数清理 AI 调用日志。">
+              <n-input-number v-model:value="model.logRetentionDays" :min="1" :precision="0" />
+            </n-form-item>
+
+            <n-form-item label="默认用户配额" feedback="">
+              <n-grid :cols="3" x-gap="16" responsive="screen">
+                <n-gi>
+                  <n-form-item label="日额度">
+                    <n-input-number
+                      clearable
+                      :value="model.quotaDefault.dailyLimit ?? null"
+                      :min="0"
+                      :precision="4"
+                      placeholder="为空则不设"
+                      @update:value="(value: number | null) => updateQuotaDefaultLimit('dailyLimit', value)"
+                    />
+                  </n-form-item>
+                </n-gi>
+                <n-gi>
+                  <n-form-item label="月额度">
+                    <n-input-number
+                      clearable
+                      :value="model.quotaDefault.monthlyLimit ?? null"
+                      :min="0"
+                      :precision="4"
+                      placeholder="为空则不设"
+                      @update:value="(value: number | null) => updateQuotaDefaultLimit('monthlyLimit', value)"
+                    />
+                  </n-form-item>
+                </n-gi>
+                <n-gi>
+                  <n-form-item label="总额度">
+                    <n-input-number
+                      clearable
+                      :value="model.quotaDefault.lifetimeLimit ?? null"
+                      :min="0"
+                      :precision="4"
+                      placeholder="为空则不设"
+                      @update:value="(value: number | null) => updateQuotaDefaultLimit('lifetimeLimit', value)"
+                    />
+                  </n-form-item>
+                </n-gi>
+              </n-grid>
+            </n-form-item>
+
+            <n-form-item label="动态单价" feedback="按 provider + model 单独配置；调用时按输入 / 输出 / 缓存 token 各自单价动态换算。">
+              <div class="admin-ai__provider-toolbar">
+                <n-button size="small" tertiary @click="addPricing">新增单价规则</n-button>
+              </div>
+            </n-form-item>
+
+            <div
+              v-for="(pricing, index) in model.pricing"
+              :key="`${pricing.providerId}-${pricing.model}-${index}`"
+              class="admin-ai__pricing"
+            >
+              <n-grid :cols="2" x-gap="16">
+                <n-gi>
+                  <n-form-item label="Provider ID">
+                    <n-input v-model:value="pricing.providerId" />
+                  </n-form-item>
+                </n-gi>
+                <n-gi>
+                  <n-form-item label="Model">
+                    <n-input v-model:value="pricing.model" />
+                  </n-form-item>
+                </n-gi>
+                <n-gi>
+                  <n-form-item label="输入单价 / 1M Tokens">
+                    <n-input-number v-model:value="pricing.promptPricePer1MTokens" :min="0" :precision="6" />
+                  </n-form-item>
+                </n-gi>
+                <n-gi>
+                  <n-form-item label="输出单价 / 1M Tokens">
+                    <n-input-number v-model:value="pricing.completionPricePer1MTokens" :min="0" :precision="6" />
+                  </n-form-item>
+                </n-gi>
+                <n-gi span="2">
+                  <n-form-item label="缓存单价 / 1M Tokens">
+                    <n-input-number v-model:value="pricing.cachePricePer1MTokens" :min="0" :precision="6" />
+                  </n-form-item>
+                </n-gi>
+              </n-grid>
+              <div class="admin-ai__provider-actions">
+                <n-button size="small" tertiary type="error" @click="removePricing(index)">
+                  删除
+                </n-button>
+              </div>
+            </div>
+          </n-collapse-item>
+
           <n-collapse-item title="功能配置" name="features">
             <div
               v-for="feature in FEATURE_LIST"
@@ -360,6 +508,23 @@ defineExpose({
                   {{ formatParamsSummary(model.features[feature.key].params) }}
                 </n-descriptions-item>
               </n-descriptions>
+            </div>
+          </n-collapse-item>
+
+          <n-collapse-item title="日志与用户配额" name="ops">
+            <div class="admin-ai__ops-card">
+              <div>
+                <h3 class="admin-ai__feature-title">调用日志与清理</h3>
+                <p class="admin-ai__feature-desc">查看近期平台内置 AI 调用日志。</p>
+              </div>
+              <n-button tertiary @click="emit('open-usage-management')">打开日志管理</n-button>
+            </div>
+            <div class="admin-ai__ops-card">
+              <div>
+                <h3 class="admin-ai__feature-title">用户配额管理</h3>
+                <p class="admin-ai__feature-desc">默认规则 + 单用户覆盖，按日 / 月 / 总额度综合限制。</p>
+              </div>
+              <n-button tertiary @click="emit('open-quota-management')">打开配额管理</n-button>
             </div>
           </n-collapse-item>
         </n-collapse>
@@ -469,13 +634,17 @@ defineExpose({
 }
 
 .admin-ai__provider,
-.admin-ai__feature {
+.admin-ai__feature,
+.admin-ai__pricing,
+.admin-ai__ops-card {
   padding: 12px 0;
   border-bottom: 1px solid rgba(148, 163, 184, 0.16);
 }
 
 .admin-ai__provider:last-child,
-.admin-ai__feature:last-child {
+.admin-ai__feature:last-child,
+.admin-ai__pricing:last-child,
+.admin-ai__ops-card:last-child {
   border-bottom: 0;
 }
 
@@ -504,7 +673,21 @@ defineExpose({
   color: rgba(100, 116, 139, 0.92);
 }
 
+.admin-ai__ops-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .admin-ai__modal-body {
   min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .admin-ai__ops-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }
 </style>

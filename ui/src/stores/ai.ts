@@ -6,6 +6,7 @@ import { useUserStore } from '@/stores/user'
 import { readLocalAIProfiles, runLocalAIChat, writeLocalAIProfiles } from '@/services/ai/local-ai'
 
 const AI_SOURCE_STORAGE_KEY = 'sealchat_ai_source_v1'
+const PLATFORM_AI_TASK_TIMEOUT_MS = 120000
 
 const normalizeSource = (value?: string | null): AIRunSource => (value === 'user' ? 'user' : 'platform')
 
@@ -111,6 +112,7 @@ export const useAIStore = defineStore('ai', () => {
       source,
     }, {
       headers: { Authorization: user.token },
+      timeout: PLATFORM_AI_TASK_TIMEOUT_MS,
     })
   }
 

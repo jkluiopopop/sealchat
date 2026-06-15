@@ -21,8 +21,11 @@ type CompletionRequest struct {
 }
 
 type CompletionResult struct {
-	Text  string
-	Model string
+	Text       string
+	Model      string
+	Usage      RunUsage
+	StartedAt  time.Time
+	FinishedAt time.Time
 }
 
 type ChatClient interface {
@@ -37,11 +40,20 @@ type RunRequest struct {
 	Source     string
 }
 
+type RunUsage struct {
+	PromptTokens     int64
+	CompletionTokens int64
+	CacheTokens      int64
+}
+
 type RunResult struct {
 	FeatureKey string
 	Result     string
 	Model      string
 	ProviderID string
+	Usage      RunUsage
+	StartedAt  time.Time
+	FinishedAt time.Time
 }
 
 type ProviderSelector struct{}
@@ -158,6 +170,9 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				Result:     result.Text,
 				Model:      result.Model,
 				ProviderID: provider.ID,
+				Usage:      result.Usage,
+				StartedAt:  result.StartedAt,
+				FinishedAt: result.FinishedAt,
 			}, nil
 		}
 		lastErr = err
@@ -244,6 +259,7 @@ func newOpenAIChatClient(provider utils.AIProviderConfig) ChatClient {
 }
 
 func (c *openAIChatClient) Complete(ctx context.Context, req CompletionRequest) (CompletionResult, error) {
+	startedAt := time.Now()
 	request := openai.ChatCompletionRequest{
 		Model: req.Model,
 		Messages: []openai.ChatCompletionMessage{
@@ -265,8 +281,19 @@ func (c *openAIChatClient) Complete(ctx context.Context, req CompletionRequest) 
 	if len(resp.Choices) == 0 {
 		return CompletionResult{}, errors.New("empty ai response")
 	}
+	cacheTokens := int64(0)
+	if resp.Usage.PromptTokensDetails != nil {
+		cacheTokens = int64(resp.Usage.PromptTokensDetails.CachedTokens)
+	}
 	return CompletionResult{
 		Text:  resp.Choices[0].Message.Content,
 		Model: resp.Model,
+		Usage: RunUsage{
+			PromptTokens:     int64(resp.Usage.PromptTokens),
+			CompletionTokens: int64(resp.Usage.CompletionTokens),
+			CacheTokens:      cacheTokens,
+		},
+		StartedAt:  startedAt,
+		FinishedAt: time.Now(),
 	}, nil
 }
