@@ -37,6 +37,7 @@ import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLi
 import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
 import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } from '@/utils/stickyNoteEmbedLink'
+import { parseSingleBattleReportEmbedLinkText } from '@/utils/battleReportEmbedLink'
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
 import { normalizeAvatarDecorations } from '@/utils/avatarDecorations'
@@ -53,6 +54,7 @@ import IdentityMetaInlineRow from './IdentityMetaInlineRow.vue'
 import MessageReactions from './MessageReactions.vue'
 import TwinLayerMessage from '@/components/chat/TwinLayerMessage.vue'
 import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
+import BattleReportEmbedCard from './BattleReportEmbedCard.vue'
 import type { ChannelIForm } from '@/types/iform';
 import {
   resolveIdentityMetaHostBackground,
@@ -327,6 +329,15 @@ const resolveSingleStickyNoteLinkFromContent = (content: string) => {
   return singleStickyNoteLink;
 };
 
+const resolveSingleBattleReportLinkFromContent = (content: string) => {
+  let singleBattleReportLink = parseSingleBattleReportEmbedLinkText(content);
+  if (!singleBattleReportLink && isTipTapJson(content)) {
+    const plainText = tiptapJsonToPlainText(content);
+    singleBattleReportLink = parseSingleBattleReportEmbedLinkText(plainText);
+  }
+  return singleBattleReportLink;
+};
+
 const isBotMessageItem = (item: any): boolean => {
   if (!item) {
     return false;
@@ -362,6 +373,14 @@ const resolveStateWidgetTextPolicy = (
 
 const parseContent = (payload: any, overrideContent?: string) => {
   const content = overrideContent ?? payload?.content ?? '';
+
+  const singleBattleReportLink = resolveSingleBattleReportLinkFromContent(content);
+  if (singleBattleReportLink) {
+    return h(BattleReportEmbedCard, {
+      reportId: singleBattleReportLink.reportId,
+      rawLink: singleBattleReportLink.rawLink,
+    });
+  }
 
   const singleStickyNoteLink = resolveSingleStickyNoteLinkFromContent(content);
   if (singleStickyNoteLink) {

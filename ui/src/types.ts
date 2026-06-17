@@ -121,6 +121,40 @@ export interface MessageReactionEvent {
   timestamp: number;
 }
 
+export type BattleReportStatus = 'ready' | 'generating' | 'failed';
+
+export interface BattleReport {
+  id: string;
+  channelId: string;
+  worldId: string;
+  title: string;
+  content?: string;
+  contentPreview: string;
+  periodStart: number;
+  periodEnd: number;
+  contextReportCount: number;
+  sortOrder: number;
+  status: BattleReportStatus;
+  errorMessage?: string;
+  creatorId: string;
+  updaterId: string;
+  aiSource?: string;
+  aiProviderId?: string;
+  aiModel?: string;
+  aiFeatureKey?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface BattleReportPayload {
+  title?: string;
+  content?: string;
+  periodStart?: number;
+  periodEnd?: number;
+  contextReportCount?: number;
+  source?: string;
+}
+
 import type { PlatformTheme } from '@/services/theme/themeTypes';
 
 export interface LogUploadConfig {

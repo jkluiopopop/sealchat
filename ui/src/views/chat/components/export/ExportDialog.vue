@@ -10,6 +10,7 @@ import {
   buildPanelMonthActiveDayMap,
   parsePanelMonthKey,
 } from './calendarActiveDayHighlight'
+import ActiveDayDateRangePicker from './ActiveDayDateRangePicker.vue'
 
 interface ExportParams {
   format: string
@@ -980,32 +981,11 @@ onBeforeUnmount(() => {
 
       <n-form-item label="时间范围">
         <div class="time-range">
-          <n-date-picker
-            v-model:value="form.timeRange"
-            type="datetimerange"
-            clearable
-            to="body"
-            @update:show="handleCalendarShowUpdate"
-            :shortcuts="shortcuts"
-            format="yyyy-MM-dd HH:mm:ss"
+          <ActiveDayDateRangePicker
+            v-model="form.timeRange"
+            :channel-id="props.channelId"
             placeholder="选择时间范围，留空表示全部"
-            style="flex: 1"
           />
-          <div class="preset-group">
-            <n-button-group size="small">
-              <n-button
-                v-for="item in timePresets"
-                :key="item.value"
-                :type="timePreset === item.value ? 'primary' : 'default'"
-                @click="handlePresetClick(item.value as PresetValue)"
-              >
-                {{ item.label }}
-              </n-button>
-            </n-button-group>
-            <n-button text size="small" @click="handleClearPreset" v-if="timePreset !== 'none'">
-              清除
-            </n-button>
-          </div>
         </div>
       </n-form-item>
 

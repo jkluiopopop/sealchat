@@ -25,6 +25,7 @@ import ChatSearchPanel from './components/ChatSearchPanel.vue'
 import ArchiveDrawer from './components/archive/ArchiveDrawer.vue'
 import ExportDialog from './components/export/ExportDialog.vue'
 import ExportManagerModal from './components/export/ExportManagerModal.vue'
+import BattleReportDrawer from './components/BattleReportDrawer.vue'
 import ChatImportDialog from './components/ChatImportDialog.vue'
 import ChatImportProgress from './components/ChatImportProgress.vue'
 import ChannelImageViewerDrawer from './components/ChannelImageViewerDrawer.vue'
@@ -1340,6 +1341,7 @@ const showActionRibbon = ref(false);
 const archiveDrawerVisible = ref(false);
 const exportManagerVisible = ref(false);
 const exportDialogVisible = ref(false);
+const battleReportDrawerVisible = ref(false);
 const channelFavoritesVisible = ref(false);
 const importDialogVisible = ref(false);
 const importProgressVisible = ref(false);
@@ -14704,8 +14706,12 @@ const handleGalleryDrop = async (event: DragEvent) => {
   }
 };
 
-const openBattleSummaryPlaceholder = () => {
-  message.info('战报总结功能将在后续版本提供')
+const openBattleSummary = () => {
+  if (!chat.curChannel?.id) {
+    message.error('未选择频道')
+    return
+  }
+  battleReportDrawerVisible.value = true
 }
 
 const runAIPolish = async () => {
@@ -14854,7 +14860,7 @@ onBeforeUnmount(() => {
           :character-remark-active="characterRemarkManagerVisible"
           :channel-images-active="channelImagesPanelVisible"
           :battle-summary-enabled="showBattleSummary"
-          :battle-summary-active="false"
+          :battle-summary-active="battleReportDrawerVisible"
           :can-import="canManageWorldKeywords"
           :import-active="importDialogVisible"
           :split-enabled="splitEntryEnabled"
@@ -14880,7 +14886,7 @@ onBeforeUnmount(() => {
           @open-favorites="channelFavoritesVisible = true"
           @open-character-remark="characterRemarkManagerVisible = true"
           @open-channel-images="openChannelImagesPanel"
-          @open-battle-summary="openBattleSummaryPlaceholder"
+          @open-battle-summary="openBattleSummary"
           @open-split="openSplitView"
           @open-ic-ooc-split="openIcOocSplitView"
           @toggle-sticky-note="toggleStickyNotes"
@@ -17624,7 +17630,12 @@ onBeforeUnmount(() => {
     :channel-id="chat.curChannel?.id"
     :battle-summary-enabled="showBattleSummary"
     @export="handleExportMessages"
-    @request-battle-summary="openBattleSummaryPlaceholder"
+    @request-battle-summary="openBattleSummary"
+  />
+  <BattleReportDrawer
+    v-model:visible="battleReportDrawerVisible"
+    :channel-id="chat.curChannel?.id"
+    :world-id="chat.currentWorldId"
   />
   <ChatAiPolishDock
     :visible="aiPolishDockVisible"
