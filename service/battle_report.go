@@ -17,6 +17,7 @@ type BattleReportInput struct {
 	PeriodStart        time.Time
 	PeriodEnd          time.Time
 	ContextReportCount int
+	SourceChannelIDs   []string
 	Status             model.BattleReportStatus
 	ErrorMessage       string
 	AISource           string
@@ -41,14 +42,30 @@ func EnsureBattleReportChannelAccess(userID, channelID string) error {
 	return nil
 }
 
+func EnsureBattleReportWorldAccess(userID, worldID string) error {
+	userID = strings.TrimSpace(userID)
+	worldID = strings.TrimSpace(worldID)
+	if userID == "" || worldID == "" {
+		return fmt.Errorf("仅世界成员可操作战报")
+	}
+	if !IsWorldMember(worldID, userID) {
+		return fmt.Errorf("仅世界成员可操作战报")
+	}
+	return nil
+}
+
 func ListBattleReports(channelID string, userID string) ([]*model.BattleReportModel, error) {
 	channelID = strings.TrimSpace(channelID)
-	if err := EnsureBattleReportChannelAccess(userID, channelID); err != nil {
+	channel, err := loadBattleReportChannel(channelID)
+	if err != nil {
+		return nil, err
+	}
+	if err := EnsureBattleReportWorldAccess(userID, channel.WorldID); err != nil {
 		return nil, err
 	}
 	var items []*model.BattleReportModel
-	err := model.GetDB().
-		Where("channel_id = ? AND is_deleted = ?", channelID, false).
+	err = model.GetDB().
+		Where("world_id = ? AND is_deleted = ?", channel.WorldID, false).
 		Order("sort_order DESC, period_start DESC, created_at DESC").
 		Find(&items).Error
 	return items, err
@@ -59,7 +76,7 @@ func GetBattleReport(reportID string, userID string) (*model.BattleReportModel, 
 	if err != nil {
 		return nil, err
 	}
-	if err := EnsureBattleReportChannelAccess(userID, report.ChannelID); err != nil {
+	if err := EnsureBattleReportWorldAccess(userID, report.WorldID); err != nil {
 		return nil, err
 	}
 	return report, nil
@@ -68,14 +85,14 @@ func GetBattleReport(reportID string, userID string) (*model.BattleReportModel, 
 func CreateBattleReport(channelID string, userID string, input BattleReportInput) (*model.BattleReportModel, error) {
 	channelID = strings.TrimSpace(channelID)
 	userID = strings.TrimSpace(userID)
-	if err := EnsureBattleReportChannelAccess(userID, channelID); err != nil {
-		return nil, err
-	}
 	channel, err := loadBattleReportChannel(channelID)
 	if err != nil {
 		return nil, err
 	}
-	sortOrder, err := nextBattleReportSortOrder(channelID)
+	if err := EnsureBattleReportWorldAccess(userID, channel.WorldID); err != nil {
+		return nil, err
+	}
+	sortOrder, err := nextBattleReportSortOrder(channel.WorldID)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +127,7 @@ func UpdateBattleReport(reportID string, userID string, input BattleReportInput)
 	if err != nil {
 		return nil, err
 	}
-	if err := EnsureBattleReportChannelAccess(userID, item.ChannelID); err != nil {
+	if err := EnsureBattleReportWorldAccess(userID, item.WorldID); err != nil {
 		return nil, err
 	}
 	item.Title = input.Title
@@ -149,7 +166,7 @@ func DeleteBattleReport(reportID string, userID string) error {
 	if err != nil {
 		return err
 	}
-	if err := EnsureBattleReportChannelAccess(userID, item.ChannelID); err != nil {
+	if err := EnsureBattleReportWorldAccess(userID, item.WorldID); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -168,7 +185,11 @@ func DeleteBattleReport(reportID string, userID string) error {
 
 func ReorderBattleReports(channelID string, userID string, ids []string) error {
 	channelID = strings.TrimSpace(channelID)
-	if err := EnsureBattleReportChannelAccess(userID, channelID); err != nil {
+	channel, err := loadBattleReportChannel(channelID)
+	if err != nil {
+		return err
+	}
+	if err := EnsureBattleReportWorldAccess(userID, channel.WorldID); err != nil {
 		return err
 	}
 	normalizedIDs := make([]string, 0, len(ids))
@@ -190,7 +211,7 @@ func ReorderBattleReports(channelID string, userID string, ids []string) error {
 
 	var count int64
 	if err := model.GetDB().Model(&model.BattleReportModel{}).
-		Where("channel_id = ? AND is_deleted = ? AND id IN ?", channelID, false, normalizedIDs).
+		Where("world_id = ? AND is_deleted = ? AND id IN ?", channel.WorldID, false, normalizedIDs).
 		Count(&count).Error; err != nil {
 		return err
 	}
@@ -203,7 +224,7 @@ func ReorderBattleReports(channelID string, userID string, ids []string) error {
 		for index, id := range normalizedIDs {
 			sortOrder := base - index*100
 			if err := tx.Model(&model.BattleReportModel{}).
-				Where("id = ? AND channel_id = ? AND is_deleted = ?", id, channelID, false).
+				Where("id = ? AND world_id = ? AND is_deleted = ?", id, channel.WorldID, false).
 				Update("sort_order", sortOrder).Error; err != nil {
 				return err
 			}
@@ -230,6 +251,10 @@ func loadBattleReport(reportID string) (*model.BattleReportModel, error) {
 }
 
 func loadBattleReportChannel(channelID string) (*model.ChannelModel, error) {
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
 	var channel model.ChannelModel
 	if err := model.GetDB().
 		Where("id = ? AND status <> ?", channelID, model.ChannelStatusDeleted).
@@ -239,10 +264,10 @@ func loadBattleReportChannel(channelID string) (*model.ChannelModel, error) {
 	return &channel, nil
 }
 
-func nextBattleReportSortOrder(channelID string) (int, error) {
+func nextBattleReportSortOrder(worldID string) (int, error) {
 	var maxOrder int
 	err := model.GetDB().Model(&model.BattleReportModel{}).
-		Where("channel_id = ? AND is_deleted = ?", channelID, false).
+		Where("world_id = ? AND is_deleted = ?", strings.TrimSpace(worldID), false).
 		Select("COALESCE(MAX(sort_order), 0)").
 		Scan(&maxOrder).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {

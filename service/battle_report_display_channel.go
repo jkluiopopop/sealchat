@@ -20,7 +20,7 @@ func GetBattleReportDisplayChannel(sourceChannelID, userID string) (*model.Battl
 		return nil, err
 	}
 	if setting != nil {
-		if err := EnsureBattleReportChannelAccess(userID, setting.SourceChannelID); err != nil {
+		if err := EnsureBattleReportWorldAccess(userID, setting.WorldID); err != nil {
 			return nil, err
 		}
 		if !setting.Enabled {
@@ -28,7 +28,11 @@ func GetBattleReportDisplayChannel(sourceChannelID, userID string) (*model.Battl
 		}
 		return setting, nil
 	}
-	if err := EnsureBattleReportChannelAccess(userID, sourceChannelID); err != nil {
+	source, err := loadBattleReportChannel(sourceChannelID)
+	if err != nil {
+		return nil, err
+	}
+	if err := EnsureBattleReportWorldAccess(userID, source.WorldID); err != nil {
 		return nil, err
 	}
 	return nil, nil
@@ -44,11 +48,11 @@ func EnsureBattleReportDisplayChannel(sourceChannelID, userID, name string) (*mo
 	if existingSetting != nil {
 		sourceChannelID = existingSetting.SourceChannelID
 	}
-	if err := EnsureBattleReportChannelAccess(userID, sourceChannelID); err != nil {
-		return nil, err
-	}
 	source, err := loadBattleReportChannel(sourceChannelID)
 	if err != nil {
+		return nil, err
+	}
+	if err := EnsureBattleReportWorldAccess(userID, source.WorldID); err != nil {
 		return nil, err
 	}
 	displayName := strings.TrimSpace(name)
@@ -132,7 +136,7 @@ func DisableBattleReportDisplayChannel(channelID, userID string) error {
 	if setting == nil {
 		return nil
 	}
-	if err := EnsureBattleReportChannelAccess(userID, setting.SourceChannelID); err != nil {
+	if err := EnsureBattleReportWorldAccess(userID, setting.WorldID); err != nil {
 		return err
 	}
 	return model.GetDB().Transaction(func(tx *gorm.DB) error {
@@ -166,6 +170,19 @@ func loadBattleReportDisplaySettingByAnyChannel(channelID string) (*model.Battle
 	err := model.GetDB().
 		Where("source_channel_id = ? OR display_channel_id = ?", channelID, channelID).
 		First(&setting).Error
+	if err == nil {
+		return &setting, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	channel, err := loadBattleReportChannel(channelID)
+	if err != nil {
+		return nil, err
+	}
+	err = model.GetDB().
+		Where("world_id = ?", channel.WorldID).
+		First(&setting).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -190,7 +207,7 @@ func SyncBattleReportDisplayFromReports(sourceChannelID string) error {
 	sourceChannelID = setting.SourceChannelID
 	var reports []model.BattleReportModel
 	if err := model.GetDB().
-		Where("channel_id = ? AND is_deleted = ?", sourceChannelID, false).
+		Where("world_id = ? AND is_deleted = ?", setting.WorldID, false).
 		Order("sort_order DESC, period_start DESC, created_at DESC").
 		Find(&reports).Error; err != nil {
 		return err
@@ -206,7 +223,7 @@ func SyncBattleReportDisplayFromReports(sourceChannelID string) error {
 			seen[report.ID] = struct{}{}
 		}
 		var embeds []model.BattleReportDisplayEmbedModel
-		if err := tx.Where("source_channel_id = ? AND display_channel_id = ?", sourceChannelID, setting.DisplayChannelID).
+		if err := tx.Where("display_channel_id = ?", setting.DisplayChannelID).
 			Find(&embeds).Error; err != nil {
 			return err
 		}
@@ -261,7 +278,7 @@ func SyncBattleReportOrderFromDisplayMessage(displayChannelID string) error {
 		for index, row := range rows {
 			sortOrder := base - index*100
 			if err := tx.Model(&model.BattleReportModel{}).
-				Where("id = ? AND channel_id = ? AND is_deleted = ?", row.ReportID, setting.SourceChannelID, false).
+				Where("id = ? AND world_id = ? AND is_deleted = ?", row.ReportID, setting.WorldID, false).
 				Update("sort_order", sortOrder).Error; err != nil {
 				return err
 			}
@@ -279,11 +296,15 @@ func ensureBattleReportDisplayMessage(tx *gorm.DB, setting *model.BattleReportDi
 	if setting == nil || report == nil {
 		return fmt.Errorf("战报展示同步缺少必要数据")
 	}
-	content := buildBattleReportDisplayMessageContent(setting.WorldID, setting.SourceChannelID, report.ID)
+	reportChannelID := strings.TrimSpace(report.ChannelID)
+	if reportChannelID == "" {
+		reportChannelID = setting.SourceChannelID
+	}
+	content := buildBattleReportDisplayMessageContent(setting.WorldID, reportChannelID, report.ID)
 	var embed model.BattleReportDisplayEmbedModel
 	err := tx.Where("report_id = ?", report.ID).First(&embed).Error
 	if err == nil {
-		embed.SourceChannelID = setting.SourceChannelID
+		embed.SourceChannelID = reportChannelID
 		embed.DisplayChannelID = setting.DisplayChannelID
 		embed.SortOrder = report.SortOrder
 		embed.Normalize()
@@ -324,7 +345,7 @@ func ensureBattleReportDisplayMessage(tx *gorm.DB, setting *model.BattleReportDi
 	embed = model.BattleReportDisplayEmbedModel{
 		StringPKBaseModel: model.StringPKBaseModel{ID: utils.NewID()},
 		ReportID:          report.ID,
-		SourceChannelID:   setting.SourceChannelID,
+		SourceChannelID:   reportChannelID,
 		DisplayChannelID:  setting.DisplayChannelID,
 		MessageID:         msg.ID,
 		SortOrder:         report.SortOrder,

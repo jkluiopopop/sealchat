@@ -43,6 +43,19 @@ export const useBattleReportStore = defineStore('battleReport', {
         ...item,
         content: item.content !== undefined ? item.content : existingDetail?.content,
       };
+      Object.keys(this.itemsByChannel).forEach((key) => {
+        const current = this.itemsByChannel[key] || [];
+        if (!current.some((candidate) => candidate.id === item.id)) {
+          return;
+        }
+        this.itemsByChannel[key] = current.map((candidate) => candidate.id === item.id
+          ? {
+            ...candidate,
+            ...item,
+            content: item.content !== undefined ? item.content : candidate.content,
+          }
+          : candidate);
+      });
       const channelId = item.channelId;
       if (!channelId) {
         return;
@@ -114,12 +127,11 @@ export const useBattleReportStore = defineStore('battleReport', {
       this.saving = true;
       try {
         await api.delete(`api/v1/battle-reports/${reportId}`);
-        const existing = this.detailById[reportId];
         delete this.detailById[reportId];
-        if (existing?.channelId) {
-          this.itemsByChannel[existing.channelId] = (this.itemsByChannel[existing.channelId] || [])
+        Object.keys(this.itemsByChannel).forEach((channelId) => {
+          this.itemsByChannel[channelId] = (this.itemsByChannel[channelId] || [])
             .filter((item) => item.id !== reportId);
-        }
+        });
       } finally {
         this.saving = false;
       }

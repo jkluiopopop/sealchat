@@ -16,19 +16,29 @@ type BattleReportSummaryInput struct {
 	PeriodStart        time.Time
 	PeriodEnd          time.Time
 	ContextReportCount int
+	SourceChannelIDs   []string
 	Source             string
 	AIConfig           utils.AIConfig
 	Runner             aiService.TaskRunner
 }
 
 type BattleReportSummaryRunOptions struct {
-	User     *model.UserModel
-	Source   string
-	AIConfig utils.AIConfig
-	Runner   aiService.TaskRunner
+	User             *model.UserModel
+	Source           string
+	SourceChannelIDs []string
+	AIConfig         utils.AIConfig
+	Runner           aiService.TaskRunner
 }
 
 func StartBattleReportSummary(ctx context.Context, channelID string, userID string, input BattleReportSummaryInput) (*model.BattleReportModel, error) {
+	channels, err := resolveBattleReportSourceChannels(channelID, "", input.SourceChannelIDs, userID)
+	if err != nil {
+		return nil, err
+	}
+	sourceChannelIDs := make([]string, 0, len(channels))
+	for _, channel := range channels {
+		sourceChannelIDs = append(sourceChannelIDs, channel.ID)
+	}
 	item, err := CreateBattleReport(channelID, userID, BattleReportInput{
 		Title:              input.Title,
 		PeriodStart:        input.PeriodStart,
@@ -47,10 +57,11 @@ func StartBattleReportSummary(ctx context.Context, channelID string, userID stri
 	}
 	go func() {
 		if err := runBattleReportSummaryTask(ctx, item.ID, BattleReportSummaryRunOptions{
-			User:     user,
-			Source:   input.Source,
-			AIConfig: input.AIConfig,
-			Runner:   input.Runner,
+			User:             user,
+			Source:           input.Source,
+			SourceChannelIDs: sourceChannelIDs,
+			AIConfig:         input.AIConfig,
+			Runner:           input.Runner,
 		}); err != nil {
 			_ = markBattleReportSummaryFailed(item.ID, err)
 		}
@@ -66,18 +77,22 @@ func runBattleReportSummaryTask(ctx context.Context, reportID string, opts Battl
 	if opts.User == nil {
 		return fmt.Errorf("缺少用户信息")
 	}
-	messages, err := loadBattleReportMessages(report.ChannelID, report.PeriodStart, report.PeriodEnd)
+	channels, err := resolveBattleReportSourceChannels(report.ChannelID, report.WorldID, opts.SourceChannelIDs, opts.User.ID)
+	if err != nil {
+		return markBattleReportSummaryFailed(report.ID, err)
+	}
+	messageGroups, err := loadBattleReportMessageGroups(channels, report.PeriodStart, report.PeriodEnd)
 	if err != nil {
 		return err
 	}
-	if len(messages) == 0 {
+	if battleReportMessageGroupLen(messageGroups) == 0 {
 		return markBattleReportSummaryFailed(report.ID, fmt.Errorf("所选时间范围内没有可总结的消息"))
 	}
 	contextReports, err := loadBattleReportContextReports(report)
 	if err != nil {
 		return err
 	}
-	prompt := buildBattleReportSummaryPrompt(report, contextReports, messages)
+	prompt := buildBattleReportSummaryPromptWithGroups(report, contextReports, messageGroups)
 	output, err := aiService.RunTaskWithBilling(ctx, aiService.BilledRunInput{
 		Config:     opts.AIConfig,
 		User:       opts.User,
@@ -107,6 +122,82 @@ func runBattleReportSummaryTask(ctx context.Context, reportID string, opts Battl
 	return model.GetDB().Model(&model.BattleReportModel{}).
 		Where("id = ? AND is_deleted = ?", report.ID, false).
 		Updates(updates).Error
+}
+
+func resolveBattleReportSourceChannels(primaryChannelID string, worldID string, sourceChannelIDs []string, userID string) ([]*model.ChannelModel, error) {
+	primary, err := loadBattleReportChannel(primaryChannelID)
+	if err != nil {
+		return nil, err
+	}
+	targetWorldID := strings.TrimSpace(worldID)
+	if targetWorldID == "" {
+		targetWorldID = primary.WorldID
+	}
+	ids := make([]string, 0, len(sourceChannelIDs)+1)
+	seen := map[string]struct{}{}
+	addID := func(raw string) {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	for _, id := range sourceChannelIDs {
+		addID(id)
+	}
+	if len(ids) == 0 {
+		addID(primary.ID)
+	}
+
+	channels := make([]*model.ChannelModel, 0, len(ids))
+	for _, id := range ids {
+		channel, err := loadBattleReportChannel(id)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(channel.WorldID) != targetWorldID {
+			return nil, fmt.Errorf("战报来源频道必须属于同一世界")
+		}
+		if userID != "" && !CanReadChannelByUserId(userID, channel.ID) {
+			return nil, fmt.Errorf("无权读取战报来源频道")
+		}
+		channels = append(channels, channel)
+	}
+	return channels, nil
+}
+
+func loadBattleReportMessageGroups(channels []*model.ChannelModel, start time.Time, end time.Time) ([]BattleReportMessageGroup, error) {
+	groups := make([]BattleReportMessageGroup, 0, len(channels))
+	for _, channel := range channels {
+		if channel == nil {
+			continue
+		}
+		messages, err := loadBattleReportMessages(channel.ID, start, end)
+		if err != nil {
+			return nil, err
+		}
+		if len(messages) == 0 {
+			continue
+		}
+		groups = append(groups, BattleReportMessageGroup{
+			ChannelID:   channel.ID,
+			ChannelName: channel.Name,
+			Messages:    messages,
+		})
+	}
+	return groups, nil
+}
+
+func battleReportMessageGroupLen(groups []BattleReportMessageGroup) int {
+	total := 0
+	for _, group := range groups {
+		total += len(group.Messages)
+	}
+	return total
 }
 
 func loadBattleReportMessages(channelID string, start time.Time, end time.Time) ([]*model.MessageModel, error) {
@@ -147,7 +238,7 @@ func loadBattleReportContextReports(report *model.BattleReportModel) ([]*model.B
 	}
 	var items []*model.BattleReportModel
 	err := model.GetDB().
-		Where("channel_id = ? AND is_deleted = ? AND status = ? AND id <> ?", report.ChannelID, false, model.BattleReportStatusReady, report.ID).
+		Where("world_id = ? AND is_deleted = ? AND status = ? AND id <> ?", report.WorldID, false, model.BattleReportStatusReady, report.ID).
 		Order("sort_order DESC, period_start DESC, created_at DESC").
 		Limit(report.ContextReportCount).
 		Find(&items).Error

@@ -5,7 +5,7 @@ import { useMessage } from 'naive-ui'
 import { useBattleReportStore } from '@/stores/battleReport'
 import { useAIStore } from '@/stores/ai'
 import { chatEvent, useChatStore } from '@/stores/chat'
-import type { BattleReport } from '@/types'
+import type { BattleReport, SChannel } from '@/types'
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { generateBattleReportEmbedLink } from '@/utils/battleReportEmbedLink'
 import ActiveDayDateRangePicker from './export/ActiveDayDateRangePicker.vue'
@@ -40,6 +40,7 @@ const createForm = reactive({
   content: '',
   period: null as [number, number] | null,
   contextReportCount: 3,
+  sourceChannelIds: [] as string[],
 })
 const displayForm = reactive({
   name: '战报时间线',
@@ -52,6 +53,37 @@ const displayChannelId = computed(() => displayChannel.value?.displayChannelId |
 const sourceReports = computed(() => sourceChannelId.value ? (store.itemsByChannel[sourceChannelId.value] || []) : [])
 const editingReport = computed(() => editingReportId.value ? store.detailById[editingReportId.value] : null)
 const hasGenerating = computed(() => sourceReports.value.some((item) => item.status === 'generating'))
+
+const flattenChannels = (items: SChannel[] = []): SChannel[] => {
+  const out: SChannel[] = []
+  items.forEach((item) => {
+    if (!item?.id) return
+    out.push(item)
+    if (Array.isArray(item.children) && item.children.length) {
+      out.push(...flattenChannels(item.children))
+    }
+  })
+  return out
+}
+
+const createChannelOptions = computed(() => flattenChannels(chat.currentWorldChannels)
+  .filter((item) => !item.isPrivate)
+  .map((item) => ({
+    label: item.name || `频道 ${item.id.slice(0, 6)}`,
+    value: item.id,
+  })))
+
+const normalizeCreateSourceChannelIds = () => {
+  const validIds = new Set(createChannelOptions.value.map((item) => item.value))
+  const rawSelected = Array.isArray(createForm.sourceChannelIds) ? createForm.sourceChannelIds : []
+  const selected = rawSelected
+    .map((item) => String(item || '').trim())
+    .filter((item, index, list) => item && list.indexOf(item) === index && (!validIds.size || validIds.has(item)))
+  if (selected.length) return selected
+  return sourceChannelId.value ? [sourceChannelId.value] : []
+}
+
+const createPrimaryChannelId = computed(() => normalizeCreateSourceChannelIds()[0] || sourceChannelId.value)
 
 const formatPeriod = (item: BattleReport) => {
   if (!item.periodStart || !item.periodEnd) return '未设置周期'
@@ -66,6 +98,7 @@ const resetCreateForm = () => {
   createForm.content = ''
   createForm.period = null
   createForm.contextReportCount = 3
+  createForm.sourceChannelIds = sourceChannelId.value ? [sourceChannelId.value] : []
 }
 
 const refresh = async () => {
@@ -243,7 +276,9 @@ const copyReportLink = async (item: BattleReport) => {
 }
 
 const createReport = async () => {
-  if (!sourceChannelId.value) {
+  const sourceChannelIds = normalizeCreateSourceChannelIds()
+  const primaryChannelId = sourceChannelIds[0] || sourceChannelId.value
+  if (!primaryChannelId) {
     message.error('未选择频道')
     return
   }
@@ -258,13 +293,14 @@ const createReport = async () => {
     periodEnd: createForm.period[1],
     contextReportCount: createForm.contextReportCount,
     source: aiStore.currentSource,
+    sourceChannelIds,
   }
   try {
     if (createMode.value === 'ai') {
-      await store.summarize(sourceChannelId.value, payload)
+      await store.summarize(primaryChannelId, payload)
       message.success('AI 总结已开始')
     } else {
-      await store.create(sourceChannelId.value, payload)
+      await store.create(primaryChannelId, payload)
       message.success('战报已创建')
     }
     createVisible.value = false
@@ -346,8 +382,8 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
     <n-drawer-content title="战报总结" closable>
       <div class="battle-report-toolbar">
         <div>
-          <div class="battle-report-toolbar__title">频道战报</div>
-          <div class="battle-report-toolbar__hint">手动或AI总结战报。</div>
+          <div class="battle-report-toolbar__title">世界战报</div>
+          <div class="battle-report-toolbar__hint">手动或 AI 总结当前世界的战报。</div>
         </div>
         <div class="battle-report-toolbar__actions">
           <n-button v-if="displayChannel" size="small" secondary @click="openDisplayChannel">打开展示频道</n-button>
@@ -420,10 +456,21 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
           <n-radio-button value="manual">手动创建</n-radio-button>
         </n-radio-group>
       </n-form-item>
+      <n-form-item label="来源频道">
+        <n-select
+          v-model:value="createForm.sourceChannelIds"
+          :options="createChannelOptions"
+          multiple
+          filterable
+          clearable
+          placeholder="选择要纳入战报的频道"
+        />
+        <template #feedback>默认当前频道。多选时会按频道分别拼接同一时间段内的内容。</template>
+      </n-form-item>
       <n-form-item label="时间周期">
         <ActiveDayDateRangePicker
           v-model="createForm.period"
-          :channel-id="sourceChannelId"
+          :channel-id="createPrimaryChannelId"
           placeholder="选择需要总结的活跃消息周期"
         />
       </n-form-item>

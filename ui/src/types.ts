@@ -153,6 +153,7 @@ export interface BattleReportPayload {
   periodEnd?: number;
   contextReportCount?: number;
   source?: string;
+  sourceChannelIds?: string[];
 }
 
 export interface BattleReportDisplayChannel {

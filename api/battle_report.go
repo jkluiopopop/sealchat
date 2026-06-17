@@ -14,12 +14,13 @@ import (
 )
 
 type battleReportRequest struct {
-	Title              string `json:"title"`
-	Content            string `json:"content"`
-	PeriodStart        int64  `json:"periodStart"`
-	PeriodEnd          int64  `json:"periodEnd"`
-	ContextReportCount int    `json:"contextReportCount"`
-	Source             string `json:"source"`
+	Title              string   `json:"title"`
+	Content            string   `json:"content"`
+	PeriodStart        int64    `json:"periodStart"`
+	PeriodEnd          int64    `json:"periodEnd"`
+	ContextReportCount int      `json:"contextReportCount"`
+	Source             string   `json:"source"`
+	SourceChannelIDs   []string `json:"sourceChannelIds"`
 }
 
 type battleReportReorderRequest struct {
@@ -247,6 +248,7 @@ func BattleReportSummarize(c *fiber.Ctx) error {
 		PeriodStart:        unixMilliToTime(req.PeriodStart),
 		PeriodEnd:          unixMilliToTime(req.PeriodEnd),
 		ContextReportCount: req.ContextReportCount,
+		SourceChannelIDs:   req.SourceChannelIDs,
 		Source:             req.Source,
 		AIConfig:           cfg,
 		Runner:             runner,
@@ -280,6 +282,7 @@ func battleReportInputFromRequest(req battleReportRequest) service.BattleReportI
 		PeriodStart:        unixMilliToTime(req.PeriodStart),
 		PeriodEnd:          unixMilliToTime(req.PeriodEnd),
 		ContextReportCount: req.ContextReportCount,
+		SourceChannelIDs:   req.SourceChannelIDs,
 	}
 }
 
@@ -323,7 +326,7 @@ func battleReportError(c *fiber.Ctx, err error) error {
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		status = fiber.StatusNotFound
 		message = "战报不存在"
-	case strings.Contains(err.Error(), "仅频道成员"):
+	case strings.Contains(err.Error(), "仅频道成员"), strings.Contains(err.Error(), "仅世界成员"):
 		status = fiber.StatusForbidden
 		message = err.Error()
 	}

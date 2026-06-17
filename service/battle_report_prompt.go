@@ -8,7 +8,17 @@ import (
 	"sealchat/model"
 )
 
+type BattleReportMessageGroup struct {
+	ChannelID   string
+	ChannelName string
+	Messages    []*model.MessageModel
+}
+
 func buildBattleReportSummaryPrompt(report *model.BattleReportModel, contextReports []*model.BattleReportModel, messages []*model.MessageModel) string {
+	return buildBattleReportSummaryPromptWithGroups(report, contextReports, []BattleReportMessageGroup{{Messages: messages}})
+}
+
+func buildBattleReportSummaryPromptWithGroups(report *model.BattleReportModel, contextReports []*model.BattleReportModel, messageGroups []BattleReportMessageGroup) string {
 	var builder strings.Builder
 	builder.WriteString("请根据以下跑团聊天记录生成战报总结。\n")
 	if report != nil {
@@ -34,13 +44,31 @@ func buildBattleReportSummaryPrompt(report *model.BattleReportModel, contextRepo
 		}
 	}
 	builder.WriteString("\n本次记录：\n")
-	for _, msg := range messages {
-		line := formatBattleReportMessageLine(msg)
-		if line == "" {
+	withChannelHeading := len(messageGroups) > 1
+	for _, group := range messageGroups {
+		if len(group.Messages) == 0 {
 			continue
 		}
-		builder.WriteString(line)
-		builder.WriteString("\n")
+		if withChannelHeading {
+			builder.WriteString("## ")
+			name := strings.TrimSpace(group.ChannelName)
+			if name == "" {
+				name = strings.TrimSpace(group.ChannelID)
+			}
+			if name == "" {
+				name = "未命名频道"
+			}
+			builder.WriteString(name)
+			builder.WriteString("\n")
+		}
+		for _, msg := range group.Messages {
+			line := formatBattleReportMessageLine(msg)
+			if line == "" {
+				continue
+			}
+			builder.WriteString(line)
+			builder.WriteString("\n")
+		}
 	}
 	builder.WriteString("\n要求：忠实原意，按事件顺序整理，不要编造未出现的信息。")
 	return strings.TrimSpace(builder.String())
