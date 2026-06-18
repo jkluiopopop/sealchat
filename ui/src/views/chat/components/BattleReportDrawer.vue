@@ -326,7 +326,16 @@ const createReport = async () => {
     await refresh()
     await refreshDisplayChannelContent()
   } catch (error: any) {
-    message.error(error?.response?.data?.message || error?.message || '创建战报失败')
+    const detail = error?.response?.data?.error || error?.response?.data?.message || error?.message || '创建战报失败'
+    if (String(detail).includes('战报总结输入过长')) {
+      dialog.warning({
+        title: '战报内容过长',
+        content: detail,
+        positiveText: '重新选择',
+      })
+      return
+    }
+    message.error(detail)
   }
 }
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -64,6 +65,13 @@ func AITaskRun(ctx *fiber.Ctx) error {
 		Runner:     runner,
 	})
 	if err != nil {
+		if errors.Is(err, aiService.ErrInputTooLong) {
+			maxInputChars := 0
+			if appConfig != nil {
+				maxInputChars = utils.NormalizeAIConfig(appConfig.AI).Features[featureKey].Params.MaxInputChars
+			}
+			err = aiService.FormatInputTooLongError(featureKey, len([]rune(strings.TrimSpace(body.Input))), maxInputChars)
+		}
 		status := fiber.StatusBadRequest
 		switch err.(type) {
 		case *aiService.AIQuotaExceededError:

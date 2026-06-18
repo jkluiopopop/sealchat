@@ -121,14 +121,19 @@ func (r *Runner) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	if !ok {
 		return RunResult{}, fmt.Errorf("unknown ai feature: %s", req.FeatureKey)
 	}
+	featureCfg := aiCfg.Features[req.FeatureKey]
+	maxInputChars := featureCfg.Params.MaxInputChars
+	if maxInputChars <= 0 {
+		maxInputChars = definition.InputMaxChars
+	}
 	input := strings.TrimSpace(req.Input)
 	if input == "" {
 		return RunResult{}, errors.New("ai input required")
 	}
-	if len([]rune(input)) > definition.InputMaxChars {
-		return RunResult{}, errors.New("ai input too long")
+	currentChars := len([]rune(input))
+	if maxInputChars > 0 && currentChars > maxInputChars {
+		return RunResult{}, FormatInputTooLongError(req.FeatureKey, currentChars, maxInputChars)
 	}
-	featureCfg := aiCfg.Features[req.FeatureKey]
 	if strings.EqualFold(strings.TrimSpace(req.Source), "user") {
 		userProviders, err := loadUserProviders(req.UserID)
 		if err != nil {

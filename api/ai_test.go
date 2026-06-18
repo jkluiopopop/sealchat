@@ -2,11 +2,13 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
@@ -136,6 +138,89 @@ func TestAITaskRunReturnsServiceUnavailableWhenUserSourceHasNoProvider(t *testin
 	if resp.StatusCode != fiber.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, fiber.StatusServiceUnavailable)
 	}
+}
+
+func TestAITaskRunReturnsBadRequestForOversizedBattleSummaryInput(t *testing.T) {
+	originalConfig := appConfig
+	originalFactory := aiRunnerFactory
+	defer func() {
+		appConfig = originalConfig
+		aiRunnerFactory = originalFactory
+	}()
+
+	appConfig = utils.ReadConfig()
+	appConfig.AI = utils.NormalizeAIConfig(utils.AIConfig{
+		Enabled: true,
+		Providers: []utils.AIProviderConfig{{
+			ID:      "deepseek-default",
+			Name:    "DeepSeek",
+			Enabled: true,
+			BaseURL: "https://api.deepseek.com/v1",
+			APIKey:  "secret",
+			Models:  []string{"deepseek-v4-flash"},
+			Weight:  1,
+		}},
+		Features: map[string]utils.AIFeatureConfig{
+			"battle_summary": {
+				Enabled:       true,
+				DefaultPrompt: "summary",
+				DefaultModel:  "deepseek-v4-flash",
+				Params: utils.AIModelParams{
+					MaxInputChars: 100,
+				},
+				Access: utils.AIFeatureAccessConfig{
+					Mode: utils.AIFeatureAccessAll,
+				},
+			},
+		},
+	})
+	aiRunnerFactory = func(_ func() *utils.AppConfig) aiTaskRunner {
+		return aiTaskRunnerFunc(func(_ context.Context, req aiService.RunRequest) (aiService.RunResult, error) {
+			return aiService.RunResult{}, aiService.ErrInputTooLong
+		})
+	}
+
+	app := fiber.New()
+	app.Post("/ai/tasks/:featureKey", func(c *fiber.Ctx) error {
+		c.Locals("user", &model.UserModel{StringPKBaseModel: model.StringPKBaseModel{ID: "user-1"}})
+		return AITaskRun(c)
+	})
+
+	body, err := json.Marshal(map[string]any{
+		"input":  strings.Repeat("字", 101),
+		"source": "user",
+	})
+	if err != nil {
+		t.Fatalf("Marshal error: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/ai/tasks/battle_summary", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != fiber.StatusBadRequest {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want %d, body=%s", resp.StatusCode, fiber.StatusBadRequest, string(raw))
+	}
+	var payload struct {
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("Decode error: %v", err)
+	}
+	if !strings.Contains(payload.Message, "战报总结输入过长") {
+		t.Fatalf("message = %q, want battle summary business message", payload.Message)
+	}
+}
+
+type aiTaskRunnerFunc func(ctx context.Context, req aiService.RunRequest) (aiService.RunResult, error)
+
+func (fn aiTaskRunnerFunc) Run(ctx context.Context, req aiService.RunRequest) (aiService.RunResult, error) {
+	return fn(ctx, req)
 }
 
 func TestAdminAIConfigUpdatePersistsIncomingProviderAPIKey(t *testing.T) {

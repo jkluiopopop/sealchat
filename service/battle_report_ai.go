@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -39,6 +38,17 @@ func StartBattleReportSummary(ctx context.Context, channelID string, userID stri
 	sourceChannelIDs := make([]string, 0, len(channels))
 	for _, channel := range channels {
 		sourceChannelIDs = append(sourceChannelIDs, channel.ID)
+	}
+	preflightReport := &model.BattleReportModel{
+		ChannelID:          strings.TrimSpace(channelID),
+		WorldID:            channels[0].WorldID,
+		Title:              input.Title,
+		PeriodStart:        input.PeriodStart,
+		PeriodEnd:          input.PeriodEnd,
+		ContextReportCount: input.ContextReportCount,
+	}
+	if err := ensureBattleReportSummaryInputWithinLimit(preflightReport, channels, input.AIConfig); err != nil {
+		return nil, err
 	}
 	item, err := CreateBattleReport(channelID, userID, BattleReportInput{
 		Title:              input.Title,
@@ -93,16 +103,10 @@ func runBattleReportSummaryTask(ctx context.Context, reportID string, opts Battl
 	if err != nil {
 		return err
 	}
-	contextReports, messageGroups = limitBattleReportSummaryPromptInput(
-		report,
-		contextReports,
-		messageGroups,
-		battleReportSummaryMaxInputTokens(opts.AIConfig),
-	)
-	if battleReportMessageGroupLen(messageGroups) == 0 {
-		return markBattleReportSummaryFailed(report.ID, fmt.Errorf("战报总结最大输入 token 数过低，没有可总结的消息"))
-	}
 	prompt := buildBattleReportSummaryPromptWithGroups(report, contextReports, messageGroups)
+	if err := validateBattleReportSummaryPromptSize(prompt, opts.AIConfig); err != nil {
+		return markBattleReportSummaryFailed(report.ID, err)
+	}
 	output, err := aiService.RunTaskWithBilling(ctx, aiService.BilledRunInput{
 		Config:     opts.AIConfig,
 		User:       opts.User,
@@ -210,87 +214,36 @@ func battleReportMessageGroupLen(groups []BattleReportMessageGroup) int {
 	return total
 }
 
-func battleReportSummaryMaxInputTokens(cfg utils.AIConfig) int {
+func battleReportSummaryMaxInputChars(cfg utils.AIConfig) int {
 	normalized := utils.NormalizeAIConfig(cfg)
-	return normalized.Features[aiService.FeatureBattleSummary].Params.MaxInputTokens
+	return normalized.Features[aiService.FeatureBattleSummary].Params.MaxInputChars
 }
 
-func limitBattleReportSummaryPromptInput(report *model.BattleReportModel, contextReports []*model.BattleReportModel, groups []BattleReportMessageGroup, maxInputTokens int) ([]*model.BattleReportModel, []BattleReportMessageGroup) {
-	if maxInputTokens <= 0 {
-		return contextReports, groups
+func ensureBattleReportSummaryInputWithinLimit(report *model.BattleReportModel, channels []*model.ChannelModel, cfg utils.AIConfig) error {
+	messageGroups, err := loadBattleReportMessageGroups(channels, report.PeriodStart, report.PeriodEnd)
+	if err != nil {
+		return err
 	}
-	if estimateBattleReportInputTokens(buildBattleReportSummaryPromptWithGroups(report, contextReports, groups)) <= maxInputTokens {
-		return contextReports, groups
+	if battleReportMessageGroupLen(messageGroups) == 0 {
+		return fmt.Errorf("所选时间范围内没有可总结的消息")
 	}
-	type indexedMessage struct {
-		message      *model.MessageModel
-		groupIndex   int
-		messageIndex int
+	contextReports, err := loadBattleReportContextReports(report)
+	if err != nil {
+		return err
 	}
-	messages := make([]indexedMessage, 0)
-	for groupIndex, group := range groups {
-		for messageIndex, msg := range group.Messages {
-			if msg == nil {
-				continue
-			}
-			messages = append(messages, indexedMessage{
-				message:      msg,
-				groupIndex:   groupIndex,
-				messageIndex: messageIndex,
-			})
-		}
-	}
-	sort.SliceStable(messages, func(i, j int) bool {
-		left := messages[i]
-		right := messages[j]
-		if !left.message.CreatedAt.Equal(right.message.CreatedAt) {
-			return left.message.CreatedAt.Before(right.message.CreatedAt)
-		}
-		if left.groupIndex != right.groupIndex {
-			return left.groupIndex < right.groupIndex
-		}
-		return left.messageIndex < right.messageIndex
-	})
-	kept := map[*model.MessageModel]struct{}{}
-	for _, item := range messages {
-		kept[item.message] = struct{}{}
-	}
-	currentReports := contextReports
-	currentGroups := buildLimitedBattleReportMessageGroups(groups, kept)
-	for _, item := range messages {
-		if estimateBattleReportInputTokens(buildBattleReportSummaryPromptWithGroups(report, currentReports, currentGroups)) <= maxInputTokens {
-			return currentReports, currentGroups
-		}
-		delete(kept, item.message)
-		currentGroups = buildLimitedBattleReportMessageGroups(groups, kept)
-	}
-	for len(currentReports) > 0 {
-		if estimateBattleReportInputTokens(buildBattleReportSummaryPromptWithGroups(report, currentReports, currentGroups)) <= maxInputTokens {
-			return currentReports, currentGroups
-		}
-		currentReports = currentReports[:len(currentReports)-1]
-	}
-	return currentReports, currentGroups
+	return validateBattleReportSummaryPromptSize(buildBattleReportSummaryPromptWithGroups(report, contextReports, messageGroups), cfg)
 }
 
-func buildLimitedBattleReportMessageGroups(groups []BattleReportMessageGroup, kept map[*model.MessageModel]struct{}) []BattleReportMessageGroup {
-	out := make([]BattleReportMessageGroup, 0, len(groups))
-	for _, group := range groups {
-		next := group
-		next.Messages = make([]*model.MessageModel, 0, len(group.Messages))
-		for _, msg := range group.Messages {
-			if _, ok := kept[msg]; ok {
-				next.Messages = append(next.Messages, msg)
-			}
-		}
-		if len(next.Messages) > 0 {
-			out = append(out, next)
-		}
+func validateBattleReportSummaryPromptSize(prompt string, cfg utils.AIConfig) error {
+	maxInputChars := battleReportSummaryMaxInputChars(cfg)
+	currentChars := countBattleReportInputChars(prompt)
+	if maxInputChars > 0 && currentChars > maxInputChars {
+		return fmt.Errorf("战报总结输入过长（当前 %d 字符，最大 %d 字符），请缩短时间范围或减少来源频道", currentChars, maxInputChars)
 	}
-	return out
+	return nil
 }
 
-func estimateBattleReportInputTokens(input string) int {
+func countBattleReportInputChars(input string) int {
 	return len([]rune(strings.TrimSpace(input)))
 }
 

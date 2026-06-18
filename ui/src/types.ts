@@ -369,7 +369,7 @@ export type AIRunSource = 'platform' | 'user';
 export interface AIModelParams {
   temperature?: number;
   maxTokens?: number;
-  maxInputTokens?: number;
+  maxInputChars?: number;
   topP?: number;
 }
 
