@@ -21988,6 +21988,14 @@ onBeforeUnmount(() => {
   overflow-wrap: break-word;
 }
 
+:global(.keyword-tooltip.keyword-tooltip--embedded-wide) {
+  max-width: none;
+  min-width: 0;
+  width: auto;
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.22);
+}
+
 /* Tooltip scrollbar styling - minimal/invisible design */
 /* Standard properties for Firefox */
 :global(.keyword-tooltip) {
@@ -22139,6 +22147,11 @@ onBeforeUnmount(() => {
   border-color: rgba(255, 255, 255, 0.12);
   color: #f4f4f5;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+:global([data-display-palette='night'] .keyword-tooltip.keyword-tooltip--embedded-wide),
+:global(:root[data-display-palette='night'] .keyword-tooltip.keyword-tooltip--embedded-wide) {
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.56);
 }
 
 :global([data-display-palette='night'] .keyword-tooltip--pinned),

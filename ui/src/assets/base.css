@@ -57,6 +57,16 @@ html[data-display-palette='night'] .keyword-highlight--underline:hover {
   transition: opacity 0.12s ease;
 }
 
+.keyword-tooltip.keyword-tooltip--embedded-wide {
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  padding: 14px 16px;
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.22);
+}
+
+
 :root[data-display-palette='night'] .keyword-tooltip {
   background: rgba(17, 24, 39, 0.9);
   color: rgba(248, 250, 252, 0.95);
