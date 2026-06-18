@@ -214,9 +214,11 @@ func SyncBattleReportDisplayFromReports(sourceChannelID string) error {
 	}
 	return model.GetDB().Transaction(func(tx *gorm.DB) error {
 		seen := map[string]struct{}{}
+		total := len(reports)
 		for index := range reports {
 			report := reports[index]
-			order := float64(index+1) * battleReportDisplayOrderGap
+			displayIndex := total - index
+			order := float64(displayIndex) * battleReportDisplayOrderGap
 			if err := ensureBattleReportDisplayMessage(tx, setting, &report, order); err != nil {
 				return err
 			}
@@ -275,7 +277,8 @@ func SyncBattleReportOrderFromDisplayMessage(displayChannelID string) error {
 	}
 	return model.GetDB().Transaction(func(tx *gorm.DB) error {
 		base := len(rows) * 100
-		for index, row := range rows {
+		for index := range rows {
+			row := rows[len(rows)-1-index]
 			sortOrder := base - index*100
 			if err := tx.Model(&model.BattleReportModel{}).
 				Where("id = ? AND world_id = ? AND is_deleted = ?", row.ReportID, setting.WorldID, false).
