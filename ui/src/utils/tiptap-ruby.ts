@@ -22,6 +22,9 @@ const buildRubyStyleVariableString = (attributes: Record<string, any>) => {
     }
     variables.push(`${name}: ${normalized}`);
   };
+  pushVar('--ruby-base-font-family', attributes.rubyBaseFontFamily);
+  pushVar('--ruby-rt-font-family', attributes.rubyRtFontFamily);
+  pushVar('--ruby-base-font-size', attributes.rubyBaseFontSize);
   pushVar('--ruby-font-family', attributes.rubyFontFamily);
   pushVar('--ruby-font-size', attributes.rubyFontSize);
   pushVar('--ruby-rt-font-size', attributes.rubyRtFontSize);
@@ -73,12 +76,36 @@ export const createRubyExtension = ({
           return value ? { 'data-ruby-font-family': value } : {};
         },
       },
+      rubyBaseFontFamily: {
+        default: null,
+        parseHTML: (element: HTMLElement) => element.getAttribute('data-ruby-base-font-family') || null,
+        renderHTML: (attributes: Record<string, any>) => {
+          const value = String(attributes.rubyBaseFontFamily || '').trim();
+          return value ? { 'data-ruby-base-font-family': value } : {};
+        },
+      },
+      rubyRtFontFamily: {
+        default: null,
+        parseHTML: (element: HTMLElement) => element.getAttribute('data-ruby-rt-font-family') || null,
+        renderHTML: (attributes: Record<string, any>) => {
+          const value = String(attributes.rubyRtFontFamily || '').trim();
+          return value ? { 'data-ruby-rt-font-family': value } : {};
+        },
+      },
       rubyFontSize: {
         default: null,
         parseHTML: (element: HTMLElement) => element.getAttribute('data-ruby-font-size') || null,
         renderHTML: (attributes: Record<string, any>) => {
           const value = String(attributes.rubyFontSize || '').trim();
           return value ? { 'data-ruby-font-size': value } : {};
+        },
+      },
+      rubyBaseFontSize: {
+        default: null,
+        parseHTML: (element: HTMLElement) => element.getAttribute('data-ruby-base-font-size') || null,
+        renderHTML: (attributes: Record<string, any>) => {
+          const value = String(attributes.rubyBaseFontSize || '').trim();
+          return value ? { 'data-ruby-base-font-size': value } : {};
         },
       },
       rubyRtFontSize: {
@@ -129,12 +156,44 @@ export const createRubyExtension = ({
           return value ? { 'data-platform-font-id': value } : {};
         },
       },
+      rubyBaseFontAssetId: {
+        default: null,
+        parseHTML: (element: HTMLElement) => element.getAttribute('data-ruby-base-font-asset-id') || null,
+        renderHTML: (attributes: Record<string, any>) => {
+          const value = String(attributes.rubyBaseFontAssetId || '').trim();
+          return value ? { 'data-ruby-base-font-asset-id': value } : {};
+        },
+      },
+      rubyRtFontAssetId: {
+        default: null,
+        parseHTML: (element: HTMLElement) => element.getAttribute('data-ruby-rt-font-asset-id') || null,
+        renderHTML: (attributes: Record<string, any>) => {
+          const value = String(attributes.rubyRtFontAssetId || '').trim();
+          return value ? { 'data-ruby-rt-font-asset-id': value } : {};
+        },
+      },
       rubyPlatformFontFamily: {
         default: null,
         parseHTML: (element: HTMLElement) => element.getAttribute('data-platform-font-family') || null,
         renderHTML: (attributes: Record<string, any>) => {
           const value = String(attributes.rubyPlatformFontFamily || '').trim();
           return value ? { 'data-platform-font-family': value } : {};
+        },
+      },
+      rubyBasePlatformFontFamily: {
+        default: null,
+        parseHTML: (element: HTMLElement) => element.getAttribute('data-ruby-base-platform-font-family') || null,
+        renderHTML: (attributes: Record<string, any>) => {
+          const value = String(attributes.rubyBasePlatformFontFamily || '').trim();
+          return value ? { 'data-ruby-base-platform-font-family': value } : {};
+        },
+      },
+      rubyRtPlatformFontFamily: {
+        default: null,
+        parseHTML: (element: HTMLElement) => element.getAttribute('data-ruby-rt-platform-font-family') || null,
+        renderHTML: (attributes: Record<string, any>) => {
+          const value = String(attributes.rubyRtPlatformFontFamily || '').trim();
+          return value ? { 'data-ruby-rt-platform-font-family': value } : {};
         },
       },
       rubyTextDecoration: {

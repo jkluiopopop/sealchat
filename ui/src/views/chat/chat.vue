@@ -22332,9 +22332,9 @@ onBeforeUnmount(() => {
 .sticky-note-editor__content .tiptap-ruby {
   ruby-align: center;
   ruby-position: over;
-  font-size: var(--ruby-font-size, inherit);
+  font-size: var(--ruby-base-font-size, var(--ruby-font-size, inherit));
   line-height: inherit;
-  font-family: var(--ruby-font-family, inherit);
+  font-family: var(--ruby-base-font-family, var(--ruby-font-family, inherit));
   color: var(--ruby-color, inherit);
   font-weight: var(--ruby-font-weight, inherit);
   font-style: var(--ruby-font-style, inherit);
@@ -22354,13 +22354,13 @@ onBeforeUnmount(() => {
 .tiptap-editor .tiptap-ruby rt,
 .keyword-rich-content .tiptap-ruby rt,
 .sticky-note-editor__content .tiptap-ruby rt {
-  font-family: var(--ruby-font-family, inherit);
+  font-family: var(--ruby-rt-font-family, var(--ruby-font-family, inherit));
   color: var(--ruby-color, inherit);
   font-weight: var(--ruby-font-weight, inherit);
   font-style: var(--ruby-font-style, inherit);
   text-decoration: var(--ruby-text-decoration, inherit);
   background-color: var(--ruby-background-color, transparent);
-  font-size: var(--ruby-rt-font-size, var(--ruby-font-size, var(--ruby-rt-scale, 0.92em)));
+  font-size: var(--ruby-rt-font-size, var(--ruby-base-font-size, var(--ruby-font-size, var(--ruby-rt-scale, 0.92em))));
   line-height: 1.05;
   letter-spacing: 0;
 }

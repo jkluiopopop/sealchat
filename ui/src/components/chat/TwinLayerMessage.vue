@@ -154,6 +154,39 @@ const applyVisualMarks = (span: HTMLElement, marks: TwinLayerPlaybackChar['marks
         break;
       case 'ruby':
         span.classList.add('tiptap-ruby');
+        if (attrs.rubyText) {
+          span.dataset.rubyText = String(attrs.rubyText);
+        }
+        if (attrs.rubyBaseFontFamily || attrs.rubyFontFamily) {
+          span.style.setProperty('--ruby-base-font-family', String(attrs.rubyBaseFontFamily || attrs.rubyFontFamily));
+        }
+        if (attrs.rubyRtFontFamily || attrs.rubyFontFamily) {
+          span.style.setProperty('--ruby-rt-font-family', String(attrs.rubyRtFontFamily || attrs.rubyFontFamily));
+        }
+        if (attrs.rubyBaseFontSize || attrs.rubyFontSize) {
+          span.style.setProperty('--ruby-base-font-size', String(attrs.rubyBaseFontSize || attrs.rubyFontSize));
+        }
+        if (attrs.rubyRtFontSize || attrs.rubyFontSize) {
+          span.style.setProperty('--ruby-rt-font-size', String(attrs.rubyRtFontSize || attrs.rubyFontSize));
+        }
+        if (attrs.rubyColor) {
+          span.style.setProperty('--ruby-color', String(attrs.rubyColor));
+        }
+        if (attrs.rubyFontWeight) {
+          span.style.setProperty('--ruby-font-weight', String(attrs.rubyFontWeight));
+        }
+        if (attrs.rubyFontStyle) {
+          span.style.setProperty('--ruby-font-style', String(attrs.rubyFontStyle));
+        }
+        if (attrs.rubyTextDecoration) {
+          span.style.setProperty('--ruby-text-decoration', String(attrs.rubyTextDecoration));
+        }
+        if (attrs.rubyBackgroundColor) {
+          span.style.setProperty('--ruby-background-color', String(attrs.rubyBackgroundColor));
+        }
+        if (attrs.rubySpoiler === 'true') {
+          span.dataset.rubySpoiler = 'true';
+        }
         break;
       case 'textStyle':
         applyTextStyleAttrs(span, attrs);

@@ -215,19 +215,44 @@ export const ensurePlatformFontAssetLoaded = async (
 export const preloadPlatformFontsFromDom = async (root?: ParentNode | null): Promise<void> => {
   if (typeof document === 'undefined') return
   const host = root || document
-  const nodes = host.querySelectorAll<HTMLElement>('[data-platform-font-id]')
+  const nodes = host.querySelectorAll<HTMLElement>(
+    '[data-platform-font-id], [data-ruby-base-font-asset-id], [data-ruby-rt-font-asset-id]',
+  )
   const tasks: Promise<unknown>[] = []
   nodes.forEach((node) => {
-    const fontId = node.dataset.platformFontId?.trim()
-    if (!fontId || failedLoads.has(fontId)) return
-    const family = sanitizeFontFamilyName(node.dataset.platformFontFamily || '')
-    tasks.push(
-      ensurePlatformFontLoaded(fontId, family).then((loadedFamily) => {
-        node.style.fontFamily = buildGlobalFontFamilyStack(loadedFamily)
-      }).catch((error) => {
-        console.warn('平台字体预加载失败', fontId, error)
-      }),
-    )
+    const entries = [
+      {
+        fontId: node.dataset.platformFontId?.trim(),
+        family: sanitizeFontFamilyName(node.dataset.platformFontFamily || ''),
+        apply: (loadedFamily: string) => {
+          node.style.fontFamily = buildGlobalFontFamilyStack(loadedFamily)
+        },
+      },
+      {
+        fontId: node.dataset.rubyBaseFontAssetId?.trim(),
+        family: sanitizeFontFamilyName(node.dataset.rubyBasePlatformFontFamily || ''),
+        apply: (loadedFamily: string) => {
+          node.style.setProperty('--ruby-base-font-family', `"${loadedFamily}"`)
+        },
+      },
+      {
+        fontId: node.dataset.rubyRtFontAssetId?.trim(),
+        family: sanitizeFontFamilyName(node.dataset.rubyRtPlatformFontFamily || ''),
+        apply: (loadedFamily: string) => {
+          node.style.setProperty('--ruby-rt-font-family', `"${loadedFamily}"`)
+        },
+      },
+    ]
+    entries.forEach(({ fontId, family, apply }) => {
+      if (!fontId || failedLoads.has(fontId)) return
+      tasks.push(
+        ensurePlatformFontLoaded(fontId, family).then((loadedFamily) => {
+          apply(loadedFamily)
+        }).catch((error) => {
+          console.warn('平台字体预加载失败', fontId, error)
+        }),
+      )
+    })
   })
   if (tasks.length > 0) {
     await Promise.allSettled(tasks)

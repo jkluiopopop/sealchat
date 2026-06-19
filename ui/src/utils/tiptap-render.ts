@@ -295,6 +295,9 @@ function applyRubyMark(text: string, mark: { type: string; attrs?: Record<string
       variables.push(`${cssVar}: ${escaped}`);
     }
   };
+  pushRubyAttr('rubyBaseFontFamily', '--ruby-base-font-family');
+  pushRubyAttr('rubyRtFontFamily', '--ruby-rt-font-family');
+  pushRubyAttr('rubyBaseFontSize', '--ruby-base-font-size');
   pushRubyAttr('rubyFontFamily', '--ruby-font-family');
   pushRubyAttr('rubyFontSize', '--ruby-font-size');
   pushRubyAttr('rubyRtFontSize', '--ruby-rt-font-size');
@@ -306,6 +309,10 @@ function applyRubyMark(text: string, mark: { type: string; attrs?: Record<string
   pushRubyAttr('rubyBackgroundColor', '--ruby-background-color');
   pushRubyAttr('rubyFontAssetId', undefined, 'data-platform-font-id');
   pushRubyAttr('rubyPlatformFontFamily', undefined, 'data-platform-font-family');
+  pushRubyAttr('rubyBaseFontAssetId', undefined, 'data-ruby-base-font-asset-id');
+  pushRubyAttr('rubyRtFontAssetId', undefined, 'data-ruby-rt-font-asset-id');
+  pushRubyAttr('rubyBasePlatformFontFamily', undefined, 'data-ruby-base-platform-font-family');
+  pushRubyAttr('rubyRtPlatformFontFamily', undefined, 'data-ruby-rt-platform-font-family');
   pushRubyAttr('rubySpoiler');
   const styleAttr = variables.length ? ` style="${variables.join('; ')}"` : '';
   return `<ruby class="tiptap-ruby" ${dataAttrs.join(' ')}${styleAttr}>${text}<rt>${rubyText}</rt></ruby>`;

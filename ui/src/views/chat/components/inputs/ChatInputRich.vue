@@ -650,6 +650,12 @@ const rubyModalShow = ref(false);
 const rubyBaseText = ref('');
 const rubyTextInput = ref('');
 const rubySelectionMode = ref<'insert' | 'apply' | 'edit'>('insert');
+const rubyFontPanelExpanded = ref(false);
+const rubySizePanelExpanded = ref(false);
+const rubyBaseFontId = ref<string | null>(null);
+const rubyRtFontId = ref<string | null>(null);
+const rubyBaseFontSizeInput = ref('');
+const rubyRtFontSizeInput = ref('');
 const performanceEffect = ref<PerformanceEffect>('wave');
 const performanceEnterMode = ref<PerformanceEnterMode>('normal');
 const performanceEnterSpeed = ref(5);
@@ -685,6 +691,12 @@ const resetRubyModalState = () => {
   rubyBaseText.value = '';
   rubyTextInput.value = '';
   rubySelectionMode.value = 'insert';
+  rubyFontPanelExpanded.value = false;
+  rubySizePanelExpanded.value = false;
+  rubyBaseFontId.value = null;
+  rubyRtFontId.value = null;
+  rubyBaseFontSizeInput.value = '';
+  rubyRtFontSizeInput.value = '';
 };
 
 const clampPerformanceToneIntensity = (value: number) => Math.max(-4, Math.min(4, Math.round(value)));
@@ -917,6 +929,28 @@ const {
 } = createPlatformFontSelectPreviewController({
   fonts: platformFonts,
   selectedId: selectedPlatformFontId,
+  menuClass: 'tiptap-platform-font-select__menu',
+});
+const {
+  platformFontOptions: rubyBaseFontOptions,
+  renderPlatformFontLabel: renderRubyBaseFontLabel,
+  renderPlatformFontOption: renderRubyBaseFontOption,
+  handleDropdownVisible: handleRubyBaseFontDropdownVisible,
+  primeSelectedPreview: primeRubyBaseFontPreview,
+} = createPlatformFontSelectPreviewController({
+  fonts: platformFonts,
+  selectedId: rubyBaseFontId,
+  menuClass: 'tiptap-platform-font-select__menu',
+});
+const {
+  platformFontOptions: rubyRtFontOptions,
+  renderPlatformFontLabel: renderRubyRtFontLabel,
+  renderPlatformFontOption: renderRubyRtFontOption,
+  handleDropdownVisible: handleRubyRtFontDropdownVisible,
+  primeSelectedPreview: primeRubyRtFontPreview,
+} = createPlatformFontSelectPreviewController({
+  fonts: platformFonts,
+  selectedId: rubyRtFontId,
   menuClass: 'tiptap-platform-font-select__menu',
 });
 
@@ -1222,6 +1256,14 @@ const normalizeFontSizeValue = (value: string): string | null => {
     return null;
   }
   return `${size}px`;
+};
+
+const normalizeOptionalFontSizeValue = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return normalizeFontSizeValue(trimmed);
 };
 
 const EMPTY_DOC = {
@@ -1834,22 +1876,85 @@ const resolveRubyRtScale = (fontSize: string | null) => {
   return DEFAULT_RUBY_RT_SCALE;
 };
 
+const resolvePlatformFontStyleAttrs = (fontId: string | null) => {
+  if (!fontId) {
+    return {
+      fontAssetId: null,
+      platformFontFamily: null,
+      fontFamily: null,
+    };
+  }
+  const target = platformFonts.value.find((item) => item.id === fontId) || null;
+  if (!target) {
+    return {
+      fontAssetId: null,
+      platformFontFamily: null,
+      fontFamily: null,
+    };
+  }
+  return {
+    fontAssetId: target.id,
+    platformFontFamily: target.family,
+    fontFamily: `"${target.family}"`,
+  };
+};
+
+const getActiveRubyAttrs = () => {
+  const ed = editor.value;
+  return (ed?.getAttributes('ruby') || {}) as Record<string, any>;
+};
+
+const syncRubyModalStyleStateFromAttrs = (attrs?: Record<string, any>) => {
+  const rubyAttrs = attrs || getActiveRubyAttrs();
+  rubyBaseFontId.value = typeof rubyAttrs.rubyBaseFontAssetId === 'string'
+    ? rubyAttrs.rubyBaseFontAssetId
+    : typeof rubyAttrs.rubyFontAssetId === 'string'
+      ? rubyAttrs.rubyFontAssetId
+      : null;
+  rubyRtFontId.value = typeof rubyAttrs.rubyRtFontAssetId === 'string'
+    ? rubyAttrs.rubyRtFontAssetId
+    : typeof rubyAttrs.rubyFontAssetId === 'string'
+      ? rubyAttrs.rubyFontAssetId
+      : null;
+  rubyBaseFontSizeInput.value = String(
+    rubyAttrs.rubyBaseFontSize || rubyAttrs.rubyFontSize || '',
+  ).replace(/px$/i, '');
+  rubyRtFontSizeInput.value = String(
+    rubyAttrs.rubyRtFontSize || rubyAttrs.rubyFontSize || '',
+  ).replace(/px$/i, '');
+  rubyFontPanelExpanded.value = Boolean(rubyBaseFontId.value || rubyRtFontId.value);
+  rubySizePanelExpanded.value = Boolean(rubyBaseFontSizeInput.value || rubyRtFontSizeInput.value);
+  primeRubyBaseFontPreview(rubyBaseFontId.value);
+  primeRubyRtFontPreview(rubyRtFontId.value);
+};
+
 const buildRubyMarkAttrs = (rubyText: string) => {
   const ed = editor.value;
   const textStyleAttrs = (ed?.getAttributes('textStyle') || {}) as Record<string, any>;
   const highlightAttrs = (ed?.getAttributes('highlight') || {}) as Record<string, any>;
   const rubyFontSize = typeof textStyleAttrs.fontSize === 'string' ? textStyleAttrs.fontSize : null;
+  const rubyBaseFontSize = normalizeOptionalFontSizeValue(rubyBaseFontSizeInput.value) || rubyFontSize;
+  const rubyRtFontSize = normalizeOptionalFontSizeValue(rubyRtFontSizeInput.value) || rubyFontSize;
+  const rubyBaseFontStyle = resolvePlatformFontStyleAttrs(rubyBaseFontId.value);
+  const rubyRtFontStyle = resolvePlatformFontStyleAttrs(rubyRtFontId.value);
   return {
     rubyText: rubyText.trim(),
     rubyFontAssetId: typeof textStyleAttrs.fontAssetId === 'string' ? textStyleAttrs.fontAssetId : null,
     rubyPlatformFontFamily: typeof textStyleAttrs.platformFontFamily === 'string' ? textStyleAttrs.platformFontFamily : null,
     rubyFontFamily: typeof textStyleAttrs.fontFamily === 'string' ? textStyleAttrs.fontFamily : null,
     rubyFontSize,
-    rubyRtFontSize: rubyFontSize,
+    rubyBaseFontAssetId: rubyBaseFontStyle.fontAssetId,
+    rubyBasePlatformFontFamily: rubyBaseFontStyle.platformFontFamily,
+    rubyBaseFontFamily: rubyBaseFontStyle.fontFamily,
+    rubyBaseFontSize,
+    rubyRtFontAssetId: rubyRtFontStyle.fontAssetId,
+    rubyRtPlatformFontFamily: rubyRtFontStyle.platformFontFamily,
+    rubyRtFontFamily: rubyRtFontStyle.fontFamily,
+    rubyRtFontSize,
     rubyColor: typeof textStyleAttrs.color === 'string' ? textStyleAttrs.color : null,
     rubyFontWeight: ed?.isActive('bold') ? '700' : null,
     rubyFontStyle: ed?.isActive('italic') ? 'italic' : null,
-    rubyRtScale: resolveRubyRtScale(rubyFontSize),
+    rubyRtScale: resolveRubyRtScale(rubyRtFontSize),
     rubyTextDecoration: ed?.isActive('strike') ? 'line-through' : null,
     rubyBackgroundColor: typeof highlightAttrs.color === 'string' ? highlightAttrs.color : null,
     rubySpoiler: ed?.isActive('spoiler') ? 'true' : null,
@@ -2210,6 +2315,46 @@ const getUniformRubyTextFromSelection = () => {
   return Array.from(rubyTexts)[0] || '';
 };
 
+const getUniformRubyAttrsFromSelection = () => {
+  const ed = editor.value;
+  if (!ed) {
+    return null;
+  }
+  const { from, to } = ed.state.selection;
+  if (from === to) {
+    return null;
+  }
+
+  let firstAttrs: Record<string, any> | null = null;
+  let hasTextNode = false;
+  let isUniform = true;
+
+  ed.state.doc.nodesBetween(from, to, (node) => {
+    if (!node.isText || !isUniform) {
+      return;
+    }
+    hasTextNode = true;
+    const rubyMark = node.marks.find((mark) => mark.type.name === 'ruby');
+    if (!rubyMark) {
+      isUniform = false;
+      return;
+    }
+    const attrs = rubyMark.attrs || {};
+    if (!firstAttrs) {
+      firstAttrs = attrs;
+      return;
+    }
+    if (JSON.stringify(firstAttrs) !== JSON.stringify(attrs)) {
+      isUniform = false;
+    }
+  });
+
+  if (!hasTextNode || !isUniform || !firstAttrs) {
+    return null;
+  }
+  return firstAttrs;
+};
+
 const openRubyModal = () => {
   const ed = editor.value;
   if (!ed) {
@@ -2220,19 +2365,23 @@ const openRubyModal = () => {
   markOverlayInteraction();
   const selectedText = getSelectedPlainText();
   const selectedRubyText = getUniformRubyTextFromSelection();
+  const selectedRubyAttrs = getUniformRubyAttrsFromSelection();
 
   if (!selectedText) {
     rubySelectionMode.value = 'insert';
     rubyBaseText.value = '';
     rubyTextInput.value = '';
+    syncRubyModalStyleStateFromAttrs();
   } else if (selectedRubyText) {
     rubySelectionMode.value = 'edit';
     rubyBaseText.value = selectedText;
     rubyTextInput.value = selectedRubyText;
+    syncRubyModalStyleStateFromAttrs(selectedRubyAttrs || undefined);
   } else {
     rubySelectionMode.value = 'apply';
     rubyBaseText.value = selectedText;
     rubyTextInput.value = '';
+    syncRubyModalStyleStateFromAttrs();
   }
 
   rubyModalShow.value = true;
@@ -2243,6 +2392,14 @@ const closeRubyModal = () => {
   resetRubyModalState();
 };
 
+const handleRubyBaseFontShowUpdate = (show: boolean) => {
+  handleRubyBaseFontDropdownVisible(show);
+};
+
+const handleRubyRtFontShowUpdate = (show: boolean) => {
+  handleRubyRtFontDropdownVisible(show);
+};
+
 const confirmRuby = () => {
   const ed = editor.value;
   if (!ed) {
@@ -2251,6 +2408,17 @@ const confirmRuby = () => {
   }
 
   const normalizedRubyText = rubyTextInput.value.trim();
+  const normalizedBaseFontSize = normalizeOptionalFontSizeValue(rubyBaseFontSizeInput.value);
+  const normalizedRtFontSize = normalizeOptionalFontSizeValue(rubyRtFontSizeInput.value);
+
+  if (rubyBaseFontSizeInput.value.trim() && !normalizedBaseFontSize) {
+    message.warning('正文字号请输入 1 到 200 的数字，可省略 px');
+    return;
+  }
+  if (rubyRtFontSizeInput.value.trim() && !normalizedRtFontSize) {
+    message.warning('注音字号请输入 1 到 200 的数字，可省略 px');
+    return;
+  }
 
   if (rubySelectionMode.value === 'insert') {
     const baseText = rubyBaseText.value.trim();
@@ -3081,6 +3249,78 @@ defineExpose({
             @keydown.enter.prevent="confirmRuby"
           />
         </n-form-item>
+        <div class="ruby-modal__advanced">
+          <button
+            type="button"
+            class="ruby-modal__toggle"
+            @click="rubyFontPanelExpanded = !rubyFontPanelExpanded"
+          >
+            <span>不同字体</span>
+            <span>{{ rubyFontPanelExpanded ? '▾' : '▸' }}</span>
+          </button>
+          <div v-if="rubyFontPanelExpanded" class="ruby-modal__panel">
+            <n-form-item label="上方注音字体">
+              <n-select
+                clearable
+                filterable
+                :loading="platformFontLoading"
+                :value="rubyRtFontId"
+                :options="rubyRtFontOptions"
+                placeholder="默认跟随正文"
+                :render-label="renderRubyRtFontLabel"
+                :render-option="renderRubyRtFontOption"
+                :menu-props="platformFontSelectMenuProps"
+                @update:value="rubyRtFontId = $event"
+                @update:show="handleRubyRtFontShowUpdate"
+              />
+            </n-form-item>
+            <n-form-item label="下方正文字体">
+              <n-select
+                clearable
+                filterable
+                :loading="platformFontLoading"
+                :value="rubyBaseFontId"
+                :options="rubyBaseFontOptions"
+                placeholder="默认跟随当前文字"
+                :render-label="renderRubyBaseFontLabel"
+                :render-option="renderRubyBaseFontOption"
+                :menu-props="platformFontSelectMenuProps"
+                @update:value="rubyBaseFontId = $event"
+                @update:show="handleRubyBaseFontShowUpdate"
+              />
+            </n-form-item>
+          </div>
+        </div>
+        <div class="ruby-modal__advanced">
+          <button
+            type="button"
+            class="ruby-modal__toggle"
+            @click="rubySizePanelExpanded = !rubySizePanelExpanded"
+          >
+            <span>不同字号</span>
+            <span>{{ rubySizePanelExpanded ? '▾' : '▸' }}</span>
+          </button>
+          <div v-if="rubySizePanelExpanded" class="ruby-modal__panel ruby-modal__panel--size">
+            <n-form-item label="上方注音字号">
+              <n-input
+                v-model:value="rubyRtFontSizeInput"
+                placeholder="默认跟随当前文字"
+                @keydown.enter.prevent="confirmRuby"
+              >
+                <template #suffix>px</template>
+              </n-input>
+            </n-form-item>
+            <n-form-item label="下方正文字号">
+              <n-input
+                v-model:value="rubyBaseFontSizeInput"
+                placeholder="默认跟随当前文字"
+                @keydown.enter.prevent="confirmRuby"
+              >
+                <template #suffix>px</template>
+              </n-input>
+            </n-form-item>
+          </div>
+        </div>
         <div class="ruby-modal__note">
           <div v-if="rubySelectionMode === 'insert'">插入模式：输入正文与注音后插入到当前光标位置。</div>
           <div v-else-if="rubySelectionMode === 'edit'">编辑模式：修改当前选区注音，或清除注音保留正文。</div>
@@ -4219,7 +4459,8 @@ defineExpose({
     padding-top: 0.38em;
     ruby-align: center;
     ruby-position: over;
-    font-family: var(--ruby-font-family, inherit);
+    font-family: var(--ruby-base-font-family, var(--ruby-font-family, inherit));
+    font-size: var(--ruby-base-font-size, var(--ruby-font-size, inherit));
     color: var(--ruby-color, inherit);
     font-weight: var(--ruby-font-weight, inherit);
     font-style: var(--ruby-font-style, inherit);
@@ -4237,8 +4478,8 @@ defineExpose({
     left: 50%;
     bottom: calc(100% - 0.16em);
     transform: translateX(-50%);
-    font-family: var(--ruby-font-family, inherit);
-    font-size: calc(var(--ruby-font-size, 1em) * 0.58);
+    font-family: var(--ruby-rt-font-family, var(--ruby-font-family, inherit));
+    font-size: var(--ruby-rt-font-size, calc(var(--ruby-base-font-size, var(--ruby-font-size, 1em)) * 0.58));
     font-weight: var(--ruby-font-weight, inherit);
     font-style: var(--ruby-font-style, inherit);
     text-decoration: var(--ruby-text-decoration, inherit);
@@ -4329,6 +4570,30 @@ defineExpose({
   line-height: 1.45;
 }
 
+.ruby-modal__advanced {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.ruby-modal__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--sc-border-secondary, rgba(148, 163, 184, 0.28));
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--sc-bg-elevated, #f8fafc) 90%, var(--primary-color, #3b82f6) 10%);
+  color: inherit;
+  cursor: pointer;
+}
+
+.ruby-modal__panel {
+  display: grid;
+  gap: 0.25rem;
+}
+
 /* ===== 夜间模式适配 ===== */
 
 /* 编辑器容器夜间模式 */
@@ -4360,6 +4625,11 @@ defineExpose({
 :root[data-display-palette='night'] .ruby-modal__note {
   color: var(--sc-text-secondary, #cbd5e1);
   background: color-mix(in srgb, var(--sc-bg-elevated, #27272a) 86%, var(--primary-color, #60a5fa) 14%);
+}
+
+:root[data-display-palette='night'] .ruby-modal__toggle {
+  border-color: var(--sc-border-strong, rgba(82, 82, 91, 0.9));
+  background: color-mix(in srgb, var(--sc-bg-elevated, #27272a) 88%, var(--primary-color, #60a5fa) 12%);
 }
 
 /* 工具栏夜间模式 */
