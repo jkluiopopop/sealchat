@@ -24,7 +24,7 @@ const emit = defineEmits<{
 
 const channelImages = useChannelImagesStore()
 const chat = useChatStore()
-const { panelVisible, items, loading, loadingMore, hasMore, total, thumbnailMode, icModeFilter } = storeToRefs(channelImages)
+const { panelVisible, items, loading, loadingMore, hasMore, total, thumbnailMode, icModeFilter, sortOrder } = storeToRefs(channelImages)
 
 const { width: viewportWidth } = useWindowSize()
 const isMobileLayout = computed(() => viewportWidth.value > 0 && viewportWidth.value < 768)
@@ -52,6 +52,8 @@ const icModeFilterLabel = computed(() => {
       return '全部'
   }
 })
+
+const sortOrderLabel = computed(() => sortOrder.value === 'desc' ? '从新到旧' : '从旧到新')
 
 // Infinite scroll
 useInfiniteScroll(
@@ -254,6 +256,15 @@ const getThumbUrl = (item: { thumbUrl?: string; attachmentId: string }) => {
               点击切换全部 / 场内 / 场外
             </n-tooltip>
 
+            <n-button
+              class="images-header__sort"
+              quaternary
+              size="small"
+              @click="channelImages.toggleSortOrder()"
+            >
+              {{ sortOrderLabel }}
+            </n-button>
+
             <n-tooltip trigger="hover">
               <template #trigger>
                 <n-button quaternary size="small" @click="handleRefresh" :loading="loading">
@@ -438,6 +449,11 @@ const getThumbUrl = (item: { thumbUrl?: string; attachmentId: string }) => {
 }
 
 .images-header__filter {
+  margin-right: 0.25rem;
+}
+
+.images-header__sort {
+  min-width: 4.75rem;
   margin-right: 0.25rem;
 }
 
