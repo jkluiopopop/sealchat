@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"sealchat/model"
+	aiService "sealchat/service/ai"
+	"sealchat/utils"
 )
 
 const (
@@ -35,6 +37,22 @@ func DefaultDatabaseCleanupTools() []DatabaseCleanupTool {
 			Run: func(now time.Time) (int64, error) {
 				cutoff := now.Add(-time.Duration(WebhookEventLogRetentionDays) * 24 * time.Hour)
 				return model.WebhookEventLogCleanupBefore(cutoff)
+			},
+		},
+		{
+			Name: "ai_usage_logs_retention",
+			Run: func(now time.Time) (int64, error) {
+				retentionDays := 30
+				if cfg := utils.GetConfig(); cfg != nil {
+					retentionDays = utils.NormalizeAIConfig(cfg.AI).LogRetentionDays
+				}
+				return aiService.AdminCleanupUsageLogs(retentionDays, now)
+			},
+		},
+		{
+			Name: "ai_quota_reservation_expired_cleanup",
+			Run: func(now time.Time) (int64, error) {
+				return model.AIQuotaReservationCleanupExpired(now)
 			},
 		},
 		{

@@ -95,7 +95,7 @@
     synchronous: NORMAL
     # 是否在 DSN 追加 _txlock=immediate，写事务提前拿写锁
     txLockImmediate: true
-    # 读连接数量，通常设为 CPU 核数；写连接固定串行
+    # 读连接数量。SQLite 是单文件数据库，默认保守为 2，避免高并发读连接放大锁竞争
     readConnections: 2
     # 启动时执行 PRAGMA optimize，用于清理和收敛统计信息
     optimizeOnInit: true

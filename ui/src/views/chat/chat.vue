@@ -15,6 +15,7 @@ import GalleryButton from '@/components/gallery/GalleryButton.vue'
 import GalleryPanel from '@/components/gallery/GalleryPanel.vue'
 import ChatIcOocToggle from './components/ChatIcOocToggle.vue'
 import ChatActionRibbon from './components/ChatActionRibbon.vue'
+import ChatAiPolishDock from './components/ChatAiPolishDock.vue'
 import ChannelFavoriteBar from './components/ChannelFavoriteBar.vue'
 import ChannelFavoriteManager from './components/ChannelFavoriteManager.vue'
 import ChannelRemarkManager from './components/ChannelRemarkManager.vue'
@@ -24,6 +25,7 @@ import ChatSearchPanel from './components/ChatSearchPanel.vue'
 import ArchiveDrawer from './components/archive/ArchiveDrawer.vue'
 import ExportDialog from './components/export/ExportDialog.vue'
 import ExportManagerModal from './components/export/ExportManagerModal.vue'
+import BattleReportDrawer from './components/BattleReportDrawer.vue'
 import ChatImportDialog from './components/ChatImportDialog.vue'
 import ChatImportProgress from './components/ChatImportProgress.vue'
 import ChannelImageViewerDrawer from './components/ChannelImageViewerDrawer.vue'
@@ -72,6 +74,7 @@ import { DEFAULT_GALLERY_PAGE_SIZE, useGalleryStore } from '@/stores/gallery';
 import { Settings, Close as CloseIcon, EyeOutline, EyeOffOutline } from '@vicons/ionicons5';
 import { dialogAskConfirm } from '@/utils/dialog';
 import { useI18n } from 'vue-i18n';
+import { isUserAISettingsRequiredMessage, useAIStore } from '@/stores/ai';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
 import { resolveAttachmentUrl, fetchAttachmentMetaById, fetchAttachmentFileById, normalizeAttachmentId, type AttachmentMeta } from '@/composables/useAttachmentResolver';
 import { ensureDefaultDiceExpr, matchDiceExpressions, parseMultiDiceExpression, type DiceMatch } from '@/utils/dice';
@@ -93,6 +96,18 @@ import { useChannelSearchStore } from '@/stores/channelSearch';
 import { useChannelImagesStore } from '@/stores/channelImages';
 import { useChannelImageLayoutStore } from '@/stores/channelImageLayout';
 import { useOnboardingStore } from '@/stores/onboarding';
+import {
+  clearAIPolishSlot,
+  createAIPolishDockState,
+  finishAIPolishTaskError,
+  finishAIPolishTaskSuccess,
+  findNextIdleAIPolishSlot,
+  readCurrentInputIntoSlot,
+  setActiveAIPolishSlot,
+  setAIPolishSlotViewMode,
+  prepareAIPolishTask,
+  toggleAIPolishDockMinimized,
+} from '@/services/ai/ai-polish-dock'
 import WorldKeywordManager from '@/views/world/WorldKeywordManager.vue'
 import OnboardingRoot from '@/components/onboarding/OnboardingRoot.vue'
 import AvatarSetupPrompt from '@/components/AvatarSetupPrompt.vue'
@@ -158,6 +173,7 @@ const characterRemarkStore = useCharacterRemarkStore();
 const worldGlossary = useWorldGlossaryStore();
 const channelSearch = useChannelSearchStore();
 const channelImages = useChannelImagesStore();
+const aiStore = useAIStore();
 const channelImageLayout = useChannelImageLayoutStore();
 const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
@@ -1325,6 +1341,7 @@ const showActionRibbon = ref(false);
 const archiveDrawerVisible = ref(false);
 const exportManagerVisible = ref(false);
 const exportDialogVisible = ref(false);
+const battleReportDrawerVisible = ref(false);
 const channelFavoritesVisible = ref(false);
 const importDialogVisible = ref(false);
 const importProgressVisible = ref(false);
@@ -1899,6 +1916,8 @@ const galleryPanelVisible = computed(() => gallery.isPanelVisible);
 const channelImagesPanelVisible = computed(() => channelImages.panelVisible);
 
 const message = useMessage()
+const aiPolishDockVisible = ref(false)
+const aiPolishDockState = reactive(createAIPolishDockState())
 const dialog = useDialog()
 const { t } = useI18n();
 
@@ -1942,6 +1961,7 @@ watch(
     worldGlossary.ensureKeywords(worldId)
     worldGlossary.ensureEffectiveKeywords(worldId)
     chat.worldDetail(worldId)
+    void aiStore.loadCapabilities(String(worldId))
     hideSelectionBar()
   },
   { immediate: true },
@@ -7961,6 +7981,7 @@ const finalizeDrag = async () => {
       (moving as any).displayOrder = Number(resp.display_order);
       sortRowsByDisplayOrder();
     }
+    chatEvent.emit('battle-report-display-message-reordered' as any, { channelId });
   } catch (error) {
     restoreMessageOrderFromSnapshot(activeId, originalRows);
     message.error('消息排序失败，请稍后重试');
@@ -8186,6 +8207,14 @@ const applyReorderPayload = (payload: any) => {
   }
   sortRowsByDisplayOrder();
 };
+
+function handleBattleReportDisplayRefresh(payload: any) {
+  const channelId = String(payload?.channelId || '').trim();
+  if (!channelId || channelId !== chat.curChannel?.id) {
+    return;
+  }
+  scheduleLatestMessagesRefetch();
+}
 
 const recordIdentitySpokenFromMessage = (message?: Message) => {
   if (!message) {
@@ -9366,6 +9395,8 @@ const typingToggleClass = computed(() => ({
 }));
 
 const textToSend = ref('');
+const showAIPolish = computed(() => aiStore.isFeatureEnabled('polish'))
+const showBattleSummary = computed(() => aiStore.isFeatureEnabled('battle_summary'))
 const reeditRevokedSource = ref<{ channelId: string; messageId: string } | null>(null);
 
 // 术语快捷输入状态
@@ -9664,6 +9695,36 @@ const isContentMeaningful = (mode: 'plain' | 'rich', content: string) => {
   }
   return !isRichContentEmpty(content);
 };
+
+const resolveAIPolishInput = () => {
+  if (!isContentMeaningful(inputMode.value, textToSend.value)) {
+    return '';
+  }
+  if (inputMode.value === 'plain') {
+    return activeIdentityVariantShortcutContext.value.draftContent;
+  }
+  const raw = String(textToSend.value || '');
+  if (!raw) {
+    return '';
+  }
+  if (isTipTapJson(raw)) {
+    return tiptapJsonToPlainText(raw);
+  }
+  return raw.trim();
+};
+
+const hasAIPolishInput = computed(() => resolveAIPolishInput().trim().length > 0);
+const canRunAIPolish = computed(() => hasAIPolishInput.value);
+const aiPolishActiveSlot = computed(() => aiPolishDockState.slots[aiPolishDockState.activeSlotIndex])
+const aiPolishAnyLoading = computed(() => aiPolishDockState.slots.some((slot) => slot.status === 'loading'))
+const aiPolishFaviconHref = computed(() => {
+  const faviconAttachmentId = utils.config?.faviconAttachmentId?.trim() || ''
+  const normalized = faviconAttachmentId.startsWith('id:') ? faviconAttachmentId.slice(3) : faviconAttachmentId
+  if (normalized) {
+    return `${urlBase}/api/v1/attachment/${encodeURIComponent(normalized)}?v=${encodeURIComponent(normalized)}`
+  }
+  return `${urlBase}/favicon.ico?v=default`
+})
 
 const hasMeaningfulDraft = computed(() => (
   isEditing.value || isContentMeaningful(inputMode.value, textToSend.value)
@@ -12911,6 +12972,7 @@ chatEvent.on('message-reordered', (e?: Event) => {
   if (clientOpId && localReorderOps.has(clientOpId)) {
     localReorderOps.delete(clientOpId);
   }
+  chatEvent.emit('battle-report-display-message-reordered' as any, { channelId: e.channel?.id });
 });
 
 chatEvent.off('message-archived', '*');
@@ -13210,6 +13272,8 @@ chatEvent.on('channel-presence-updated', (e?: Event) => {
   chatEvent.off('channel-context-cleared', '*');
   chatEvent.on('channel-context-cleared', handleChannelContextCleared as any);
   chatEvent.on('channel-switch-to', handleChannelSwitchEvent as any)
+  chatEvent.on('battle-report-display-refresh' as any, handleBattleReportDisplayRefresh as any);
+  chatEvent.on('battle-report-open-editor' as any, handleBattleReportOpenEditorRequest as any);
 
   await fetchLatestMessages();
   await fetchPinnedMessages();
@@ -13498,17 +13562,11 @@ const loadOlderMessages = async () => {
       normalized = normalizeMessageList(resp.data);
       nextCursor = resp?.next ?? '';
       if (!normalized.length && !nextCursor) {
-        // Cursor已耗尽但仍有可能存在历史数据，改用时间窗口重试
-        const fallback = await loadOlderMessagesByWindow();
-        normalized = fallback.messages;
-        nextCursor = fallback.cursor;
-        reachedStart = fallback.reachedStart;
+        reachedStart = true;
       }
     } else {
-      const fallback = await loadOlderMessagesByWindow();
-      normalized = fallback.messages;
-      nextCursor = fallback.cursor;
-      reachedStart = fallback.reachedStart;
+      reachedStart = true;
+      nextCursor = '';
     }
 
     if (nextCursor !== undefined) {
@@ -14245,6 +14303,14 @@ const handleMultiSelectArchive = async () => {
     message.warning('请先选择消息');
     return;
   }
+  const confirmed = await dialogAskConfirm(
+    dialog,
+    '批量归档',
+    `确定归档选中的 ${ids.length} 条消息吗？归档后可在归档管理中查看或恢复。`,
+  );
+  if (!confirmed) {
+    return;
+  }
   try {
     await chat.archiveMessages(ids);
     message.success(`已归档 ${ids.length} 条消息`);
@@ -14385,6 +14451,14 @@ const handleMultiSelectMoveToBottom = async () => {
   const messageIds = messages.map((msg) => msg.id).filter((id): id is string => Boolean(id));
   if (!messageIds.length) {
     message.warning('请先选择消息');
+    return;
+  }
+  const confirmed = await dialogAskConfirm(
+    dialog,
+    '批量置底',
+    `确定将选中的 ${messageIds.length} 条消息置底吗？原有相对顺序会保持不变。`,
+  );
+  if (!confirmed) {
     return;
   }
   try {
@@ -14644,6 +14718,152 @@ const handleGalleryDrop = async (event: DragEvent) => {
   }
 };
 
+const openBattleSummary = () => {
+  if (!chat.curChannel?.id) {
+    message.error('未选择频道')
+    return
+  }
+  battleReportDrawerVisible.value = true
+}
+
+const handleBattleReportOpenEditorRequest = async (payload: any) => {
+  if (payload?.deferToDrawer) return
+  const reportId = String(payload?.reportId || '').trim()
+  if (!reportId) return
+  battleReportDrawerVisible.value = true
+  await nextTick()
+  chatEvent.emit('battle-report-open-editor' as any, {
+    ...payload,
+    deferToDrawer: true,
+  })
+}
+
+const runAIPolish = async () => {
+  const input = resolveAIPolishInput()
+  if (!input) {
+    message.error('请输入需要润色的内容')
+    return
+  }
+  aiPolishDockVisible.value = true
+  const activeSlot = aiPolishDockState.slots[aiPolishDockState.activeSlotIndex]
+  if (activeSlot && activeSlot.status !== 'idle' && activeSlot.sourceText.trim()) {
+    const nextIdleIndex = findNextIdleAIPolishSlot(aiPolishDockState)
+    if (nextIdleIndex < 0) {
+      message.warning('5 个润色槽都已占用，请先清空一个槽位或切换后重用')
+      return
+    }
+  }
+  const { slotIndex, requestId } = prepareAIPolishTask(aiPolishDockState, input)
+  try {
+    const resp = await aiStore.runTask('polish', {
+      worldId: chat.currentWorldId ? String(chat.currentWorldId) : '',
+      channelId: chat.curChannel?.id || '',
+      input,
+      source: aiStore.currentSource,
+    })
+    finishAIPolishTaskSuccess(aiPolishDockState, slotIndex, requestId, String(resp.data?.result || ''))
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.message || error?.message || '润色失败'
+    finishAIPolishTaskError(aiPolishDockState, slotIndex, requestId, errMsg)
+    if (isUserAISettingsRequiredMessage(errMsg)) {
+      dialog.warning({
+        title: '需要配置个人 API',
+        content: '当前功能仅允许用户自定义调用。请先前往个人设置中的 AI 设置，配置个人 API 后再使用。',
+        positiveText: '前往配置',
+        negativeText: '取消',
+        onPositiveClick: () => {
+          chatEvent.emit('open-user-profile', { openAISettings: true } as any)
+        },
+      })
+      return
+    }
+    message.error(errMsg)
+  }
+}
+
+const applyAIPolishResult = () => {
+  const resultText = aiPolishActiveSlot.value?.resultText || ''
+  if (inputMode.value === 'rich') {
+    textToSend.value = JSON.stringify(buildRichContentFromPlain(resultText))
+  } else {
+    textToSend.value = resultText
+  }
+  textInputRef.value?.focus?.()
+}
+
+const retryCurrentAIPolishTask = async () => {
+  const sourceText = aiPolishActiveSlot.value?.sourceText?.trim() || ''
+  if (!sourceText) {
+    message.error('当前槽位没有可重试的原文')
+    return
+  }
+  const slotIndex = aiPolishDockState.activeSlotIndex
+  const { requestId } = prepareAIPolishTask(aiPolishDockState, sourceText, slotIndex)
+  try {
+    const resp = await aiStore.runTask('polish', {
+      worldId: chat.currentWorldId ? String(chat.currentWorldId) : '',
+      channelId: chat.curChannel?.id || '',
+      input: sourceText,
+      source: aiStore.currentSource,
+    })
+    finishAIPolishTaskSuccess(aiPolishDockState, slotIndex, requestId, String(resp.data?.result || ''))
+  } catch (error: any) {
+    const errMsg = error?.response?.data?.message || error?.message || '润色失败'
+    finishAIPolishTaskError(aiPolishDockState, slotIndex, requestId, errMsg)
+    if (isUserAISettingsRequiredMessage(errMsg)) {
+      dialog.warning({
+        title: '需要配置个人 API',
+        content: '当前功能仅允许用户自定义调用。请先前往个人设置中的 AI 设置，配置个人 API 后再使用。',
+        positiveText: '前往配置',
+        negativeText: '取消',
+        onPositiveClick: () => {
+          chatEvent.emit('open-user-profile', { openAISettings: true } as any)
+        },
+      })
+      return
+    }
+    message.error(errMsg)
+  }
+}
+
+const readCurrentInputIntoAIPolishSlot = () => {
+  const input = resolveAIPolishInput()
+  if (!input) {
+    message.error('当前输入框没有可读取内容')
+    return
+  }
+  aiPolishDockVisible.value = true
+  readCurrentInputIntoSlot(aiPolishDockState, aiPolishDockState.activeSlotIndex, input)
+}
+
+const updateActiveAIPolishResultText = (value: string) => {
+  const slot = aiPolishActiveSlot.value
+  if (!slot) return
+  slot.resultText = value
+}
+
+const updateActiveAIPolishSourceText = (value: string) => {
+  const slot = aiPolishActiveSlot.value
+  if (!slot) return
+  slot.sourceText = value
+}
+
+const updateActiveAIPolishViewMode = (viewMode: 'edit' | 'diff') => {
+  setAIPolishSlotViewMode(aiPolishDockState, aiPolishDockState.activeSlotIndex, viewMode)
+}
+
+const clearCurrentAIPolishSlot = () => {
+  if (aiPolishActiveSlot.value?.status === 'loading') {
+    message.warning('当前槽位仍在处理中，暂不能清空')
+    return
+  }
+  clearAIPolishSlot(aiPolishDockState, aiPolishDockState.activeSlotIndex)
+}
+
+const closeAIPolishDock = () => {
+  aiPolishDockVisible.value = false
+}
+
 
 onBeforeUnmount(() => {
   handleInputResizeEnd();
@@ -14654,6 +14874,8 @@ onBeforeUnmount(() => {
   chatEvent.off('open-display-settings', handleOpenDisplaySettings);
   chatEvent.off('channel-context-cleared', handleChannelContextCleared as any);
   chatEvent.off('channel-switch-to', handleChannelSwitchEvent as any);
+  chatEvent.off('battle-report-display-refresh' as any, handleBattleReportDisplayRefresh as any);
+  chatEvent.off('battle-report-open-editor' as any, handleBattleReportOpenEditorRequest as any);
   revokeIdentityObjectURL();
   revokeIdentityVariantObjectURL();
   searchHighlightTimers.forEach((timer) => window.clearTimeout(timer));
@@ -14687,6 +14909,8 @@ onBeforeUnmount(() => {
           :favorite-active="channelFavoritesVisible"
           :character-remark-active="characterRemarkManagerVisible"
           :channel-images-active="channelImagesPanelVisible"
+          :battle-summary-enabled="showBattleSummary"
+          :battle-summary-active="battleReportDrawerVisible"
           :can-import="canManageWorldKeywords"
           :import-active="importDialogVisible"
           :split-enabled="splitEntryEnabled"
@@ -14712,6 +14936,7 @@ onBeforeUnmount(() => {
           @open-favorites="channelFavoritesVisible = true"
           @open-character-remark="characterRemarkManagerVisible = true"
           @open-channel-images="openChannelImagesPanel"
+          @open-battle-summary="openBattleSummary"
           @open-split="openSplitView"
           @open-ic-ooc-split="openIcOocSplitView"
           @toggle-sticky-note="toggleStickyNotes"
@@ -15152,6 +15377,18 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </n-popover>
+          </div>
+          <div v-if="showAIPolish" class="chat-input-actions__cell">
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button quaternary circle :disabled="!canRunAIPolish" @click="runAIPolish">
+                  <template #icon>
+                    <n-icon :component="Palette" size="18" />
+                  </template>
+                </n-button>
+              </template>
+              润色
+            </n-tooltip>
           </div>
           <div class="chat-input-actions__cell">
             <n-popover
@@ -16263,13 +16500,25 @@ onBeforeUnmount(() => {
                     </div>
                   </n-popover>
                 </div>
-                <div class="chat-input-actions__cell" v-if="showDiceTrayTrigger && isDiceTrayEdgeAnchored">
+                <div class="chat-input-actions__cell" v-if="showAIPolish">
+                  <n-tooltip trigger="hover">
+                    <template #trigger>
+                      <n-button quaternary circle :disabled="!canRunAIPolish" @click="runAIPolish">
+                        <template #icon>
+                          <n-icon :component="Palette" size="18" />
+                        </template>
+                      </n-button>
+                    </template>
+                    润色
+                  </n-tooltip>
+                </div>
+                <div class="chat-input-actions__cell" v-if="showDiceTrayTrigger">
                   <n-popover
                     trigger="manual"
-                    placement="top-end"
-                    :show="diceTrayMobileVisible"
+                    :placement="isDiceTrayEdgeAnchored ? 'top-end' : 'top'"
+                    :show="isDiceTrayEdgeAnchored ? diceTrayMobileVisible : diceTrayDesktopVisible"
                     :show-arrow="false"
-                    :overlay-class="DICE_TRAY_EDGE_OVERLAY_CLASS"
+                    :overlay-class="isDiceTrayEdgeAnchored ? DICE_TRAY_EDGE_OVERLAY_CLASS : undefined"
                   >
                     <template #trigger>
                       <n-tooltip trigger="hover">
@@ -16294,61 +16543,7 @@ onBeforeUnmount(() => {
                       @insert="handleDiceInsert"
                       @roll="handleDiceRollNow"
                       @update-default="handleDiceDefaultUpdate"
-                      @close="diceTrayMobileVisible = false"
-                    >
-                      <template #header-actions>
-                        <ChatDiceModeControl
-                          :visible="diceSettingsVisible"
-                          :show-status="showDiceModeStatus"
-                          :show-settings="showDiceModeSettings"
-                          :is-mobile="isMobileUa"
-                          :mode-label="diceModeLabel"
-                          :mode-tooltip="diceModeTooltip"
-                          :built-in-dice-enabled="channelFeatures.builtInDiceEnabled"
-                          :bot-feature-enabled="channelFeatures.botFeatureEnabled"
-                          :dice-feature-updating="diceFeatureUpdating"
-                          :channel-bot-selection="channelBotSelection"
-                          :bot-select-options="botSelectOptions"
-                          :bot-options-loading="botOptionsLoading"
-                          :channel-bots-loading="channelBotsLoading"
-                          :syncing-channel-bot="syncingChannelBot"
-                          :has-bot-options="hasBotOptions"
-                          @update:visible="diceSettingsVisible = $event"
-                          @toggle-built-in="handleDiceFeatureToggle"
-                          @toggle-bot="handleBotFeatureToggle"
-                          @select-bot="handleBotSelectionChange"
-                          @open-channel-member-settings="openChannelMemberSettings"
-                        />
-                      </template>
-                    </DiceTray>
-                  </n-popover>
-                </div>
-                <div class="chat-input-actions__cell" v-else-if="showDiceTrayTrigger">
-                  <n-popover trigger="manual" placement="top" :show="diceTrayDesktopVisible">
-                    <template #trigger>
-                      <n-tooltip trigger="hover">
-                        <template #trigger>
-                          <n-button class="chat-dice-button" quaternary circle :disabled="(!canUseBuiltInDice && !effectiveBotFeatureEnabled) || diceFeatureUpdating" @click="toggleDiceTray">
-                            <template #icon>
-                              <svg class="chat-input-actions__icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" focusable="false">
-                                <rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect>
-                                <path d="m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-4.92a2.24 2.24 0 0 0-3 0L10 6M6 18h.01M10 14h.01M15 6h.01M18 9h.01"></path>
-                              </svg>
-                            </template>
-                          </n-button>
-                        </template>
-                        掷骰
-                      </n-tooltip>
-                    </template>
-                    <DiceTray
-                      :default-dice="defaultDiceExpr"
-                      :can-edit-default="canEditDefaultDice"
-                      :built-in-dice-enabled="effectiveBuiltInDiceEnabled"
-                      :bot-feature-enabled="effectiveBotFeatureEnabled"
-                      @insert="handleDiceInsert"
-                      @roll="handleDiceRollNow"
-                      @update-default="handleDiceDefaultUpdate"
-                      @close="diceTrayDesktopVisible = false"
+                      @close="isDiceTrayEdgeAnchored ? (diceTrayMobileVisible = false) : (diceTrayDesktopVisible = false)"
                     >
                       <template #header-actions>
                         <ChatDiceModeControl
@@ -17429,7 +17624,30 @@ onBeforeUnmount(() => {
   <ExportDialog
     v-model:visible="exportDialogVisible"
     :channel-id="chat.curChannel?.id"
+    :battle-summary-enabled="showBattleSummary"
     @export="handleExportMessages"
+    @request-battle-summary="openBattleSummary"
+  />
+  <BattleReportDrawer
+    v-model:visible="battleReportDrawerVisible"
+    :channel-id="chat.curChannel?.id"
+    :world-id="chat.currentWorldId"
+  />
+  <ChatAiPolishDock
+    :visible="aiPolishDockVisible"
+    :favicon-href="aiPolishFaviconHref"
+    :dock-state="aiPolishDockState"
+    @restore="toggleAIPolishDockMinimized(aiPolishDockState, false)"
+    @toggle-minimize="toggleAIPolishDockMinimized(aiPolishDockState)"
+    @select-slot="setActiveAIPolishSlot(aiPolishDockState, $event)"
+    @read-current-input="readCurrentInputIntoAIPolishSlot"
+    @retry="retryCurrentAIPolishTask"
+    @apply="applyAIPolishResult"
+    @clear-slot="clearCurrentAIPolishSlot"
+    @close="closeAIPolishDock"
+    @update:source-text="updateActiveAIPolishSourceText"
+    @update:result-text="updateActiveAIPolishResultText"
+    @update:view-mode="updateActiveAIPolishViewMode"
   />
   <ChatImportDialog
     v-model:visible="importDialogVisible"
@@ -21740,6 +21958,14 @@ onBeforeUnmount(() => {
   overflow-wrap: break-word;
 }
 
+:global(.keyword-tooltip.keyword-tooltip--embedded-wide) {
+  max-width: none;
+  min-width: 0;
+  width: auto;
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.22);
+}
+
 /* Tooltip scrollbar styling - minimal/invisible design */
 /* Standard properties for Firefox */
 :global(.keyword-tooltip) {
@@ -21891,6 +22117,11 @@ onBeforeUnmount(() => {
   border-color: rgba(255, 255, 255, 0.12);
   color: #f4f4f5;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+:global([data-display-palette='night'] .keyword-tooltip.keyword-tooltip--embedded-wide),
+:global(:root[data-display-palette='night'] .keyword-tooltip.keyword-tooltip--embedded-wide) {
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.56);
 }
 
 :global([data-display-palette='night'] .keyword-tooltip--pinned),
@@ -22071,9 +22302,9 @@ onBeforeUnmount(() => {
 .sticky-note-editor__content .tiptap-ruby {
   ruby-align: center;
   ruby-position: over;
-  font-size: var(--ruby-font-size, inherit);
+  font-size: var(--ruby-base-font-size, var(--ruby-font-size, inherit));
   line-height: inherit;
-  font-family: var(--ruby-font-family, inherit);
+  font-family: var(--ruby-base-font-family, var(--ruby-font-family, inherit));
   color: var(--ruby-color, inherit);
   font-weight: var(--ruby-font-weight, inherit);
   font-style: var(--ruby-font-style, inherit);
@@ -22093,13 +22324,13 @@ onBeforeUnmount(() => {
 .tiptap-editor .tiptap-ruby rt,
 .keyword-rich-content .tiptap-ruby rt,
 .sticky-note-editor__content .tiptap-ruby rt {
-  font-family: var(--ruby-font-family, inherit);
+  font-family: var(--ruby-rt-font-family, var(--ruby-font-family, inherit));
   color: var(--ruby-color, inherit);
   font-weight: var(--ruby-font-weight, inherit);
   font-style: var(--ruby-font-style, inherit);
   text-decoration: var(--ruby-text-decoration, inherit);
   background-color: var(--ruby-background-color, transparent);
-  font-size: var(--ruby-rt-font-size, var(--ruby-font-size, var(--ruby-rt-scale, 0.92em)));
+  font-size: var(--ruby-rt-font-size, var(--ruby-base-font-size, var(--ruby-font-size, var(--ruby-rt-scale, 0.92em))));
   line-height: 1.05;
   letter-spacing: 0;
 }

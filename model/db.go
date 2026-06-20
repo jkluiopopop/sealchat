@@ -158,12 +158,14 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&ChannelIdentityFolderModel{}, &ChannelIdentityFolderMemberModel{}, &ChannelIdentityFolderFavoriteModel{})
 	db.AutoMigrate(&GalleryCollection{}, &GalleryItem{})
 	db.AutoMigrate(&AudioAsset{}, &AudioFolder{}, &AudioScene{}, &AudioPlaybackState{}, &AudioUserQuotaOverride{})
+	db.AutoMigrate(&AIUsageLogModel{}, &AIUsageLedgerModel{}, &AIQuotaReservationModel{}, &AIUserQuotaOverrideModel{})
 	db.AutoMigrate(&PlatformFontAsset{})
 	db.AutoMigrate(&DiceMacroModel{})
 
 	db.AutoMigrate(&SystemRoleModel{}, &ChannelRoleModel{}, &RolePermissionModel{}, &UserRoleMappingModel{})
 	db.AutoMigrate(&FriendModel{}, &FriendRequestModel{})
 	db.AutoMigrate(&MessageExportJobModel{})
+	db.AutoMigrate(&BattleReportModel{}, &BattleReportDisplayChannelModel{}, &BattleReportDisplayEmbedModel{})
 	db.AutoMigrate(&ChannelIFormModel{})
 	db.AutoMigrate(&WorldIFormBindingModel{})
 	db.AutoMigrate(&WorldModel{}, &WorldMemberModel{}, &WorldInviteModel{}, &WorldFavoriteModel{}, &WorldArchiveModel{}, &WorldKeywordModel{}, &WorldKeywordCategoryModel{})
@@ -181,7 +183,11 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&UpdateCheckState{})
 	db.AutoMigrate(&ConfigCurrentModel{}, &ConfigHistoryModel{})
 	db.AutoMigrate(&UserPreferenceModel{})
+	db.AutoMigrate(&UserAIProviderProfileModel{})
 	db.AutoMigrate(&ExportColorProfileModel{})
+	if err := ensureChatHistoryIndexes(); err != nil {
+		log.Printf("初始化聊天历史索引失败: %v", err)
+	}
 	if err := ensureDigestPushIndexesAndConstraints(); err != nil {
 		log.Printf("初始化未读提醒索引失败: %v", err)
 	}
@@ -221,6 +227,20 @@ func DBInit(cfg *utils.AppConfig) {
 			}
 		}()
 	}
+}
+
+func ensureChatHistoryIndexes() error {
+	if db == nil {
+		return nil
+	}
+	if IsSQLite() {
+		return db.Exec(`
+CREATE INDEX IF NOT EXISTS idx_msg_live_cursor
+ON messages(channel_id, display_order DESC, created_at DESC, id DESC)
+WHERE is_deleted = 0 AND is_archived = 0
+`).Error
+	}
+	return nil
 }
 
 func ensureDigestPushIndexesAndConstraints() error {

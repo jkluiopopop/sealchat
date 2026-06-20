@@ -16,6 +16,7 @@ import UserAvatarDecoration from '@/components/user-avatar-decoration.vue'
 import { ArrowBackUp, Lock, Edit, Check, X } from '@vicons/tabler';
 import { useI18n } from 'vue-i18n';
 import { isTipTapJson, tiptapJsonToHtml, tiptapJsonToPlainText } from '@/utils/tiptap-render';
+import { hasPerformanceContent } from '@/utils/tiptap-performance-parser';
 import { renderQuickFormatHtmlFromEscaped, restoreQuickFormatTextFromHtml } from '@/utils/plainQuickFormat';
 import { isBotCommandLikeContent, renderBotCommandTextAsHtml } from '@/utils/botCommand';
 import { contentEscape, contentUnescape } from '@/utils/tools';
@@ -36,6 +37,7 @@ import { resolveMessageLinkInfo, renderMessageLinkHtml } from '@/utils/messageLi
 import { MESSAGE_LINK_REGEX, TITLED_MESSAGE_LINK_REGEX, parseMessageLink } from '@/utils/messageLink'
 import { parseSingleIFormEmbedLinkText, updateIFormEmbedLinkSize } from '@/utils/iformEmbedLink'
 import { parseSingleStickyNoteEmbedLinkText, type StickyNoteEmbedLinkParams } from '@/utils/stickyNoteEmbedLink'
+import { parseSingleBattleReportEmbedLinkText } from '@/utils/battleReportEmbedLink'
 import { copyTextWithFallback } from '@/utils/clipboard'
 import { chatEvent } from '@/stores/chat'
 import { normalizeAvatarDecorations } from '@/utils/avatarDecorations'
@@ -44,17 +46,22 @@ import {
   SMART_LINK_IMAGE_ROLE_ATTR,
   SMART_LINK_TEXT_IMAGE_ROLE,
   normalizeSmartLinkAttrs,
+  type SmartLinkTextType,
+  type SmartLinkUrlType,
 } from '@/utils/tiptapSmartLink'
 import { shouldRenderWhisperLabel } from '../messageMerge'
 import IdentityMetaInlineRow from './IdentityMetaInlineRow.vue'
 import MessageReactions from './MessageReactions.vue'
+import TwinLayerMessage from '@/components/chat/TwinLayerMessage.vue'
 import IFormEmbedFrame from '@/components/iform/IFormEmbedFrame.vue'
+import BattleReportEmbedCard from './BattleReportEmbedCard.vue'
 import type { ChannelIForm } from '@/types/iform';
 import {
   resolveIdentityMetaHostBackground,
   resolveIdentityMetaOutlineStyle,
   resolveIdentityMetaStyle,
 } from '@/utils/identityMetaContrast'
+import { shouldAutoplayPerformanceMessage } from '@/components/chat/performanceAutoplay';
 
 type EditingPreviewInfo = {
   userId: string;
@@ -322,6 +329,15 @@ const resolveSingleStickyNoteLinkFromContent = (content: string) => {
   return singleStickyNoteLink;
 };
 
+const resolveSingleBattleReportLinkFromContent = (content: string) => {
+  let singleBattleReportLink = parseSingleBattleReportEmbedLinkText(content);
+  if (!singleBattleReportLink && isTipTapJson(content)) {
+    const plainText = tiptapJsonToPlainText(content);
+    singleBattleReportLink = parseSingleBattleReportEmbedLinkText(plainText);
+  }
+  return singleBattleReportLink;
+};
+
 const isBotMessageItem = (item: any): boolean => {
   if (!item) {
     return false;
@@ -357,6 +373,14 @@ const resolveStateWidgetTextPolicy = (
 
 const parseContent = (payload: any, overrideContent?: string) => {
   const content = overrideContent ?? payload?.content ?? '';
+
+  const singleBattleReportLink = resolveSingleBattleReportLinkFromContent(content);
+  if (singleBattleReportLink) {
+    return h(BattleReportEmbedCard, {
+      reportId: singleBattleReportLink.reportId,
+      rawLink: singleBattleReportLink.rawLink,
+    });
+  }
 
   const singleStickyNoteLink = resolveSingleStickyNoteLinkFromContent(content);
   if (singleStickyNoteLink) {
@@ -534,6 +558,19 @@ const parseContent = (payload: any, overrideContent?: string) => {
         const sanitizedHtml = DOMPurify.sanitize(renderBotCommandTextAsHtml(content));
         hasImage.value = false;
         return <span v-html={sanitizedHtml}></span>;
+      }
+      if (hasPerformanceContent(JSON.parse(content))) {
+        hasImage.value = content.includes('"type":"image"');
+        return (
+          <TwinLayerMessage
+            content={content}
+            autoplay={shouldAutoplayPerformance.value}
+            baseUrl={urlBase}
+            imageClass="inline-image"
+            linkClass="text-blue-500"
+            attachmentResolver={resolveAttachmentUrl}
+          />
+        );
       }
       const html = tiptapJsonToHtml(content, {
         baseUrl: urlBase,
@@ -974,11 +1011,11 @@ const handleSmartLinkClick = (event: MouseEvent, host: HTMLElement, target: HTML
   }
 
   const attrs = normalizeSmartLinkAttrs({
-    textType: smartLink.dataset.textType,
+    textType: smartLink.dataset.textType as SmartLinkTextType | undefined,
     textValue: smartLink.dataset.textValue,
-    urlType: smartLink.dataset.urlType,
+    urlType: smartLink.dataset.urlType as SmartLinkUrlType | undefined,
     urlValue: smartLink.dataset.urlValue,
-    target: smartLink.dataset.target,
+    target: smartLink.dataset.target as '_self' | '_blank' | undefined,
   });
   if (!attrs) {
     return true;
@@ -3457,6 +3494,13 @@ const showSendingIndicator = computed(() => (
   && (props.item as any)?.showSendIndicator === true
 ));
 const canRetrySend = computed(() => props.isSelf && messageSendStatus.value === 'failed');
+const shouldAutoplayPerformance = computed(() => {
+  return shouldAutoplayPerformanceMessage(
+    props.item?.createdAt,
+    props.isSelf,
+    messageSendStatus.value,
+  );
+});
 
 const handleRetrySend = () => {
   if (!canRetrySend.value || !props.item) {
@@ -4642,6 +4686,7 @@ const handleRetrySend = () => {
 }
 
 .content.typo p {
+  margin: 0;
   line-height: inherit;
 }
 
@@ -4650,7 +4695,6 @@ const handleRetrySend = () => {
   white-space: break-spaces;
 }
 
-:global(.message-rich-content p),
 :global(.message-rich-content li),
 :global(.message-rich-content blockquote),
 :global(.message-rich-content h1),
@@ -4667,6 +4711,14 @@ const handleRetrySend = () => {
 :global(.message-rich-content s),
 :global(.message-rich-content mark) {
   white-space: break-spaces;
+}
+
+:global(.twin-layer-message) {
+  position: relative;
+}
+
+:global(.twin-layer-message.is-waiting .twin-layer-message__overlay) {
+  cursor: pointer;
 }
 
 .edited-label {

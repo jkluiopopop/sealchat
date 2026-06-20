@@ -43,6 +43,8 @@ interface Props {
   displayActive?: boolean
   favoriteActive?: boolean
   channelImagesActive?: boolean
+  battleSummaryEnabled?: boolean
+  battleSummaryActive?: boolean
   canImport?: boolean
   importActive?: boolean
   splitEnabled?: boolean
@@ -71,6 +73,7 @@ interface Emits {
   (e: 'open-display-settings'): void
   (e: 'open-favorites'): void
   (e: 'open-channel-images'): void
+  (e: 'open-battle-summary'): void
   (e: 'open-split'): void
   (e: 'open-ic-ooc-split', side: 'left' | 'right'): void
   (e: 'toggle-sticky-note'): void
@@ -124,6 +127,7 @@ const allActionButtons = computed<ActionButton[]>(() => {
     { key: 'export', label: '导出记录', icon: DownloadIcon, emitEvent: 'open-export', activeKey: 'exportActive' },
     { key: 'gallery', label: '表情资源', icon: EmojiIcon, emitEvent: 'open-gallery', activeKey: 'galleryActive' },
     { key: 'channel-images', label: '图片浏览', icon: PhotoIcon, emitEvent: 'open-channel-images', activeKey: 'channelImagesActive' },
+    { key: 'battle-summary', label: '战报总结', icon: DocumentTextOutline, emitEvent: 'open-battle-summary', activeKey: 'battleSummaryActive', disabled: () => props.battleSummaryEnabled === false },
     { key: 'favorites', label: '频道收藏', icon: StarIcon, emitEvent: 'open-favorites', activeKey: 'favoriteActive' },
     { key: 'character-remark', label: '角色备注', icon: CharacterRemarkIcon, emitEvent: 'open-character-remark', activeKey: 'characterRemarkActive' },
   ]

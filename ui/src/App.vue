@@ -975,6 +975,10 @@ nav a:first-of-type {
   border-color: var(--sc-border-mute) !important;
 }
 
+:root[data-custom-theme='true'] .keyword-tooltip.keyword-tooltip--embedded-wide {
+  box-shadow: 0 18px 42px color-mix(in srgb, var(--sc-shadow-color, rgba(15, 23, 42, 0.24)) 100%, transparent) !important;
+}
+
 /* Keyword tooltip scrollbar - minimal/invisible design for custom theme */
 /* Firefox */
 :root[data-custom-theme='true'] .keyword-tooltip:hover {

@@ -25,6 +25,8 @@ import {
   type SmartLinkTextType,
   type SmartLinkUrlType,
 } from '@/utils/tiptapSmartLink';
+import { normalizePerformanceEffect, type PerformanceEffect, type PerformanceEnterMode } from '@/utils/tiptap-performance-mark';
+import type { PerformanceCommandType } from '@/utils/tiptap-performance-node';
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -109,6 +111,7 @@ const platformFontSelectMenuProps = computed(() => ({
   class: platformFontSelectMenuClass.value,
 }));
 const savedEditorSelectionRange = ref<{ start: number; end: number } | null>(null);
+const performanceTriggerRef = ref<HTMLElement | null>(null);
 const MOBILE_BREAKPOINT = 768;
 const RICH_CONTENT_PARSE_OPTIONS = { preserveWhitespace: 'full' as const };
 const SILENT_SET_CONTENT_OPTIONS = { emitUpdate: false, parseOptions: RICH_CONTENT_PARSE_OPTIONS };
@@ -393,7 +396,7 @@ const restoreEditorSelection = () => {
   const docSize = ed.state.doc.content.size;
   const safeStart = clamp(range.start, 0, docSize);
   const safeEnd = clamp(range.end, 0, docSize);
-  ed.chain().setTextSelection({ from: safeStart, to: safeEnd }).run();
+  ed.chain().focus().setTextSelection({ from: safeStart, to: safeEnd }).run();
 };
 
 const syncToolbarStateFromEditor = () => {
@@ -447,6 +450,7 @@ const markToolbarPickerTriggerInteraction = (event: PointerEvent | MouseEvent) =
 const closeToolbarPopovers = () => {
   blockTypePopoverShow.value = false;
   fontSizePopoverShow.value = false;
+  performancePopoverShow.value = false;
 };
 
 const scrollActiveMentionIntoView = () => {
@@ -629,6 +633,7 @@ const highlightColorPopoverShow = ref(false);
 const textColorPopoverShow = ref(false);
 const blockTypePopoverShow = ref(false);
 const fontSizePopoverShow = ref(false);
+const performancePopoverShow = ref(false);
 
 // 链接弹窗状态
 const linkModalShow = ref(false);
@@ -645,6 +650,18 @@ const rubyModalShow = ref(false);
 const rubyBaseText = ref('');
 const rubyTextInput = ref('');
 const rubySelectionMode = ref<'insert' | 'apply' | 'edit'>('insert');
+const rubyFontPanelExpanded = ref(false);
+const rubySizePanelExpanded = ref(false);
+const rubyBaseFontId = ref<string | null>(null);
+const rubyRtFontId = ref<string | null>(null);
+const rubyBaseFontSizeInput = ref('');
+const rubyRtFontSizeInput = ref('');
+const performanceEffect = ref<PerformanceEffect>('wave');
+const performanceEnterMode = ref<PerformanceEnterMode>('normal');
+const performanceEnterSpeed = ref(5);
+const performanceToneIntensity = ref(0);
+const performanceCommandType = ref<PerformanceCommandType>('delay');
+const performanceCommandValue = ref('500');
 
 watch(linkModalShow, (visible) => {
   if (!visible) {
@@ -674,7 +691,40 @@ const resetRubyModalState = () => {
   rubyBaseText.value = '';
   rubyTextInput.value = '';
   rubySelectionMode.value = 'insert';
+  rubyFontPanelExpanded.value = false;
+  rubySizePanelExpanded.value = false;
+  rubyBaseFontId.value = null;
+  rubyRtFontId.value = null;
+  rubyBaseFontSizeInput.value = '';
+  rubyRtFontSizeInput.value = '';
 };
+
+const clampPerformanceToneIntensity = (value: number) => Math.max(-4, Math.min(4, Math.round(value)));
+const clampPerformanceEnterSpeed = (value: number) => Math.max(1, Math.min(9, Math.round(value)));
+const performanceEnterModeOptions = [
+  { label: '正常', value: 'normal' },
+  { label: '朦胧显现', value: 'blur' },
+  { label: '逐字', value: 'typewriter' },
+] as const;
+const performanceToneMarks = {
+  [-4]: '低语',
+  [-1]: '压低',
+  [1]: '强调',
+  [4]: '爆发',
+};
+const performanceToneLabel = computed(() => {
+  const value = performanceToneIntensity.value;
+  if (value <= -3) return '低语';
+  if (value < 0) return '收束';
+  if (value === 0) return '中性';
+  if (value < 3) return '强调';
+  return '爆发';
+});
+const performanceSpeedLabel = computed(() => (
+  performanceEnterSpeed.value <= 3 ? '慢'
+    : performanceEnterSpeed.value >= 7 ? '快'
+      : '中'
+));
 
 const applySmartLinkImage = (
   source: SmartLinkUploadSource,
@@ -881,6 +931,28 @@ const {
   selectedId: selectedPlatformFontId,
   menuClass: 'tiptap-platform-font-select__menu',
 });
+const {
+  platformFontOptions: rubyBaseFontOptions,
+  renderPlatformFontLabel: renderRubyBaseFontLabel,
+  renderPlatformFontOption: renderRubyBaseFontOption,
+  handleDropdownVisible: handleRubyBaseFontDropdownVisible,
+  primeSelectedPreview: primeRubyBaseFontPreview,
+} = createPlatformFontSelectPreviewController({
+  fonts: platformFonts,
+  selectedId: rubyBaseFontId,
+  menuClass: 'tiptap-platform-font-select__menu',
+});
+const {
+  platformFontOptions: rubyRtFontOptions,
+  renderPlatformFontLabel: renderRubyRtFontLabel,
+  renderPlatformFontOption: renderRubyRtFontOption,
+  handleDropdownVisible: handleRubyRtFontDropdownVisible,
+  primeSelectedPreview: primeRubyRtFontPreview,
+} = createPlatformFontSelectPreviewController({
+  fonts: platformFonts,
+  selectedId: rubyRtFontId,
+  menuClass: 'tiptap-platform-font-select__menu',
+});
 
 const updateIsMobile = () => {
   const isNarrowViewport = window.innerWidth <= MOBILE_BREAKPOINT;
@@ -912,6 +984,232 @@ const handleDesktopFontSelectorShowUpdate = (show: boolean) => {
 const handlePlatformFontSelectShowUpdate = (show: boolean) => {
   handlePlatformFontDropdownVisible(show);
   handleDesktopFontSelectorShowUpdate(show);
+};
+
+const closePerformancePopover = () => {
+  performancePopoverShow.value = false;
+};
+
+const syncPerformanceControlsFromSelection = () => {
+  const attrs = (editor.value?.getAttributes('performance') || {}) as Record<string, any>;
+  const effect = normalizePerformanceEffect(attrs.effect);
+  const enterMode = String(attrs.enterMode || '').trim();
+  const enterSpeed = Number(attrs.enterSpeed);
+  const toneIntensity = Number(attrs.toneIntensity);
+  if (effect) {
+    performanceEffect.value = effect;
+  }
+  if (enterMode === 'normal' || enterMode === 'blur' || enterMode === 'typewriter') {
+    performanceEnterMode.value = enterMode;
+  }
+  if (Number.isFinite(enterSpeed)) {
+    performanceEnterSpeed.value = clampPerformanceEnterSpeed(enterSpeed);
+  }
+  if (Number.isFinite(toneIntensity)) {
+    performanceToneIntensity.value = clampPerformanceToneIntensity(toneIntensity);
+  } else if (attrs.scale === 'shout') {
+    performanceToneIntensity.value = 3;
+  } else if (attrs.scale === 'whisper') {
+    performanceToneIntensity.value = -3;
+  }
+};
+
+const openPerformancePopover = () => {
+  closeToolbarPopovers();
+  rememberEditorSelection();
+  syncPerformanceControlsFromSelection();
+  markOverlayInteraction();
+  performancePopoverShow.value = true;
+};
+
+const getSelectionSnapshot = () => {
+  const ed = editor.value;
+  if (!ed) {
+    return null;
+  }
+  const docSize = ed.state.doc.content.size;
+  const range = savedEditorSelectionRange.value || {
+    start: ed.state.selection.from,
+    end: ed.state.selection.to,
+  };
+  const start = clamp(range.start, 0, docSize);
+  const end = clamp(range.end, 0, docSize);
+  return {
+    from: Math.min(start, end),
+    to: Math.max(start, end),
+  };
+};
+
+const getSelectedTextBlockRanges = (selection = getSelectionSnapshot()) => {
+  const ed = editor.value;
+  if (!ed || !selection) {
+    return [] as Array<{ from: number; to: number }>;
+  }
+  const { from, to } = selection;
+  const $from = ed.state.doc.resolve(from);
+  const ranges: Array<{ from: number; to: number }> = [];
+  ed.state.doc.nodesBetween(from, to, (node, pos) => {
+    if (!node.isTextblock) {
+      return;
+    }
+    const start = pos + 1;
+    const end = pos + node.content.size;
+    if (start < end) {
+      ranges.push({ from: start, to: end });
+    }
+    return false;
+  });
+  if (ranges.length > 0) {
+    return ranges;
+  }
+  for (let depth = $from.depth; depth >= 0; depth -= 1) {
+    const node = $from.node(depth);
+    if (!node.isTextblock) {
+      continue;
+    }
+    const start = $from.start(depth);
+    const end = $from.end(depth);
+    if (start < end) {
+      return [{ from: start, to: end }];
+    }
+  }
+  return [];
+};
+
+const updatePerformanceMarksInRange = (
+  from: number,
+  to: number,
+  updater: (attrs: Record<string, any>) => Record<string, any>,
+) => {
+  const ed = editor.value;
+  if (!ed) {
+    return false;
+  }
+  const markType = ed.state.schema.marks.performance;
+  if (!markType) {
+    return false;
+  }
+  let tr = ed.state.tr;
+  let touched = false;
+  ed.state.doc.nodesBetween(from, to, (node, pos) => {
+    if (!node.isText) {
+      return;
+    }
+    const start = Math.max(from, pos);
+    const end = Math.min(to, pos + node.nodeSize);
+    if (start >= end) {
+      return;
+    }
+    const currentMark = node.marks.find((mark) => mark.type === markType);
+    const nextAttrs = updater({ ...(currentMark?.attrs || {}) });
+    tr = tr.removeMark(start, end, markType);
+    tr = tr.addMark(start, end, markType.create(nextAttrs));
+    touched = true;
+  });
+  if (!touched) {
+    return false;
+  }
+  ed.view.dispatch(tr);
+  rememberEditorSelection();
+  bumpEditorStateVersion();
+  return true;
+};
+
+const getPerformanceBlockAttrs = () => ({
+  enterMode: performanceEnterMode.value,
+  enterSpeed: clampPerformanceEnterSpeed(performanceEnterSpeed.value),
+  toneIntensity: clampPerformanceToneIntensity(performanceToneIntensity.value),
+  scale: null,
+});
+
+const applyPerformanceBlockSettings = ({ silent = true }: { silent?: boolean } = {}) => {
+  const ed = editor.value;
+  if (!ed) {
+    return false;
+  }
+  const selection = getSelectionSnapshot();
+  const blockRanges = getSelectedTextBlockRanges(selection);
+  if (blockRanges.length === 0) {
+    if (!silent) {
+      message.warning('当前块不支持演出设置');
+    }
+    return false;
+  }
+  const baseAttrs = getPerformanceBlockAttrs();
+  let applied = false;
+  blockRanges.forEach((range) => {
+    applied = updatePerformanceMarksInRange(range.from, range.to, (attrs) => ({
+      ...attrs,
+      ...baseAttrs,
+    })) || applied;
+  });
+  return applied;
+};
+
+const applyPerformanceEffectToSelection = () => {
+  const ed = editor.value;
+  if (!ed) {
+    return;
+  }
+  if (!applyPerformanceBlockSettings({ silent: false })) {
+    return;
+  }
+  restoreEditorSelection();
+  const selection = getSelectionSnapshot();
+  const blockRanges = getSelectedTextBlockRanges(selection);
+  if (blockRanges.length === 0) {
+    return;
+  }
+  const baseAttrs = getPerformanceBlockAttrs();
+  const { from, to } = selection || ed.state.selection;
+  const targetFrom = from === to ? blockRanges[0].from : from;
+  const targetTo = from === to ? blockRanges[blockRanges.length - 1].to : to;
+  updatePerformanceMarksInRange(targetFrom, targetTo, (attrs) => ({
+    ...attrs,
+    ...baseAttrs,
+    effect: performanceEffect.value,
+  }));
+  closePerformancePopover();
+};
+
+const setPerformanceEnterMode = (mode: PerformanceEnterMode) => {
+  performanceEnterMode.value = mode;
+  applyPerformanceBlockSettings();
+};
+
+const handlePerformanceEnterSpeedUpdate = (value: number) => {
+  performanceEnterSpeed.value = clampPerformanceEnterSpeed(value);
+  applyPerformanceBlockSettings();
+};
+
+const handlePerformanceToneIntensityUpdate = (value: number) => {
+  performanceToneIntensity.value = clampPerformanceToneIntensity(value);
+  applyPerformanceBlockSettings();
+};
+
+const insertPerformanceCommandNode = () => {
+  const ed = editor.value;
+  if (!ed) {
+    return;
+  }
+  if (!applyPerformanceBlockSettings({ silent: false })) {
+    return;
+  }
+  const command = performanceCommandType.value === 'pause' ? 'pause' : 'delay';
+  const rawValue = performanceCommandValue.value.trim();
+  const numericValue = rawValue === '' ? null : Number(rawValue);
+  if (command === 'delay' && !Number.isFinite(numericValue)) {
+    message.warning('停顿时长要是数字');
+    return;
+  }
+  ed.chain().focus().insertContent({
+    type: 'performanceCommand',
+    attrs: {
+      command,
+      value: command === 'delay' ? numericValue : null,
+    },
+  }).run();
+  closePerformancePopover();
 };
 
 const applyCustomHighlightColor = () => {
@@ -958,6 +1256,14 @@ const normalizeFontSizeValue = (value: string): string | null => {
     return null;
   }
   return `${size}px`;
+};
+
+const normalizeOptionalFontSizeValue = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return normalizeFontSizeValue(trimmed);
 };
 
 const EMPTY_DOC = {
@@ -1025,6 +1331,8 @@ const initEditor = async () => {
       TextAlign,
       Spoiler,
       Ruby,
+      Performance,
+      PerformanceCommand,
     } = await loadTipTapBundle();
 
     EditorContent = EditorContentComp;
@@ -1242,6 +1550,8 @@ const initEditor = async () => {
         }),
         Spoiler,
         Ruby,
+        Performance,
+        PerformanceCommand,
         TextAlign.configure({
           types: ['heading', 'paragraph'],
         }),
@@ -1363,7 +1673,7 @@ const initEditor = async () => {
         }
         bumpEditorStateVersion();
       },
-    });
+    }) as unknown as Editor;
 
     isInitializing.value = false;
   } catch (error) {
@@ -1566,22 +1876,85 @@ const resolveRubyRtScale = (fontSize: string | null) => {
   return DEFAULT_RUBY_RT_SCALE;
 };
 
+const resolvePlatformFontStyleAttrs = (fontId: string | null) => {
+  if (!fontId) {
+    return {
+      fontAssetId: null,
+      platformFontFamily: null,
+      fontFamily: null,
+    };
+  }
+  const target = platformFonts.value.find((item) => item.id === fontId) || null;
+  if (!target) {
+    return {
+      fontAssetId: null,
+      platformFontFamily: null,
+      fontFamily: null,
+    };
+  }
+  return {
+    fontAssetId: target.id,
+    platformFontFamily: target.family,
+    fontFamily: `"${target.family}"`,
+  };
+};
+
+const getActiveRubyAttrs = () => {
+  const ed = editor.value;
+  return (ed?.getAttributes('ruby') || {}) as Record<string, any>;
+};
+
+const syncRubyModalStyleStateFromAttrs = (attrs?: Record<string, any>) => {
+  const rubyAttrs = attrs || getActiveRubyAttrs();
+  rubyBaseFontId.value = typeof rubyAttrs.rubyBaseFontAssetId === 'string'
+    ? rubyAttrs.rubyBaseFontAssetId
+    : typeof rubyAttrs.rubyFontAssetId === 'string'
+      ? rubyAttrs.rubyFontAssetId
+      : null;
+  rubyRtFontId.value = typeof rubyAttrs.rubyRtFontAssetId === 'string'
+    ? rubyAttrs.rubyRtFontAssetId
+    : typeof rubyAttrs.rubyFontAssetId === 'string'
+      ? rubyAttrs.rubyFontAssetId
+      : null;
+  rubyBaseFontSizeInput.value = String(
+    rubyAttrs.rubyBaseFontSize || rubyAttrs.rubyFontSize || '',
+  ).replace(/px$/i, '');
+  rubyRtFontSizeInput.value = String(
+    rubyAttrs.rubyRtFontSize || rubyAttrs.rubyFontSize || '',
+  ).replace(/px$/i, '');
+  rubyFontPanelExpanded.value = Boolean(rubyBaseFontId.value || rubyRtFontId.value);
+  rubySizePanelExpanded.value = Boolean(rubyBaseFontSizeInput.value || rubyRtFontSizeInput.value);
+  primeRubyBaseFontPreview(rubyBaseFontId.value);
+  primeRubyRtFontPreview(rubyRtFontId.value);
+};
+
 const buildRubyMarkAttrs = (rubyText: string) => {
   const ed = editor.value;
   const textStyleAttrs = (ed?.getAttributes('textStyle') || {}) as Record<string, any>;
   const highlightAttrs = (ed?.getAttributes('highlight') || {}) as Record<string, any>;
   const rubyFontSize = typeof textStyleAttrs.fontSize === 'string' ? textStyleAttrs.fontSize : null;
+  const rubyBaseFontSize = normalizeOptionalFontSizeValue(rubyBaseFontSizeInput.value) || rubyFontSize;
+  const rubyRtFontSize = normalizeOptionalFontSizeValue(rubyRtFontSizeInput.value) || rubyFontSize;
+  const rubyBaseFontStyle = resolvePlatformFontStyleAttrs(rubyBaseFontId.value);
+  const rubyRtFontStyle = resolvePlatformFontStyleAttrs(rubyRtFontId.value);
   return {
     rubyText: rubyText.trim(),
     rubyFontAssetId: typeof textStyleAttrs.fontAssetId === 'string' ? textStyleAttrs.fontAssetId : null,
     rubyPlatformFontFamily: typeof textStyleAttrs.platformFontFamily === 'string' ? textStyleAttrs.platformFontFamily : null,
     rubyFontFamily: typeof textStyleAttrs.fontFamily === 'string' ? textStyleAttrs.fontFamily : null,
     rubyFontSize,
-    rubyRtFontSize: rubyFontSize,
+    rubyBaseFontAssetId: rubyBaseFontStyle.fontAssetId,
+    rubyBasePlatformFontFamily: rubyBaseFontStyle.platformFontFamily,
+    rubyBaseFontFamily: rubyBaseFontStyle.fontFamily,
+    rubyBaseFontSize,
+    rubyRtFontAssetId: rubyRtFontStyle.fontAssetId,
+    rubyRtPlatformFontFamily: rubyRtFontStyle.platformFontFamily,
+    rubyRtFontFamily: rubyRtFontStyle.fontFamily,
+    rubyRtFontSize,
     rubyColor: typeof textStyleAttrs.color === 'string' ? textStyleAttrs.color : null,
     rubyFontWeight: ed?.isActive('bold') ? '700' : null,
     rubyFontStyle: ed?.isActive('italic') ? 'italic' : null,
-    rubyRtScale: resolveRubyRtScale(rubyFontSize),
+    rubyRtScale: resolveRubyRtScale(rubyRtFontSize),
     rubyTextDecoration: ed?.isActive('strike') ? 'line-through' : null,
     rubyBackgroundColor: typeof highlightAttrs.color === 'string' ? highlightAttrs.color : null,
     rubySpoiler: ed?.isActive('spoiler') ? 'true' : null,
@@ -1942,6 +2315,46 @@ const getUniformRubyTextFromSelection = () => {
   return Array.from(rubyTexts)[0] || '';
 };
 
+const getUniformRubyAttrsFromSelection = () => {
+  const ed = editor.value;
+  if (!ed) {
+    return null;
+  }
+  const { from, to } = ed.state.selection;
+  if (from === to) {
+    return null;
+  }
+
+  let firstAttrs: Record<string, any> | null = null;
+  let hasTextNode = false;
+  let isUniform = true;
+
+  ed.state.doc.nodesBetween(from, to, (node) => {
+    if (!node.isText || !isUniform) {
+      return;
+    }
+    hasTextNode = true;
+    const rubyMark = node.marks.find((mark) => mark.type.name === 'ruby');
+    if (!rubyMark) {
+      isUniform = false;
+      return;
+    }
+    const attrs = rubyMark.attrs || {};
+    if (!firstAttrs) {
+      firstAttrs = attrs;
+      return;
+    }
+    if (JSON.stringify(firstAttrs) !== JSON.stringify(attrs)) {
+      isUniform = false;
+    }
+  });
+
+  if (!hasTextNode || !isUniform || !firstAttrs) {
+    return null;
+  }
+  return firstAttrs;
+};
+
 const openRubyModal = () => {
   const ed = editor.value;
   if (!ed) {
@@ -1952,19 +2365,23 @@ const openRubyModal = () => {
   markOverlayInteraction();
   const selectedText = getSelectedPlainText();
   const selectedRubyText = getUniformRubyTextFromSelection();
+  const selectedRubyAttrs = getUniformRubyAttrsFromSelection();
 
   if (!selectedText) {
     rubySelectionMode.value = 'insert';
     rubyBaseText.value = '';
     rubyTextInput.value = '';
+    syncRubyModalStyleStateFromAttrs();
   } else if (selectedRubyText) {
     rubySelectionMode.value = 'edit';
     rubyBaseText.value = selectedText;
     rubyTextInput.value = selectedRubyText;
+    syncRubyModalStyleStateFromAttrs(selectedRubyAttrs || undefined);
   } else {
     rubySelectionMode.value = 'apply';
     rubyBaseText.value = selectedText;
     rubyTextInput.value = '';
+    syncRubyModalStyleStateFromAttrs();
   }
 
   rubyModalShow.value = true;
@@ -1975,6 +2392,14 @@ const closeRubyModal = () => {
   resetRubyModalState();
 };
 
+const handleRubyBaseFontShowUpdate = (show: boolean) => {
+  handleRubyBaseFontDropdownVisible(show);
+};
+
+const handleRubyRtFontShowUpdate = (show: boolean) => {
+  handleRubyRtFontDropdownVisible(show);
+};
+
 const confirmRuby = () => {
   const ed = editor.value;
   if (!ed) {
@@ -1983,6 +2408,17 @@ const confirmRuby = () => {
   }
 
   const normalizedRubyText = rubyTextInput.value.trim();
+  const normalizedBaseFontSize = normalizeOptionalFontSizeValue(rubyBaseFontSizeInput.value);
+  const normalizedRtFontSize = normalizeOptionalFontSizeValue(rubyRtFontSizeInput.value);
+
+  if (rubyBaseFontSizeInput.value.trim() && !normalizedBaseFontSize) {
+    message.warning('正文字号请输入 1 到 200 的数字，可省略 px');
+    return;
+  }
+  if (rubyRtFontSizeInput.value.trim() && !normalizedRtFontSize) {
+    message.warning('注音字号请输入 1 到 200 的数字，可省略 px');
+    return;
+  }
 
   if (rubySelectionMode.value === 'insert') {
     const baseText = rubyBaseText.value.trim();
@@ -2024,8 +2460,8 @@ const clearRuby = () => {
   confirmRuby();
 };
 
-const isActive = (name: string, attrs?: Record<string, any>) => {
-  return editor.value?.isActive(name, attrs) ?? false;
+const isActive = (name: string | Record<string, any>, attrs?: Record<string, any>) => {
+  return (editor.value as any)?.isActive(name, attrs) ?? false;
 };
 
 watch(editor, (instance) => {
@@ -2052,6 +2488,7 @@ const hasOpenOverlay = () => {
     || textColorPopoverShow.value
     || blockTypePopoverShow.value
     || fontSizePopoverShow.value
+    || performancePopoverShow.value
     || fontSelectorExpanded.value
     || desktopFontSelectorExpanded.value
     || linkModalShow.value
@@ -2269,6 +2706,120 @@ defineExpose({
           >
             Rb
           </n-button>
+          <n-popover
+            trigger="manual"
+            placement="bottom"
+            :show="performancePopoverShow"
+            :content-class="toolbarPopoverContentClass"
+          >
+            <template #trigger>
+              <span ref="performanceTriggerRef">
+                <n-button
+                  size="small"
+                  text
+                  :type="isActive('performance') ? 'primary' : 'default'"
+                  title="文字演出"
+                  class="tiptap-toolbar-btn"
+                  @click="performancePopoverShow ? closePerformancePopover() : openPerformancePopover()"
+                >
+                  Fx
+                </n-button>
+              </span>
+            </template>
+            <div class="tiptap-performance-panel" @pointerdown.stop="markOverlayInteraction">
+              <div class="tiptap-performance-panel__topbar">
+                <div class="tiptap-performance-panel__title">文字演出</div>
+                <button type="button" class="tiptap-performance-panel__close" @click="closePerformancePopover">×</button>
+              </div>
+              <div class="tiptap-performance-panel__section">
+                <div class="tiptap-performance-panel__header">
+                  <div class="tiptap-performance-panel__label">当前文本块</div>
+                  <div class="tiptap-performance-panel__hint">进入方式与语气实时应用到当前块</div>
+                </div>
+                <div class="tiptap-performance-panel__subsection">
+                  <div class="tiptap-performance-panel__label">文本进入</div>
+                  <div class="tiptap-performance-panel__chips">
+                    <button
+                      v-for="option in performanceEnterModeOptions"
+                      :key="option.value"
+                      type="button"
+                      class="tiptap-performance-chip"
+                      :class="{ 'is-active': performanceEnterMode === option.value }"
+                      @click="setPerformanceEnterMode(option.value)"
+                    >{{ option.label }}</button>
+                  </div>
+                </div>
+                <div class="tiptap-performance-panel__slider-grid">
+                  <div class="tiptap-performance-panel__subsection">
+                    <div class="tiptap-performance-panel__slider-head">
+                      <span class="tiptap-performance-panel__label">进入速度</span>
+                      <span class="tiptap-performance-panel__value">{{ performanceSpeedLabel }}</span>
+                    </div>
+                    <n-slider
+                      :value="performanceEnterSpeed"
+                      :min="1"
+                      :max="9"
+                      :step="1"
+                      @update:value="handlePerformanceEnterSpeedUpdate"
+                    />
+                    <div class="tiptap-performance-panel__scale">
+                      <span>慢</span>
+                      <span>中</span>
+                      <span>快</span>
+                    </div>
+                  </div>
+                  <div class="tiptap-performance-panel__subsection">
+                    <div class="tiptap-performance-panel__slider-head">
+                      <span class="tiptap-performance-panel__label">语气尺度</span>
+                      <span class="tiptap-performance-panel__value">{{ performanceToneLabel }}</span>
+                    </div>
+                    <n-slider
+                      :value="performanceToneIntensity"
+                      :min="-4"
+                      :max="4"
+                      :step="1"
+                      :marks="performanceToneMarks"
+                      @update:value="handlePerformanceToneIntensityUpdate"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div class="tiptap-performance-panel__section">
+                <div class="tiptap-performance-panel__header">
+                  <div class="tiptap-performance-panel__label">选区文字效果</div>
+                  <div class="tiptap-performance-panel__hint">仅作用于当前选区文字</div>
+                </div>
+                <div class="tiptap-performance-panel__label">文字效果</div>
+                <div class="tiptap-performance-panel__chips">
+                  <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'wave' }" @click="performanceEffect = 'wave'">波浪</button>
+                  <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'shake' }" @click="performanceEffect = 'shake'">抖动</button>
+                  <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'rainbow' }" @click="performanceEffect = 'rainbow'">虹彩</button>
+                  <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'glitch' }" @click="performanceEffect = 'glitch'">故障</button>
+                  <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceEffect === 'blink' }" @click="performanceEffect = 'blink'">闪烁</button>
+                </div>
+                <n-button size="tiny" type="primary" @click="applyPerformanceEffectToSelection">应用文字效果到选区</n-button>
+              </div>
+              <div class="tiptap-performance-panel__section">
+                <div class="tiptap-performance-panel__header">
+                  <div class="tiptap-performance-panel__label">节奏命令</div>
+                  <div class="tiptap-performance-panel__hint">仅在朦胧显现 / 逐字时生效</div>
+                </div>
+                <div class="tiptap-performance-panel__chips">
+                  <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceCommandType === 'delay' }" @click="performanceCommandType = 'delay'">停顿</button>
+                  <button type="button" class="tiptap-performance-chip" :class="{ 'is-active': performanceCommandType === 'pause' }" @click="performanceCommandType = 'pause'">暂停并高亮</button>
+                </div>
+                <div class="tiptap-performance-panel__command-row">
+                  <n-input
+                    v-if="performanceCommandType === 'delay'"
+                    v-model:value="performanceCommandValue"
+                    size="small"
+                    placeholder="停顿毫秒，例如 500"
+                  />
+                </div>
+                <n-button size="tiny" secondary @click="insertPerformanceCommandNode">插入命令</n-button>
+              </div>
+            </div>
+          </n-popover>
           <!-- 高亮颜色选择器 -->
           <n-popover
             trigger="click"
@@ -2660,6 +3211,15 @@ defineExpose({
             >
               Rb
             </n-button>
+            <n-button
+              size="tiny"
+              text
+              :type="isActive('performance') ? 'primary' : 'default'"
+              @click="openPerformancePopover"
+              title="文字演出"
+            >
+              Fx
+            </n-button>
           </div>
         </component>
       </div>
@@ -2689,6 +3249,78 @@ defineExpose({
             @keydown.enter.prevent="confirmRuby"
           />
         </n-form-item>
+        <div class="ruby-modal__advanced">
+          <button
+            type="button"
+            class="ruby-modal__toggle"
+            @click="rubyFontPanelExpanded = !rubyFontPanelExpanded"
+          >
+            <span>不同字体</span>
+            <span>{{ rubyFontPanelExpanded ? '▾' : '▸' }}</span>
+          </button>
+          <div v-if="rubyFontPanelExpanded" class="ruby-modal__panel">
+            <n-form-item label="上方注音字体">
+              <n-select
+                clearable
+                filterable
+                :loading="platformFontLoading"
+                :value="rubyRtFontId"
+                :options="rubyRtFontOptions"
+                placeholder="默认跟随正文"
+                :render-label="renderRubyRtFontLabel"
+                :render-option="renderRubyRtFontOption"
+                :menu-props="platformFontSelectMenuProps"
+                @update:value="rubyRtFontId = $event"
+                @update:show="handleRubyRtFontShowUpdate"
+              />
+            </n-form-item>
+            <n-form-item label="下方正文字体">
+              <n-select
+                clearable
+                filterable
+                :loading="platformFontLoading"
+                :value="rubyBaseFontId"
+                :options="rubyBaseFontOptions"
+                placeholder="默认跟随当前文字"
+                :render-label="renderRubyBaseFontLabel"
+                :render-option="renderRubyBaseFontOption"
+                :menu-props="platformFontSelectMenuProps"
+                @update:value="rubyBaseFontId = $event"
+                @update:show="handleRubyBaseFontShowUpdate"
+              />
+            </n-form-item>
+          </div>
+        </div>
+        <div class="ruby-modal__advanced">
+          <button
+            type="button"
+            class="ruby-modal__toggle"
+            @click="rubySizePanelExpanded = !rubySizePanelExpanded"
+          >
+            <span>不同字号</span>
+            <span>{{ rubySizePanelExpanded ? '▾' : '▸' }}</span>
+          </button>
+          <div v-if="rubySizePanelExpanded" class="ruby-modal__panel ruby-modal__panel--size">
+            <n-form-item label="上方注音字号">
+              <n-input
+                v-model:value="rubyRtFontSizeInput"
+                placeholder="默认跟随当前文字"
+                @keydown.enter.prevent="confirmRuby"
+              >
+                <template #suffix>px</template>
+              </n-input>
+            </n-form-item>
+            <n-form-item label="下方正文字号">
+              <n-input
+                v-model:value="rubyBaseFontSizeInput"
+                placeholder="默认跟随当前文字"
+                @keydown.enter.prevent="confirmRuby"
+              >
+                <template #suffix>px</template>
+              </n-input>
+            </n-form-item>
+          </div>
+        </div>
         <div class="ruby-modal__note">
           <div v-if="rubySelectionMode === 'insert'">插入模式：输入正文与注音后插入到当前光标位置。</div>
           <div v-else-if="rubySelectionMode === 'edit'">编辑模式：修改当前选区注音，或清除注音保留正文。</div>
@@ -3181,6 +3813,147 @@ defineExpose({
 
 .tiptap-toolbar-picker__custom :deep(.n-input) {
   flex: 1 1 auto;
+}
+
+.tiptap-performance-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  min-width: 20rem;
+  max-width: min(24rem, calc(100vw - 2rem));
+  padding: 0.75rem;
+}
+
+.tiptap-performance-panel__topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.tiptap-performance-panel__title {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--sc-text-primary, #0f172a);
+}
+
+.tiptap-performance-panel__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sc-bg-layer, #2f2f34) 85%, transparent);
+  color: var(--sc-text-secondary, #94a3b8);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+.tiptap-performance-panel__close:hover {
+  background: color-mix(in srgb, var(--primary-color, #60a5fa) 18%, transparent);
+  color: var(--sc-text-primary, #0f172a);
+}
+
+.tiptap-performance-panel__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.1rem 0;
+}
+
+.tiptap-performance-panel__header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.tiptap-performance-panel__hint {
+  font-size: 0.72rem;
+  color: var(--sc-text-secondary, #94a3b8);
+}
+
+.tiptap-performance-panel__subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.tiptap-performance-panel__slider-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.7rem;
+}
+
+.tiptap-performance-panel__label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--sc-text-secondary, #64748b);
+}
+
+.tiptap-performance-panel__slider-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.tiptap-performance-panel__value {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--sc-text-primary, #0f172a);
+}
+
+.tiptap-performance-panel__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tiptap-performance-panel__scale {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0 0.1rem;
+  font-size: 0.72rem;
+  color: var(--sc-text-secondary, #94a3b8);
+}
+
+.tiptap-performance-chip {
+  border: 1px solid var(--sc-border-mute, #e5e7eb);
+  background: var(--sc-bg-surface, #fff);
+  color: var(--sc-text-primary, #0f172a);
+  border-radius: 999px;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.tiptap-performance-chip.is-active {
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.35);
+  color: #1d4ed8;
+}
+
+.tiptap-performance-panel__command-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.tiptap-performance-panel :deep(.n-slider) {
+  margin: 0.15rem 0 0.15rem;
+}
+
+@media (min-width: 880px) {
+  .tiptap-performance-panel__slider-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* 颜色选择器样式 */
@@ -3686,7 +4459,8 @@ defineExpose({
     padding-top: 0.38em;
     ruby-align: center;
     ruby-position: over;
-    font-family: var(--ruby-font-family, inherit);
+    font-family: var(--ruby-base-font-family, var(--ruby-font-family, inherit));
+    font-size: var(--ruby-base-font-size, var(--ruby-font-size, inherit));
     color: var(--ruby-color, inherit);
     font-weight: var(--ruby-font-weight, inherit);
     font-style: var(--ruby-font-style, inherit);
@@ -3704,8 +4478,8 @@ defineExpose({
     left: 50%;
     bottom: calc(100% - 0.16em);
     transform: translateX(-50%);
-    font-family: var(--ruby-font-family, inherit);
-    font-size: calc(var(--ruby-font-size, 1em) * 0.58);
+    font-family: var(--ruby-rt-font-family, var(--ruby-font-family, inherit));
+    font-size: var(--ruby-rt-font-size, calc(var(--ruby-base-font-size, var(--ruby-font-size, 1em)) * 0.58));
     font-weight: var(--ruby-font-weight, inherit);
     font-style: var(--ruby-font-style, inherit);
     text-decoration: var(--ruby-text-decoration, inherit);
@@ -3796,6 +4570,30 @@ defineExpose({
   line-height: 1.45;
 }
 
+.ruby-modal__advanced {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.ruby-modal__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--sc-border-secondary, rgba(148, 163, 184, 0.28));
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--sc-bg-elevated, #f8fafc) 90%, var(--primary-color, #3b82f6) 10%);
+  color: inherit;
+  cursor: pointer;
+}
+
+.ruby-modal__panel {
+  display: grid;
+  gap: 0.25rem;
+}
+
 /* ===== 夜间模式适配 ===== */
 
 /* 编辑器容器夜间模式 */
@@ -3827,6 +4625,11 @@ defineExpose({
 :root[data-display-palette='night'] .ruby-modal__note {
   color: var(--sc-text-secondary, #cbd5e1);
   background: color-mix(in srgb, var(--sc-bg-elevated, #27272a) 86%, var(--primary-color, #60a5fa) 14%);
+}
+
+:root[data-display-palette='night'] .ruby-modal__toggle {
+  border-color: var(--sc-border-strong, rgba(82, 82, 91, 0.9));
+  background: color-mix(in srgb, var(--sc-bg-elevated, #27272a) 88%, var(--primary-color, #60a5fa) 12%);
 }
 
 /* 工具栏夜间模式 */

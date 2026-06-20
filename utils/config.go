@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/knadh/koanf/parsers/yaml"
@@ -15,6 +14,23 @@ import (
 	"github.com/knadh/koanf/v2"
 	"github.com/samber/lo"
 )
+
+const defaultSQLiteReadConnections = 2
+
+var defaultAIModelPricingByModel = map[string]AIModelPricingConfig{
+	"deepseek-v4-flash": {
+		Model:                      "deepseek-v4-flash",
+		PromptPricePer1MTokens:     1,
+		CompletionPricePer1MTokens: 2,
+		CachePricePer1MTokens:      0.02,
+	},
+	"deepseek-v4-pro": {
+		Model:                      "deepseek-v4-pro",
+		PromptPricePer1MTokens:     3,
+		CompletionPricePer1MTokens: 6,
+		CachePricePer1MTokens:      0.025,
+	},
+}
 
 type LogUploadConfig struct {
 	Enabled        bool     `json:"enabled" yaml:"enabled"`
@@ -251,23 +267,109 @@ const (
 )
 
 type CertificateConfig struct {
-	Enabled          bool                 `json:"enabled" yaml:"enabled"`
-	SubjectIP        string               `json:"subjectIp" yaml:"subjectIp"`
-	Issuer           CertificateIssuer    `json:"issuer" yaml:"issuer"`
-	Challenge        CertificateChallenge `json:"challenge" yaml:"challenge"`
-	Email            string               `json:"email" yaml:"email"`
-	StorageDir       string               `json:"storageDir" yaml:"storageDir"`
-	HTTPSServeAt     string               `json:"httpsServeAt" yaml:"httpsServeAt"`
-	ForceHTTPS       bool                 `json:"forceHTTPS" yaml:"forceHTTPS"`
-	RedirectHTTP     bool                 `json:"redirectHTTP" yaml:"redirectHTTP"`
-	CheckIntervalMinutes int              `json:"checkIntervalMinutes" yaml:"checkIntervalMinutes"`
-	RenewBeforeDays      int              `json:"renewBeforeDays" yaml:"renewBeforeDays"`
-	RetryInitialMinutes  int              `json:"retryInitialMinutes" yaml:"retryInitialMinutes"`
-	RetryMaxMinutes      int              `json:"retryMaxMinutes" yaml:"retryMaxMinutes"`
-	ZeroSSLAPIKey    string               `json:"zeroSSLAPIKey,omitempty" yaml:"zeroSSLAPIKey"`
-	ZeroSSLEABKeyID  string               `json:"zeroSSLEABKeyID,omitempty" yaml:"zeroSSLEABKeyID"`
-	ZeroSSLEABMACKey string               `json:"zeroSSLEABMACKey,omitempty" yaml:"zeroSSLEABMACKey"`
-	Staging          bool                 `json:"staging" yaml:"staging"`
+	Enabled              bool                 `json:"enabled" yaml:"enabled"`
+	SubjectIP            string               `json:"subjectIp" yaml:"subjectIp"`
+	Issuer               CertificateIssuer    `json:"issuer" yaml:"issuer"`
+	Challenge            CertificateChallenge `json:"challenge" yaml:"challenge"`
+	Email                string               `json:"email" yaml:"email"`
+	StorageDir           string               `json:"storageDir" yaml:"storageDir"`
+	HTTPSServeAt         string               `json:"httpsServeAt" yaml:"httpsServeAt"`
+	ForceHTTPS           bool                 `json:"forceHTTPS" yaml:"forceHTTPS"`
+	RedirectHTTP         bool                 `json:"redirectHTTP" yaml:"redirectHTTP"`
+	CheckIntervalMinutes int                  `json:"checkIntervalMinutes" yaml:"checkIntervalMinutes"`
+	RenewBeforeDays      int                  `json:"renewBeforeDays" yaml:"renewBeforeDays"`
+	RetryInitialMinutes  int                  `json:"retryInitialMinutes" yaml:"retryInitialMinutes"`
+	RetryMaxMinutes      int                  `json:"retryMaxMinutes" yaml:"retryMaxMinutes"`
+	ZeroSSLAPIKey        string               `json:"zeroSSLAPIKey,omitempty" yaml:"zeroSSLAPIKey"`
+	ZeroSSLEABKeyID      string               `json:"zeroSSLEABKeyID,omitempty" yaml:"zeroSSLEABKeyID"`
+	ZeroSSLEABMACKey     string               `json:"zeroSSLEABMACKey,omitempty" yaml:"zeroSSLEABMACKey"`
+	Staging              bool                 `json:"staging" yaml:"staging"`
+}
+
+type AIRoutingMode string
+
+const (
+	AIRoutingModeRoundRobin AIRoutingMode = "round_robin"
+)
+
+type AIFeatureAccessMode string
+
+const (
+	AIFeatureAccessAll           AIFeatureAccessMode = "all"
+	AIFeatureAccessUsers         AIFeatureAccessMode = "users"
+	AIFeatureAccessWorlds        AIFeatureAccessMode = "worlds"
+	AIFeatureAccessUsersOrWorlds AIFeatureAccessMode = "users_or_worlds"
+)
+
+type AIModelParams struct {
+	Temperature   *float32 `json:"temperature,omitempty" yaml:"temperature,omitempty"`
+	MaxTokens     int      `json:"maxTokens,omitempty" yaml:"maxTokens,omitempty"`
+	MaxInputChars int      `json:"maxInputChars,omitempty" yaml:"maxInputChars,omitempty"`
+	TopP          *float32 `json:"topP,omitempty" yaml:"topP,omitempty"`
+}
+
+type AIFeatureAccessConfig struct {
+	Mode     AIFeatureAccessMode `json:"mode" yaml:"mode"`
+	UserIDs  []string            `json:"userIds" yaml:"userIds"`
+	WorldIDs []string            `json:"worldIds" yaml:"worldIds"`
+}
+
+type AIFeatureConfig struct {
+	Enabled        bool                  `json:"enabled" yaml:"enabled"`
+	UserCustomOnly bool                  `json:"userCustomOnly" yaml:"userCustomOnly"`
+	DefaultPrompt  string                `json:"defaultPrompt" yaml:"defaultPrompt"`
+	DefaultModel   string                `json:"defaultModel" yaml:"defaultModel"`
+	Params         AIModelParams         `json:"params" yaml:"params"`
+	Access         AIFeatureAccessConfig `json:"access" yaml:"access"`
+}
+
+type AIRetryConfig struct {
+	MaxAttempts    int `json:"maxAttempts" yaml:"maxAttempts"`
+	InitialDelayMs int `json:"initialDelayMs" yaml:"initialDelayMs"`
+	MaxDelayMs     int `json:"maxDelayMs" yaml:"maxDelayMs"`
+}
+
+type AIRoutingConfig struct {
+	Mode AIRoutingMode `json:"mode" yaml:"mode"`
+}
+
+type AIProviderConfig struct {
+	ID            string   `json:"id" yaml:"id"`
+	Name          string   `json:"name" yaml:"name"`
+	Enabled       bool     `json:"enabled" yaml:"enabled"`
+	BaseURL       string   `json:"baseUrl" yaml:"baseUrl"`
+	APIKey        string   `json:"apiKey,omitempty" yaml:"apiKey"`
+	Models        []string `json:"models" yaml:"models"`
+	SelectedModel string   `json:"selectedModel,omitempty" yaml:"selectedModel,omitempty"`
+	Weight        int      `json:"weight" yaml:"weight"`
+}
+
+type AIModelPricingConfig struct {
+	ProviderID                       string  `json:"providerId" yaml:"providerId"`
+	Model                            string  `json:"model" yaml:"model"`
+	PromptPricePer1MTokens           float64 `json:"promptPricePer1MTokens" yaml:"promptPricePer1MTokens"`
+	CompletionPricePer1MTokens       float64 `json:"completionPricePer1MTokens" yaml:"completionPricePer1MTokens"`
+	CachePricePer1MTokens            float64 `json:"cachePricePer1MTokens" yaml:"cachePricePer1MTokens"`
+	LegacyPromptPricePer1KTokens     float64 `json:"-" yaml:"promptPricePer1KTokens,omitempty"`
+	LegacyCompletionPricePer1KTokens float64 `json:"-" yaml:"completionPricePer1KTokens,omitempty"`
+	LegacyCachePricePer1KTokens      float64 `json:"-" yaml:"cachePricePer1KTokens,omitempty"`
+}
+
+type AIQuotaPolicyConfig struct {
+	DailyLimit    *float64 `json:"dailyLimit,omitempty" yaml:"dailyLimit,omitempty"`
+	MonthlyLimit  *float64 `json:"monthlyLimit,omitempty" yaml:"monthlyLimit,omitempty"`
+	LifetimeLimit *float64 `json:"lifetimeLimit,omitempty" yaml:"lifetimeLimit,omitempty"`
+}
+
+type AIConfig struct {
+	Enabled          bool                       `json:"enabled" yaml:"enabled"`
+	Routing          AIRoutingConfig            `json:"routing" yaml:"routing"`
+	Retry            AIRetryConfig              `json:"retry" yaml:"retry"`
+	Providers        []AIProviderConfig         `json:"providers" yaml:"providers"`
+	Features         map[string]AIFeatureConfig `json:"features" yaml:"features"`
+	Pricing          []AIModelPricingConfig     `json:"pricing" yaml:"pricing"`
+	LogRetentionDays int                        `json:"logRetentionDays" yaml:"logRetentionDays"`
+	QuotaDefault     AIQuotaPolicyConfig        `json:"quotaDefault" yaml:"quotaDefault"`
 }
 
 type PerformanceProfilerConfig struct {
@@ -280,42 +382,43 @@ type PerformanceProfilerConfig struct {
 }
 
 type AppConfig struct {
-	ServeAt                   string                  `json:"serveAt" yaml:"serveAt"`
-	Domain                    string                  `json:"domain" yaml:"domain"`
-	ImageBaseURL              string                  `json:"imageBaseUrl" yaml:"imageBaseUrl"`
-	RegisterOpen              bool                    `json:"registerOpen" yaml:"registerOpen"`
-	RegisterInviteCode        string                  `json:"registerInviteCode" yaml:"registerInviteCode"`
-	RegisterInviteRequired    bool                    `json:"registerInviteRequired" yaml:"-"`
-	WebUrl                    string                  `json:"webUrl" yaml:"webUrl"`
-	PageTitle                 string                  `json:"pageTitle" yaml:"pageTitle"`
-	PageDescription           string                  `json:"pageDescription" yaml:"pageDescription"`
-	FaviconAttachmentID       string                  `json:"faviconAttachmentId" yaml:"faviconAttachmentId"`
-	ChatHistoryPersistentDays int64                   `json:"chatHistoryPersistentDays" yaml:"chatHistoryPersistentDays"`
-	MessageSortBasis          MessageSortBasis        `json:"messageSortBasis" yaml:"messageSortBasis"`
-	TypingOrderWindowMs       int64                   `json:"typingOrderWindowMs" yaml:"typingOrderWindowMs"`
-	ImageSizeLimit            int64                   `json:"imageSizeLimit" yaml:"imageSizeLimit"` // in kb
-	ImageCompress             bool                    `json:"imageCompress" yaml:"imageCompress"`
-	ImageCompressQuality      int                     `json:"imageCompressQuality" yaml:"imageCompressQuality"`
-	KeywordMaxLength          int64                   `json:"keywordMaxLength" yaml:"keywordMaxLength"` // 术语最大字数
-	DSN                       string                  `json:"-" yaml:"dbUrl" koanf:"dbUrl"`
-	BuiltInSealBotEnable      bool                    `json:"builtInSealBotEnable" yaml:"builtInSealBotEnable"` // 内置小海豹启用
-	Version                   int                     `json:"version" yaml:"version"`
-	GalleryQuotaMB            int64                   `json:"galleryQuotaMB" yaml:"galleryQuotaMB"`
-	LogUpload                 LogUploadConfig         `json:"logUpload" yaml:"logUpload"`
-	Audio                     AudioConfig             `json:"audio" yaml:"audio"`
-	Export                    ExportConfig            `json:"export" yaml:"export"`
-	Storage                   StorageConfig           `json:"storage" yaml:"storage"`
-	SQLite                    SQLiteConfig            `json:"sqlite" yaml:"sqlite"`
-	Captcha                   CaptchaConfig           `json:"captcha" yaml:"captcha"`
-	EmailNotification         EmailNotificationConfig `json:"emailNotification" yaml:"emailNotification"`
-	EmailAuth                 EmailAuthConfig         `json:"emailAuth" yaml:"emailAuth"`
-	UpdateCheck               UpdateCheckConfig       `json:"updateCheck" yaml:"updateCheck"`
-	Backup                    BackupConfig            `json:"backup" yaml:"backup"`
-	AuthSession               AuthSessionConfig       `json:"authSession" yaml:"authSession"`
-	LoginBackground           LoginBackgroundConfig   `json:"loginBackground" yaml:"loginBackground"`
-	ThemeManagement           ThemeManagementConfig   `json:"themeManagement" yaml:"themeManagement"`
-	UITextReplace             UITextReplaceConfig     `json:"uiTextReplace" yaml:"uiTextReplace"`
-	Certificate               CertificateConfig       `json:"certificate" yaml:"certificate"`
+	ServeAt                   string                    `json:"serveAt" yaml:"serveAt"`
+	Domain                    string                    `json:"domain" yaml:"domain"`
+	ImageBaseURL              string                    `json:"imageBaseUrl" yaml:"imageBaseUrl"`
+	RegisterOpen              bool                      `json:"registerOpen" yaml:"registerOpen"`
+	RegisterInviteCode        string                    `json:"registerInviteCode" yaml:"registerInviteCode"`
+	RegisterInviteRequired    bool                      `json:"registerInviteRequired" yaml:"-"`
+	WebUrl                    string                    `json:"webUrl" yaml:"webUrl"`
+	PageTitle                 string                    `json:"pageTitle" yaml:"pageTitle"`
+	PageDescription           string                    `json:"pageDescription" yaml:"pageDescription"`
+	FaviconAttachmentID       string                    `json:"faviconAttachmentId" yaml:"faviconAttachmentId"`
+	ChatHistoryPersistentDays int64                     `json:"chatHistoryPersistentDays" yaml:"chatHistoryPersistentDays"`
+	MessageSortBasis          MessageSortBasis          `json:"messageSortBasis" yaml:"messageSortBasis"`
+	TypingOrderWindowMs       int64                     `json:"typingOrderWindowMs" yaml:"typingOrderWindowMs"`
+	ImageSizeLimit            int64                     `json:"imageSizeLimit" yaml:"imageSizeLimit"` // in kb
+	ImageCompress             bool                      `json:"imageCompress" yaml:"imageCompress"`
+	ImageCompressQuality      int                       `json:"imageCompressQuality" yaml:"imageCompressQuality"`
+	KeywordMaxLength          int64                     `json:"keywordMaxLength" yaml:"keywordMaxLength"` // 术语最大字数
+	DSN                       string                    `json:"-" yaml:"dbUrl" koanf:"dbUrl"`
+	BuiltInSealBotEnable      bool                      `json:"builtInSealBotEnable" yaml:"builtInSealBotEnable"` // 内置小海豹启用
+	Version                   int                       `json:"version" yaml:"version"`
+	GalleryQuotaMB            int64                     `json:"galleryQuotaMB" yaml:"galleryQuotaMB"`
+	LogUpload                 LogUploadConfig           `json:"logUpload" yaml:"logUpload"`
+	Audio                     AudioConfig               `json:"audio" yaml:"audio"`
+	Export                    ExportConfig              `json:"export" yaml:"export"`
+	Storage                   StorageConfig             `json:"storage" yaml:"storage"`
+	SQLite                    SQLiteConfig              `json:"sqlite" yaml:"sqlite"`
+	Captcha                   CaptchaConfig             `json:"captcha" yaml:"captcha"`
+	EmailNotification         EmailNotificationConfig   `json:"emailNotification" yaml:"emailNotification"`
+	EmailAuth                 EmailAuthConfig           `json:"emailAuth" yaml:"emailAuth"`
+	UpdateCheck               UpdateCheckConfig         `json:"updateCheck" yaml:"updateCheck"`
+	Backup                    BackupConfig              `json:"backup" yaml:"backup"`
+	AuthSession               AuthSessionConfig         `json:"authSession" yaml:"authSession"`
+	LoginBackground           LoginBackgroundConfig     `json:"loginBackground" yaml:"loginBackground"`
+	ThemeManagement           ThemeManagementConfig     `json:"themeManagement" yaml:"themeManagement"`
+	UITextReplace             UITextReplaceConfig       `json:"uiTextReplace" yaml:"uiTextReplace"`
+	Certificate               CertificateConfig         `json:"certificate" yaml:"certificate"`
+	AI                        AIConfig                  `json:"ai" yaml:"ai"`
 	PerformanceProfiler       PerformanceProfilerConfig `json:"performanceProfiler" yaml:"performanceProfiler"`
 }
 
@@ -434,7 +537,7 @@ func ReadConfig() *AppConfig {
 			CacheSizeKB:             512000,
 			Synchronous:             "NORMAL",
 			TxLockImmediate:         true,
-			ReadConnections:         runtime.NumCPU(),
+			ReadConnections:         defaultSQLiteReadConnections,
 			OptimizeOnInit:          true,
 			AutoVacuumEnabled:       true,
 			AutoVacuumIntervalHours: 168,
@@ -500,6 +603,7 @@ func ReadConfig() *AppConfig {
 			Rules:   DefaultUITextReplaceRules(),
 		},
 		Certificate: defaultCertificateConfig(),
+		AI:          NormalizeAIConfig(AIConfig{}),
 		PerformanceProfiler: PerformanceProfilerConfig{
 			Enabled:                false,
 			OutputDir:              "./data/perf",
@@ -584,6 +688,7 @@ func ReadConfig() *AppConfig {
 	config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
 	config.UITextReplace = NormalizeUITextReplaceConfig(config.UITextReplace)
 	config.Certificate = NormalizeCertificateConfig(config.Certificate)
+	config.AI = NormalizeAIConfig(config.AI)
 	applyPerformanceProfilerDefaults(&config.PerformanceProfiler)
 
 	k.Print()
@@ -629,16 +734,374 @@ func NormalizeCertificateConfig(cfg CertificateConfig) CertificateConfig {
 
 func defaultCertificateConfig() CertificateConfig {
 	return NormalizeCertificateConfig(CertificateConfig{
-		Issuer:       CertificateIssuerLetsEncryptShortLived,
-		Challenge:    CertificateChallengeHTTP01,
-		StorageDir:   defaultCertificateStorageDir,
-		ForceHTTPS:   true,
-		RedirectHTTP: true,
+		Issuer:               CertificateIssuerLetsEncryptShortLived,
+		Challenge:            CertificateChallengeHTTP01,
+		StorageDir:           defaultCertificateStorageDir,
+		ForceHTTPS:           true,
+		RedirectHTTP:         true,
 		CheckIntervalMinutes: 360,
 		RenewBeforeDays:      14,
 		RetryInitialMinutes:  5,
 		RetryMaxMinutes:      240,
 	})
+}
+
+const legacyAIBattleSummaryPrompt = "你是跑团战报助手。根据提供内容整理清晰、忠实原意的战报摘要。"
+
+const defaultAIBattleSummaryPrompt = `你是一位资深 TRPG 编年史官。你擅长将纷繁的跑团记录转化为精炼、流畅、富有感染力的史诗战报。你的叙述客观、平实而生动，不使用任何游戏术语，让所有读者都能沉浸其中。
+## 核心任务
+阅读用户提供的【TRPG跑团LOG】，将其重写为一篇**600字以内**的完整战报。
+## 铁则
+1.  **绝对忠实**：只根据LOG中已发生的事实进行叙述，禁止推测、补充或延伸情节。
+2.  **受众优先**：面向跑团参与者及普通读者，使用平铺直叙的叙事语言。  
+    *   严禁出现“大成功”、“过侦查”、“检定”等任何TRPG术语，必须转化为自然描述（例如：“他猛地察觉到了暗处的异样”）。  
+    *   严禁使用“队员”、“PC”、“PL”、“KP”等代称，一律使用角色具体姓名或“一行人”、“冒险者们”等自然称谓。
+3.  **内容筛选**：  
+    *   【最高优先】关键战斗流程、重大决策、剧情转折、伏笔揭示、重要背景信息。  
+    *   【次要优先】精彩的角色互动、关键环境渲染。  
+    *   【必须舍弃】重复的机械检定、无意义的闲聊、琐碎的动作复述。
+4.  **前情提要严控**：如果LOG开头包含“前情提要”段落，其内容**仅供你理解故事背景**，绝对不可写入最终战报。战报必须只聚焦于本次LOG新发生的事件。
+5.  **标题要求**：必须添加**主标题**和多个**分节小标题**。所有标题都应是较长的、具有概括性的短语，完整覆盖该段情节，不得遗漏。标题格式参考：
+    *   “20.前路漫漫、木天使捎来消息..、纳德里堡垒密会、废弃要塞中的会晤”
+    *   “过去，现在，历史，真相与质询、神器碎片与相似性带来的隐秘联系”
+    *   “巫妖的赠礼、坚定决心、通往绞首园的死寂之路、路途遭遇：默语魔道的亡灵流水线”
+
+## 输出格式（严格执行）
+只输出以下纯文本结构，不要添加任何开场白、结束语或注释：
+[主标题：用一句较长短语概括全文核心事件]
+[子标题1：概括该阶段事件的短语]
+（内容段落，只描述，不评论）
+[子标题2：概括该阶段事件的短语]
+（内容段落）
+（以此类推，直至故事结束）
+## 内部工作流程（不向用户展示）
+在生成最终战报前，你必须在内部完成以下思考，但不输出：
+1.  梳理LOG整体脉络，识别并跳过任何“前情提要”段落，只将本次新发生的剧情作为核心叙事弧。
+2.  按优先级筛选信息，拟订时间线大纲和子标题。
+3.  起草战报，确保语言客观、连贯、无任何游戏术语。
+4.  最终检查：字数是否≤600？是否包含任何违禁术语或代称？是否混入了前情提要的内容？是否忠实于原文？修正所有问题后，再输出符合格式的战报。`
+
+const legacyAIPolishPrompt = "你是中文文本润色助手。保持原意，修正病句，提升流畅度，不要增加无关信息。"
+
+const defaultAIPolishPrompt = "你是中文文本润色助手，润色以下TRPG文本，仅修正语病、不通顺处及不当用词，不改变原意。"
+
+func normalizeAIFeaturePrompt(featureKey string, prompt string) string {
+	trimmed := strings.TrimSpace(prompt)
+	switch featureKey {
+	case "battle_summary":
+		if trimmed == "" || trimmed == legacyAIBattleSummaryPrompt {
+			return defaultAIBattleSummaryPrompt
+		}
+	case "polish":
+		if trimmed == "" || trimmed == legacyAIPolishPrompt {
+			return defaultAIPolishPrompt
+		}
+	}
+	return trimmed
+}
+
+func defaultAIFeatureConfig(featureKey string) AIFeatureConfig {
+	switch featureKey {
+	case "battle_summary":
+		return AIFeatureConfig{
+			Enabled:        false,
+			UserCustomOnly: false,
+			DefaultPrompt:  defaultAIBattleSummaryPrompt,
+			DefaultModel:   "deepseek-v4-flash",
+			Params: AIModelParams{
+				MaxInputChars: 30000,
+			},
+			Access: AIFeatureAccessConfig{
+				Mode: AIFeatureAccessAll,
+			},
+		}
+	default:
+		return AIFeatureConfig{
+			Enabled:        false,
+			UserCustomOnly: false,
+			DefaultPrompt:  defaultAIPolishPrompt,
+			DefaultModel:   "deepseek-v4-flash",
+			Access: AIFeatureAccessConfig{
+				Mode: AIFeatureAccessAll,
+			},
+		}
+	}
+}
+
+func normalizeAIIdentifierList(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func resolveDefaultAIModelPricing(model string) (AIModelPricingConfig, bool) {
+	item, ok := defaultAIModelPricingByModel[strings.TrimSpace(model)]
+	if !ok {
+		return AIModelPricingConfig{}, false
+	}
+	return item, true
+}
+
+func isZeroAIModelPricing(pricing AIModelPricingConfig) bool {
+	return pricing.PromptPricePer1MTokens == 0 &&
+		pricing.CompletionPricePer1MTokens == 0 &&
+		pricing.CachePricePer1MTokens == 0
+}
+
+func NormalizeAIConfig(cfg AIConfig) AIConfig {
+	result := AIConfig{
+		Enabled:          cfg.Enabled,
+		Routing:          cfg.Routing,
+		Retry:            cfg.Retry,
+		Providers:        make([]AIProviderConfig, 0, max(1, len(cfg.Providers))),
+		Features:         make(map[string]AIFeatureConfig, max(2, len(cfg.Features))),
+		Pricing:          make([]AIModelPricingConfig, 0, len(cfg.Pricing)),
+		LogRetentionDays: cfg.LogRetentionDays,
+		QuotaDefault:     cfg.QuotaDefault,
+	}
+	if result.Routing.Mode == "" {
+		result.Routing.Mode = AIRoutingModeRoundRobin
+	}
+	if result.Retry.MaxAttempts <= 0 {
+		result.Retry.MaxAttempts = 2
+	}
+	if result.Retry.InitialDelayMs <= 0 {
+		result.Retry.InitialDelayMs = 300
+	}
+	if result.Retry.MaxDelayMs <= 0 {
+		result.Retry.MaxDelayMs = 3000
+	}
+	if result.LogRetentionDays <= 0 {
+		result.LogRetentionDays = 30
+	}
+
+	sourceProviders := cfg.Providers
+	if len(sourceProviders) == 0 {
+		sourceProviders = []AIProviderConfig{{
+			ID:      "deepseek-default",
+			Name:    "DeepSeek",
+			Enabled: true,
+			BaseURL: "https://api.deepseek.com/v1",
+			Models:  []string{"deepseek-v4-flash"},
+			Weight:  1,
+		}}
+	}
+	for idx, provider := range sourceProviders {
+		id := strings.TrimSpace(provider.ID)
+		if id == "" {
+			id = fmt.Sprintf("ai-provider-%d", idx+1)
+		}
+		name := strings.TrimSpace(provider.Name)
+		if name == "" {
+			name = id
+		}
+		models := make([]string, 0, len(provider.Models))
+		for _, model := range provider.Models {
+			model = strings.TrimSpace(model)
+			if model == "" {
+				continue
+			}
+			models = append(models, model)
+		}
+		result.Providers = append(result.Providers, AIProviderConfig{
+			ID:            id,
+			Name:          name,
+			Enabled:       provider.Enabled,
+			BaseURL:       strings.TrimSpace(provider.BaseURL),
+			APIKey:        strings.TrimSpace(provider.APIKey),
+			Models:        models,
+			SelectedModel: strings.TrimSpace(provider.SelectedModel),
+			Weight:        max(1, provider.Weight),
+		})
+	}
+
+	for _, featureKey := range []string{"polish", "battle_summary"} {
+		feature := defaultAIFeatureConfig(featureKey)
+		if raw, ok := cfg.Features[featureKey]; ok {
+			feature.Enabled = raw.Enabled
+			feature.UserCustomOnly = raw.UserCustomOnly
+			if prompt := normalizeAIFeaturePrompt(featureKey, raw.DefaultPrompt); prompt != "" {
+				feature.DefaultPrompt = prompt
+			}
+			if model := strings.TrimSpace(raw.DefaultModel); model != "" {
+				feature.DefaultModel = model
+			}
+			feature.Params = raw.Params
+			feature.Access.Mode = raw.Access.Mode
+			feature.Access.UserIDs = normalizeAIIdentifierList(raw.Access.UserIDs)
+			feature.Access.WorldIDs = normalizeAIIdentifierList(raw.Access.WorldIDs)
+		}
+		if featureKey == "battle_summary" && feature.Params.MaxInputChars <= 0 {
+			feature.Params.MaxInputChars = defaultAIFeatureConfig(featureKey).Params.MaxInputChars
+		}
+		if feature.Access.Mode == "" {
+			feature.Access.Mode = AIFeatureAccessAll
+		}
+		result.Features[featureKey] = feature
+	}
+
+	pricingIndexByKey := make(map[string]int, len(cfg.Pricing))
+	for _, pricing := range cfg.Pricing {
+		providerID := strings.TrimSpace(pricing.ProviderID)
+		model := strings.TrimSpace(pricing.Model)
+		if providerID == "" || model == "" {
+			continue
+		}
+		promptPricePer1M := pricing.PromptPricePer1MTokens
+		completionPricePer1M := pricing.CompletionPricePer1MTokens
+		cachePricePer1M := pricing.CachePricePer1MTokens
+		if promptPricePer1M == 0 && pricing.LegacyPromptPricePer1KTokens > 0 {
+			promptPricePer1M = pricing.LegacyPromptPricePer1KTokens * 1000
+		}
+		if completionPricePer1M == 0 && pricing.LegacyCompletionPricePer1KTokens > 0 {
+			completionPricePer1M = pricing.LegacyCompletionPricePer1KTokens * 1000
+		}
+		if cachePricePer1M == 0 && pricing.LegacyCachePricePer1KTokens > 0 {
+			cachePricePer1M = pricing.LegacyCachePricePer1KTokens * 1000
+		}
+		normalizedPricing := AIModelPricingConfig{
+			ProviderID:                 providerID,
+			Model:                      model,
+			PromptPricePer1MTokens:     promptPricePer1M,
+			CompletionPricePer1MTokens: completionPricePer1M,
+			CachePricePer1MTokens:      cachePricePer1M,
+		}
+		if defaultPricing, ok := resolveDefaultAIModelPricing(model); ok && isZeroAIModelPricing(normalizedPricing) {
+			normalizedPricing.PromptPricePer1MTokens = defaultPricing.PromptPricePer1MTokens
+			normalizedPricing.CompletionPricePer1MTokens = defaultPricing.CompletionPricePer1MTokens
+			normalizedPricing.CachePricePer1MTokens = defaultPricing.CachePricePer1MTokens
+		}
+		pricingIndexByKey[providerID+"::"+model] = len(result.Pricing)
+		result.Pricing = append(result.Pricing, normalizedPricing)
+	}
+
+	for _, provider := range result.Providers {
+		for _, model := range provider.Models {
+			defaultPricing, ok := resolveDefaultAIModelPricing(model)
+			if !ok {
+				continue
+			}
+			key := provider.ID + "::" + model
+			if _, exists := pricingIndexByKey[key]; exists {
+				continue
+			}
+			result.Pricing = append(result.Pricing, AIModelPricingConfig{
+				ProviderID:                 provider.ID,
+				Model:                      model,
+				PromptPricePer1MTokens:     defaultPricing.PromptPricePer1MTokens,
+				CompletionPricePer1MTokens: defaultPricing.CompletionPricePer1MTokens,
+				CachePricePer1MTokens:      defaultPricing.CachePricePer1MTokens,
+			})
+			pricingIndexByKey[key] = len(result.Pricing) - 1
+		}
+	}
+
+	return result
+}
+
+func validateAIQuotaLimit(limit *float64, label string) error {
+	if limit == nil {
+		return nil
+	}
+	if *limit < 0 {
+		return fmt.Errorf("AI %s额度不能小于 0", label)
+	}
+	return nil
+}
+
+func ValidateAIConfig(cfg AIConfig) error {
+	cfg = NormalizeAIConfig(cfg)
+	if cfg.Retry.MaxAttempts <= 0 {
+		return fmt.Errorf("AI 重试次数必须大于 0")
+	}
+	if cfg.Retry.InitialDelayMs <= 0 || cfg.Retry.MaxDelayMs <= 0 {
+		return fmt.Errorf("AI 重试延迟必须大于 0")
+	}
+	if cfg.Retry.MaxDelayMs < cfg.Retry.InitialDelayMs {
+		return fmt.Errorf("AI 最大重试延迟不能小于初始延迟")
+	}
+	if cfg.LogRetentionDays <= 0 {
+		return fmt.Errorf("AI 日志保留天数必须大于 0")
+	}
+	if cfg.Routing.Mode != AIRoutingModeRoundRobin {
+		return fmt.Errorf("AI 路由模式无效: %s", cfg.Routing.Mode)
+	}
+	if len(cfg.Providers) == 0 {
+		return fmt.Errorf("AI provider 不能为空")
+	}
+	seenProviderIDs := make(map[string]struct{}, len(cfg.Providers))
+	for _, provider := range cfg.Providers {
+		if provider.ID == "" {
+			return fmt.Errorf("AI provider id 不能为空")
+		}
+		if _, exists := seenProviderIDs[provider.ID]; exists {
+			return fmt.Errorf("AI provider id 重复: %s", provider.ID)
+		}
+		seenProviderIDs[provider.ID] = struct{}{}
+		if provider.BaseURL == "" {
+			return fmt.Errorf("AI provider %s baseUrl 不能为空", provider.ID)
+		}
+		parsed, err := url.Parse(provider.BaseURL)
+		if err != nil || parsed == nil || parsed.Scheme == "" || parsed.Host == "" {
+			return fmt.Errorf("AI provider %s baseUrl 非法", provider.ID)
+		}
+		if parsed.Scheme != "https" && parsed.Scheme != "http" {
+			return fmt.Errorf("AI provider %s baseUrl 协议非法", provider.ID)
+		}
+		if len(provider.Models) == 0 {
+			return fmt.Errorf("AI provider %s 至少需要一个模型", provider.ID)
+		}
+	}
+	seenPricingKeys := make(map[string]struct{}, len(cfg.Pricing))
+	for _, pricing := range cfg.Pricing {
+		providerID := strings.TrimSpace(pricing.ProviderID)
+		model := strings.TrimSpace(pricing.Model)
+		if providerID == "" || model == "" {
+			return fmt.Errorf("AI pricing 的 providerId 与 model 不能为空")
+		}
+		if pricing.PromptPricePer1MTokens < 0 || pricing.CompletionPricePer1MTokens < 0 || pricing.CachePricePer1MTokens < 0 {
+			return fmt.Errorf("AI pricing 单价不能小于 0")
+		}
+		key := providerID + "::" + model
+		if _, exists := seenPricingKeys[key]; exists {
+			return fmt.Errorf("AI pricing 规则重复: %s / %s", providerID, model)
+		}
+		seenPricingKeys[key] = struct{}{}
+	}
+	if err := validateAIQuotaLimit(cfg.QuotaDefault.DailyLimit, "日"); err != nil {
+		return err
+	}
+	if err := validateAIQuotaLimit(cfg.QuotaDefault.MonthlyLimit, "月"); err != nil {
+		return err
+	}
+	if err := validateAIQuotaLimit(cfg.QuotaDefault.LifetimeLimit, "总"); err != nil {
+		return err
+	}
+	for featureKey, feature := range cfg.Features {
+		if strings.TrimSpace(feature.DefaultPrompt) == "" {
+			return fmt.Errorf("AI 功能 %s prompt 不能为空", featureKey)
+		}
+		if strings.TrimSpace(feature.DefaultModel) == "" {
+			return fmt.Errorf("AI 功能 %s model 不能为空", featureKey)
+		}
+		switch feature.Access.Mode {
+		case AIFeatureAccessAll, AIFeatureAccessUsers, AIFeatureAccessWorlds, AIFeatureAccessUsersOrWorlds:
+		default:
+			return fmt.Errorf("AI 功能 %s access mode 非法: %s", featureKey, feature.Access.Mode)
+		}
+	}
+	return nil
 }
 
 func ValidateCertificateConfig(cfg CertificateConfig) error {
@@ -729,7 +1192,7 @@ func applySQLiteDefaults(cfg *SQLiteConfig) {
 		cfg.Synchronous = "NORMAL"
 	}
 	if cfg.ReadConnections <= 0 {
-		cfg.ReadConnections = runtime.NumCPU()
+		cfg.ReadConnections = defaultSQLiteReadConnections
 	}
 	if cfg.AutoVacuumIntervalHours <= 0 {
 		cfg.AutoVacuumIntervalHours = 168
@@ -1114,6 +1577,7 @@ func WriteConfig(config *AppConfig) {
 		config.Storage.normalize()
 		config.Certificate = NormalizeCertificateConfig(config.Certificate)
 		config.UITextReplace = NormalizeUITextReplaceConfig(config.UITextReplace)
+		config.AI = NormalizeAIConfig(config.AI)
 		config.ImageCompressQuality = normalizeImageCompressQuality(config.ImageCompressQuality)
 		config.MessageSortBasis = NormalizeMessageSortBasis(config.MessageSortBasis)
 		applyPerformanceProfilerDefaults(&config.PerformanceProfiler)
@@ -1176,6 +1640,16 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("certificate.zeroSSLEABKeyID", config.Certificate.ZeroSSLEABKeyID)
 		_ = k.Set("certificate.zeroSSLEABMACKey", config.Certificate.ZeroSSLEABMACKey)
 		_ = k.Set("certificate.staging", config.Certificate.Staging)
+		_ = k.Set("ai.enabled", config.AI.Enabled)
+		_ = k.Set("ai.routing.mode", string(config.AI.Routing.Mode))
+		_ = k.Set("ai.retry.maxAttempts", config.AI.Retry.MaxAttempts)
+		_ = k.Set("ai.retry.initialDelayMs", config.AI.Retry.InitialDelayMs)
+		_ = k.Set("ai.retry.maxDelayMs", config.AI.Retry.MaxDelayMs)
+		_ = k.Set("ai.providers", config.AI.Providers)
+		_ = k.Set("ai.features", config.AI.Features)
+		_ = k.Set("ai.pricing", config.AI.Pricing)
+		_ = k.Set("ai.logRetentionDays", config.AI.LogRetentionDays)
+		_ = k.Set("ai.quotaDefault", config.AI.QuotaDefault)
 		_ = k.Set("performanceProfiler.enabled", config.PerformanceProfiler.Enabled)
 		_ = k.Set("performanceProfiler.outputDir", config.PerformanceProfiler.OutputDir)
 		_ = k.Set("performanceProfiler.lightSampleIntervalSec", config.PerformanceProfiler.LightSampleIntervalSec)

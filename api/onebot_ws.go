@@ -49,16 +49,20 @@ func oneBotForwardWSHandler(role oneBotSessionRole) func(*websocket.Conn) {
 		session.SelfID = selfID
 		getOneBotRuntime().registerSession(session)
 		defer getOneBotRuntime().unregisterSession(session.ID)
+		stopLiveness := startOneBotWSLiveness(rawConn, session)
+		defer stopLiveness()
 
 		for {
 			_, body, err := rawConn.ReadMessage()
 			if err != nil {
 				return
 			}
+			refreshOneBotReadDeadline(rawConn, session)
 			req, err := decodeOneBotActionMessage(body)
 			if err != nil {
 				if writeErr := session.sendJSON(oneBotFailureResponse(oneBotBadRequest("invalid request"), nil)); writeErr != nil {
 					log.Printf("[onebot] 写入错误响应失败: %v", writeErr)
+					return
 				}
 				continue
 			}

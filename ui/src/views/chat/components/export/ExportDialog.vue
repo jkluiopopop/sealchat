@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useMessage } from 'naive-ui'
 import { Settings } from '@vicons/ionicons5'
 import { useUtilsStore } from '@/stores/utils'
 import { useDisplayStore } from '@/stores/display'
 import { useChatStore } from '@/stores/chat'
+import {
+  applyCalendarActiveDayHighlights,
+  buildPanelMonthActiveDayMap,
+  parsePanelMonthKey,
+} from './calendarActiveDayHighlight'
+import ActiveDayDateRangePicker from './ActiveDayDateRangePicker.vue'
 
 interface ExportParams {
   format: string
@@ -33,11 +39,13 @@ interface ExportColorProfileEntry {
 interface Props {
   visible: boolean
   channelId?: string
+  battleSummaryEnabled?: boolean
 }
 
 interface Emits {
   (e: 'update:visible', visible: boolean): void
   (e: 'export', params: ExportParams): void
+  (e: 'request-battle-summary'): void
 }
 
 const props = defineProps<Props>()
@@ -137,6 +145,9 @@ interface SpeakerOption {
 const colorProfileRows = ref<ColorProfileRow[]>([])
 const editingColorProfileNameId = ref('')
 const colorProfileNameInputRefs = new Map<string, any>()
+const activeDaysByMonth = ref<Record<string, string[]>>({})
+const loadingMonths = ref<Set<string>>(new Set())
+let calendarMonthObserver: MutationObserver | null = null
 
 const timePreset = ref<'none' | '1d' | '7d' | '30d' | 'custom'>('none')
 const isApplyingPreset = ref(false)
@@ -154,6 +165,10 @@ const form = reactive<ExportParams>({
   autoUpload: false,
   maxExportMessages: SLICE_LIMIT_DEFAULT,
   maxExportConcurrency: CONCURRENCY_DEFAULT,
+})
+
+const activeDaySetByMonth = computed(() => {
+  return buildPanelMonthActiveDayMap(activeDaysByMonth.value)
 })
 
 const logUploadConfig = computed(() => utils.config?.logUpload)
@@ -539,15 +554,139 @@ const syncExportSettingsFromStore = () => {
 
 syncExportSettingsFromStore()
 
+const clearCalendarHighlights = () => {
+  const panel = document.querySelector<HTMLElement>('.n-date-panel')
+  if (!panel) {
+    return
+  }
+  applyCalendarActiveDayHighlights({
+    panel,
+    activeDaySetByMonth: {},
+  })
+}
+
+const stopCalendarMonthObserver = () => {
+  if (!calendarMonthObserver) {
+    return
+  }
+  calendarMonthObserver.disconnect()
+  calendarMonthObserver = null
+}
+
+const startCalendarMonthObserver = () => {
+  stopCalendarMonthObserver()
+  const panel = document.querySelector<HTMLElement>('.n-date-panel')
+  if (!panel) {
+    return
+  }
+  calendarMonthObserver = new MutationObserver(() => {
+    syncCalendarHighlightsAfterViewportChange()
+  })
+  panel.querySelectorAll('.n-date-panel-month__month-year').forEach((node) => {
+    calendarMonthObserver?.observe(node, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    })
+  })
+}
+
+const syncCalendarHighlightsAfterViewportChange = () => {
+  void nextTick(async () => {
+    await ensureVisibleCalendarMonthsLoaded()
+    syncCalendarHighlights()
+    startCalendarMonthObserver()
+  })
+}
+
+const collectVisibleCalendarMonths = () => {
+  const panel = document.querySelector<HTMLElement>('.n-date-panel')
+  if (!panel) {
+    return [] as string[]
+  }
+  return Array.from(
+    panel.querySelectorAll<HTMLElement>('.n-date-panel-calendar .n-date-panel-month__month-year')
+  )
+    .map((node) => parsePanelMonthKey(node.textContent || ''))
+    .filter((value, index, list) => !!value && list.indexOf(value) === index)
+}
+
+const ensureVisibleCalendarMonthsLoaded = async () => {
+  if (!props.channelId) {
+    return
+  }
+  const monthKeys = collectVisibleCalendarMonths()
+  if (!monthKeys.length) {
+    return
+  }
+  await Promise.all(monthKeys.map((month) => ensureCalendarMonthLoaded(month)))
+}
+
+const ensureCalendarMonthLoaded = async (month: string) => {
+  const normalizedMonth = String(month || '').trim()
+  if (!props.channelId || !normalizedMonth) {
+    return
+  }
+  if (activeDaysByMonth.value[normalizedMonth] || loadingMonths.value.has(normalizedMonth)) {
+    return
+  }
+  const loading = new Set(loadingMonths.value)
+  loading.add(normalizedMonth)
+  loadingMonths.value = loading
+  try {
+    const resp = await chat.getChannelMessageActiveDays(props.channelId, normalizedMonth)
+    activeDaysByMonth.value = {
+      ...activeDaysByMonth.value,
+      [normalizedMonth]: (resp.days || []).slice().sort(),
+    }
+  } catch (error) {
+    console.warn('加载导出日历活跃日期失败', error)
+  } finally {
+    const nextLoading = new Set(loadingMonths.value)
+    nextLoading.delete(normalizedMonth)
+    loadingMonths.value = nextLoading
+  }
+}
+
+const syncCalendarHighlights = () => {
+  const panel = document.querySelector<HTMLElement>('.n-date-panel')
+  if (!panel) {
+    clearCalendarHighlights()
+    return
+  }
+  applyCalendarActiveDayHighlights({
+    panel,
+    activeDaySetByMonth: activeDaySetByMonth.value,
+  })
+}
+
+const handleCalendarShowUpdate = (show: boolean) => {
+  if (!show) {
+    stopCalendarMonthObserver()
+    clearCalendarHighlights()
+    return
+  }
+  syncCalendarHighlightsAfterViewportChange()
+}
+
+const resetCalendarHighlightState = () => {
+  activeDaysByMonth.value = {}
+  loadingMonths.value = new Set()
+  stopCalendarMonthObserver()
+  clearCalendarHighlights()
+}
+
 watch(
   () => props.visible,
   (visible) => {
     if (visible) {
       syncExportSettingsFromStore()
       void loadSavedColorProfiles(props.channelId)
+      syncCalendarHighlightsAfterViewportChange()
     } else {
       colorProfileVisible.value = false
       editingColorProfileNameId.value = ''
+      resetCalendarHighlightState()
     }
   },
 )
@@ -557,6 +696,8 @@ watch(
   (channelId) => {
     if (props.visible) {
       void loadSavedColorProfiles(channelId)
+      resetCalendarHighlightState()
+      syncCalendarHighlightsAfterViewportChange()
     }
   },
 )
@@ -625,18 +766,28 @@ const handleClearPreset = () => {
 
 watch(
   () => form.timeRange,
-  (newVal, oldVal) => {
+  (_newVal, oldVal) => {
     if (isApplyingPreset.value) {
       return
     }
-    if (!newVal && oldVal) {
+    if (!_newVal && oldVal) {
       timePreset.value = 'none'
       return
     }
-    if (newVal && timePreset.value !== 'custom') {
+    if (_newVal && timePreset.value !== 'custom') {
       timePreset.value = 'custom'
     }
   }
+)
+
+watch(
+  () => activeDaysByMonth.value,
+  () => {
+    if (document.querySelector('.n-date-panel')) {
+      void nextTick(syncCalendarHighlights)
+    }
+  },
+  { deep: true }
 )
 
 const handleExport = async () => {
@@ -739,6 +890,11 @@ const shortcuts = {
     return [start.getTime(), end.getTime()]
   },
 }
+
+onBeforeUnmount(() => {
+  stopCalendarMonthObserver()
+  clearCalendarHighlights()
+})
 </script>
 
 <template>
@@ -825,30 +981,11 @@ const shortcuts = {
 
       <n-form-item label="时间范围">
         <div class="time-range">
-          <n-date-picker
-            v-model:value="form.timeRange"
-            type="datetimerange"
-            clearable
-            :shortcuts="shortcuts"
-            format="yyyy-MM-dd HH:mm:ss"
+          <ActiveDayDateRangePicker
+            v-model="form.timeRange"
+            :channel-id="props.channelId"
             placeholder="选择时间范围，留空表示全部"
-            style="flex: 1"
           />
-          <div class="preset-group">
-            <n-button-group size="small">
-              <n-button
-                v-for="item in timePresets"
-                :key="item.value"
-                :type="timePreset === item.value ? 'primary' : 'default'"
-                @click="handlePresetClick(item.value as PresetValue)"
-              >
-                {{ item.label }}
-              </n-button>
-            </n-button-group>
-            <n-button text size="small" @click="handleClearPreset" v-if="timePreset !== 'none'">
-              清除
-            </n-button>
-          </div>
         </div>
       </n-form-item>
 
@@ -941,7 +1078,15 @@ const shortcuts = {
     </n-form>
 
     <template #footer>
-      <n-space justify="end">
+      <n-space justify="space-between">
+        <n-button
+          v-if="props.battleSummaryEnabled"
+          tertiary
+          @click="emit('request-battle-summary')"
+        >
+          战报总结
+        </n-button>
+        <n-space>
         <n-button @click="handleClose">取消</n-button>
         <n-button
           type="primary"
@@ -950,6 +1095,7 @@ const shortcuts = {
         >
           开始导出
         </n-button>
+        </n-space>
       </n-space>
     </template>
   </n-modal>
@@ -1328,5 +1474,45 @@ const shortcuts = {
 
 .color-profile-item__picker-input::-webkit-color-swatch {
   border: none;
+}
+</style>
+
+<style lang="scss">
+.n-date-panel-date[data-sc-export-active-day='true'] .n-date-panel-date__trigger {
+  position: relative;
+  z-index: 1;
+  border-radius: 10px;
+}
+
+.n-date-panel-date[data-sc-export-active-day='true'] .n-date-panel-date__trigger::before {
+  content: '';
+  position: absolute;
+  inset: 2px 3px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.26) 0%, rgba(249, 115, 22, 0.14) 100%);
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.28);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.n-date-panel-date[data-sc-export-active-day='true'] .n-date-panel-date__trigger::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 5px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(251, 191, 36, 0.8) 0%, rgba(249, 115, 22, 0.72) 100%);
+  box-shadow: 0 0 0 1px rgba(255, 237, 213, 0.34), 0 1px 2px rgba(194, 65, 12, 0.16);
+  pointer-events: none;
+}
+
+.n-date-panel-date[data-sc-export-active-day='true'].n-date-panel-date--selected .n-date-panel-date__trigger::before,
+.n-date-panel-date[data-sc-export-active-day='true'].n-date-panel-date--covered .n-date-panel-date__trigger::before,
+.n-date-panel-date[data-sc-export-active-day='true'].n-date-panel-date--start .n-date-panel-date__trigger::before,
+.n-date-panel-date[data-sc-export-active-day='true'].n-date-panel-date--end .n-date-panel-date__trigger::before {
+  opacity: 0.55;
 }
 </style>

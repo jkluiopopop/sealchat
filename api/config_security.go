@@ -7,10 +7,19 @@ import (
 )
 
 func sanitizeConfigForClient(cfg *utils.AppConfig) utils.AppConfig {
+	ret := sanitizeConfigForAdmin(cfg)
+	ret.AI.Providers = nil
+	return ret
+}
+
+func sanitizeConfigForAdmin(cfg *utils.AppConfig) utils.AppConfig {
 	if cfg == nil {
 		return utils.AppConfig{}
 	}
 	ret := *cfg
+	if len(cfg.AI.Providers) > 0 {
+		ret.AI.Providers = append([]utils.AIProviderConfig(nil), cfg.AI.Providers...)
+	}
 	ret.RegisterInviteRequired = strings.TrimSpace(cfg.RegisterInviteCode) != ""
 	ret.RegisterInviteCode = ""
 
@@ -30,6 +39,9 @@ func sanitizeConfigForClient(cfg *utils.AppConfig) utils.AppConfig {
 	ret.Audio.ImportDir = ""
 	ret.Certificate.ZeroSSLAPIKey = ""
 	ret.Certificate.ZeroSSLEABMACKey = ""
+	for i := range ret.AI.Providers {
+		ret.AI.Providers[i].APIKey = ""
+	}
 
 	return ret
 }
@@ -88,6 +100,24 @@ func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *u
 	}
 	if strings.TrimSpace(out.Certificate.ZeroSSLEABMACKey) == "" {
 		out.Certificate.ZeroSSLEABMACKey = current.Certificate.ZeroSSLEABMACKey
+	}
+	if len(out.AI.Providers) > 0 && len(current.AI.Providers) > 0 {
+		currentKeys := make(map[string]string, len(current.AI.Providers))
+		for _, provider := range current.AI.Providers {
+			currentKeys[strings.TrimSpace(provider.ID)] = provider.APIKey
+		}
+		for i := range out.AI.Providers {
+			if strings.TrimSpace(out.AI.Providers[i].APIKey) != "" {
+				continue
+			}
+			id := strings.TrimSpace(out.AI.Providers[i].ID)
+			if id == "" {
+				continue
+			}
+			if apiKey, ok := currentKeys[id]; ok {
+				out.AI.Providers[i].APIKey = apiKey
+			}
+		}
 	}
 
 	return &out

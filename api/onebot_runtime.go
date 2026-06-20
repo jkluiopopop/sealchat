@@ -22,6 +22,9 @@ import (
 
 const oneBotHeartbeatIntervalMs int64 = 15000
 const oneBotHTTPQuickOperationSessionPrefix = "onebot-http-quickop:"
+const oneBotWriteTimeout = 10 * time.Second
+const oneBotPingInterval = 15 * time.Second
+const oneBotReadTimeout = 45 * time.Second
 
 var oneBotHTTPPostClient = &http.Client{Timeout: 5 * time.Second}
 
@@ -61,15 +64,39 @@ type oneBotJSONConn interface {
 	Close() error
 }
 
+type oneBotTimedJSONConn interface {
+	WriteJSONWithTimeout(v interface{}, timeout time.Duration) error
+}
+
 type oneBotClientSyncConn struct {
 	Conn *fastws.Conn
 	Mux  sync.RWMutex
 }
 
 func (c *oneBotClientSyncConn) WriteJSON(v interface{}) error {
+	return c.WriteJSONWithTimeout(v, oneBotWriteTimeout)
+}
+
+func (c *oneBotClientSyncConn) WriteJSONWithTimeout(v interface{}, timeout time.Duration) error {
+	if c == nil || c.Conn == nil {
+		return errors.New("onebot session unavailable")
+	}
 	c.Mux.Lock()
 	defer c.Mux.Unlock()
-	return c.Conn.WriteJSON(v)
+	if timeout > 0 {
+		if err := c.Conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+			_ = c.Conn.Close()
+			return err
+		}
+		defer func() {
+			_ = c.Conn.SetWriteDeadline(time.Time{})
+		}()
+	}
+	if err := c.Conn.WriteJSON(v); err != nil {
+		_ = c.Conn.Close()
+		return err
+	}
+	return nil
 }
 
 func (c *oneBotClientSyncConn) Close() error {
@@ -107,10 +134,19 @@ func (s *oneBotSession) sendJSON(payload any) error {
 	if s == nil || s.Conn == nil {
 		return errors.New("onebot session unavailable")
 	}
+	var err error
+	if timedConn, ok := s.Conn.(oneBotTimedJSONConn); ok {
+		err = timedConn.WriteJSONWithTimeout(payload, oneBotWriteTimeout)
+	} else {
+		err = s.Conn.WriteJSON(payload)
+	}
+	if err != nil {
+		return err
+	}
 	if s.ConnInfo != nil {
 		s.ConnInfo.LastAliveTime = time.Now().UnixMilli()
 	}
-	return s.Conn.WriteJSON(payload)
+	return nil
 }
 
 func (s *oneBotSession) close() {
@@ -123,6 +159,58 @@ func (s *oneBotSession) close() {
 			_ = s.Conn.Close()
 		}
 	})
+}
+
+type oneBotWSLivenessConn interface {
+	ReadMessage() (messageType int, p []byte, err error)
+	SetReadDeadline(t time.Time) error
+	SetPongHandler(h func(appData string) error)
+	WriteControl(messageType int, data []byte, deadline time.Time) error
+	Close() error
+}
+
+func refreshOneBotReadDeadline(conn oneBotWSLivenessConn, session *oneBotSession) {
+	if conn == nil {
+		return
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(oneBotReadTimeout))
+	if session != nil && session.ConnInfo != nil {
+		session.ConnInfo.LastAliveTime = time.Now().UnixMilli()
+	}
+}
+
+func startOneBotWSLiveness(conn oneBotWSLivenessConn, session *oneBotSession) func() {
+	if conn == nil || session == nil {
+		return func() {}
+	}
+	refreshOneBotReadDeadline(conn, session)
+	conn.SetPongHandler(func(string) error {
+		refreshOneBotReadDeadline(conn, session)
+		return nil
+	})
+
+	stop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(oneBotPingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := conn.WriteControl(fastws.PingMessage, nil, time.Now().Add(oneBotWriteTimeout)); err != nil {
+					_ = conn.Close()
+					return
+				}
+			case <-session.closeCh:
+				return
+			case <-stop:
+				return
+			}
+		}
+	}()
+
+	return func() {
+		close(stop)
+	}
 }
 
 type oneBotRuntime struct {
@@ -208,6 +296,7 @@ func (rt *oneBotRuntime) publishProtocolEvent(botUserID string, event *protocol.
 		}
 		if err := session.sendJSON(payload); err != nil {
 			log.Printf("[onebot] 推送事件失败 session=%s bot=%s err=%v", session.ID, botUserID, err)
+			rt.unregisterSession(session.ID)
 		}
 	}
 }
@@ -438,6 +527,7 @@ func (rt *oneBotRuntime) sendLifecycleConnect(session *oneBotSession) {
 	}
 	if err := session.sendJSON(buildOneBotLifecycleEvent(session)); err != nil {
 		log.Printf("[onebot] 发送 connect 元事件失败 session=%s err=%v", session.ID, err)
+		rt.unregisterSession(session.ID)
 	}
 }
 
@@ -453,6 +543,8 @@ func (rt *oneBotRuntime) startHeartbeat(session *oneBotSession) {
 			case <-ticker.C:
 				if err := session.sendJSON(buildOneBotHeartbeatEvent(session)); err != nil {
 					log.Printf("[onebot] 发送 heartbeat 失败 session=%s err=%v", session.ID, err)
+					rt.unregisterSession(session.ID)
+					return
 				}
 			case <-session.closeCh:
 				return
@@ -703,6 +795,7 @@ func (rt *oneBotRuntime) runReverseDialLoop(controller *oneBotReverseController,
 		session := newOneBotSession(botUser, role, oneBotSessionSourceReverse, &oneBotClientSyncConn{Conn: conn})
 		session.SelfID = selfID
 		rt.registerSession(session)
+		stopLiveness := startOneBotWSLiveness(conn, session)
 
 		done := make(chan struct{})
 		go func() {
@@ -718,9 +811,12 @@ func (rt *oneBotRuntime) runReverseDialLoop(controller *oneBotReverseController,
 			if err != nil {
 				break
 			}
+			refreshOneBotReadDeadline(conn, session)
 			req, err := decodeOneBotActionMessage(body)
 			if err != nil {
-				_ = session.sendJSON(oneBotFailureResponse(oneBotBadRequest("invalid request"), nil))
+				if err := session.sendJSON(oneBotFailureResponse(oneBotBadRequest("invalid request"), nil)); err != nil {
+					break
+				}
 				continue
 			}
 			resp := dispatchOneBotAction(session, req)
@@ -732,6 +828,7 @@ func (rt *oneBotRuntime) runReverseDialLoop(controller *oneBotReverseController,
 		}
 
 		close(done)
+		stopLiveness()
 		rt.unregisterSession(session.ID)
 
 		select {

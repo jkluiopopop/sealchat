@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -34,6 +35,23 @@ func (c *oneBotTestJSONConn) WriteJSON(v interface{}) error {
 }
 
 func (c *oneBotTestJSONConn) Close() error {
+	return nil
+}
+
+type oneBotTestFailingConn struct {
+	failAfter int
+	writes    int
+}
+
+func (c *oneBotTestFailingConn) WriteJSON(v interface{}) error {
+	c.writes++
+	if c.failAfter >= 0 && c.writes > c.failAfter {
+		return errors.New("forced write failure")
+	}
+	return nil
+}
+
+func (c *oneBotTestFailingConn) Close() error {
 	return nil
 }
 
@@ -225,6 +243,80 @@ func TestOneBotActionSendMsgFallsBackToGroupID(t *testing.T) {
 	}
 	if msg.ID == "" || msg.ChannelID != channel.ID {
 		t.Fatalf("unexpected saved message: %#v", msg)
+	}
+}
+
+func TestOneBotSessionSendJSONDoesNotRefreshAliveOnWriteFailure(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, _ := createOneBotTestBot(t, "sendjson-fail", model.BotKindManual)
+	session := newOneBotSession(botUser, oneBotSessionRoleUniversal, oneBotSessionSourceForward, &oneBotTestFailingConn{
+		failAfter: 0,
+	})
+
+	before := session.ConnInfo.LastAliveTime
+	time.Sleep(2 * time.Millisecond)
+	if err := session.sendJSON(map[string]any{"ok": true}); err == nil {
+		t.Fatal("expected write failure")
+	}
+	if session.ConnInfo.LastAliveTime != before {
+		t.Fatalf("LastAliveTime = %d, want unchanged %d after write failure", session.ConnInfo.LastAliveTime, before)
+	}
+}
+
+func TestOneBotRuntimeRegisterSessionRemovesSessionWhenLifecycleSendFails(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, _ := createOneBotTestBot(t, "lifecycle-fail", model.BotKindManual)
+	session := newOneBotSession(botUser, oneBotSessionRoleUniversal, oneBotSessionSourceForward, &oneBotTestFailingConn{
+		failAfter: 0,
+	})
+	rt := &oneBotRuntime{
+		sessions:           map[string]*oneBotSession{},
+		reverseControllers: map[string]*oneBotReverseController{},
+	}
+
+	rt.registerSession(session)
+
+	if _, ok := rt.sessions[session.ID]; ok {
+		t.Fatal("expected failed lifecycle write to unregister session")
+	}
+}
+
+func TestOneBotRuntimePublishProtocolEventRemovesSessionOnWriteFailure(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, _ := createOneBotTestBot(t, "event-fail", model.BotKindManual)
+	session := newOneBotSession(botUser, oneBotSessionRoleAPI, oneBotSessionSourceForward, &oneBotTestFailingConn{
+		failAfter: 0,
+	})
+	rt := &oneBotRuntime{
+		sessions:           map[string]*oneBotSession{},
+		reverseControllers: map[string]*oneBotReverseController{},
+	}
+	rt.registerSession(session)
+	session.Role = oneBotSessionRoleUniversal
+
+	rt.publishProtocolEvent(botUser.ID, &protocol.Event{
+		Type:      protocol.EventMessageCreated,
+		Timestamp: time.Now().Unix(),
+		Channel: &protocol.Channel{
+			ID:   "channel-" + utils.NewIDWithLength(6),
+			Type: protocol.TextChannelType,
+			Name: "test",
+		},
+		User: &protocol.User{
+			ID:   "user-" + utils.NewIDWithLength(6),
+			Nick: "tester",
+		},
+		Message: &protocol.Message{
+			ID:      "msg-" + utils.NewIDWithLength(6),
+			Content: "hello",
+		},
+	}, "")
+
+	if _, ok := rt.sessions[session.ID]; ok {
+		t.Fatal("expected failed event push to unregister session")
 	}
 }
 

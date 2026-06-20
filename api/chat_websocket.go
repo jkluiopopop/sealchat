@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -32,9 +33,29 @@ type WsSyncConn struct {
 }
 
 func (c *WsSyncConn) WriteJSON(v interface{}) error {
+	return c.WriteJSONWithTimeout(v, wsWriteTimeout)
+}
+
+func (c *WsSyncConn) WriteJSONWithTimeout(v interface{}, timeout time.Duration) error {
+	if c == nil || c.Conn == nil {
+		return errors.New("websocket connection unavailable")
+	}
 	c.Mux.Lock()
 	defer c.Mux.Unlock()
-	return c.Conn.WriteJSON(v)
+	if timeout > 0 {
+		if err := c.Conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+			_ = c.Conn.Close()
+			return err
+		}
+		defer func() {
+			_ = c.Conn.SetWriteDeadline(time.Time{})
+		}()
+	}
+	if err := c.Conn.WriteJSON(v); err != nil {
+		_ = c.Conn.Close()
+		return err
+	}
+	return nil
 }
 
 type ConnInfo struct {
@@ -90,8 +111,11 @@ var (
 	presenceBroadcastState = struct {
 		sync.Mutex
 		lastByChannel map[string]int64
+		pending       map[string]struct{}
+		timerActive   bool
 	}{
 		lastByChannel: map[string]int64{},
+		pending:       map[string]struct{}{},
 	}
 	preAuthConnState = struct {
 		total  atomic.Int64
@@ -123,6 +147,10 @@ const (
 	channelPresenceBroadcastMinIntervalMs = int64(2000)
 	// 在线态全量兜底广播间隔（秒）
 	channelPresenceFullBroadcastIntervalSeconds = 30
+	// 单次 WebSocket JSON 写超时
+	wsWriteTimeout = 10 * time.Second
+	// 在线态变化合并广播窗口，降低 enter/leave/focus 抖动带来的广播风暴
+	channelPresenceFlushDelay = 1500 * time.Millisecond
 )
 
 type wsConnectionSnapshot struct {
@@ -206,6 +234,53 @@ func shouldBroadcastChannelPresence(channelID string, nowMs int64) bool {
 	return true
 }
 
+func scheduleChannelPresenceBroadcast(ctx *ChatContext, channelID string) {
+	if ctx == nil || channelID == "" {
+		return
+	}
+	presenceBroadcastState.Lock()
+	presenceBroadcastState.pending[channelID] = struct{}{}
+	if presenceBroadcastState.timerActive {
+		presenceBroadcastState.Unlock()
+		return
+	}
+	presenceBroadcastState.timerActive = true
+	presenceBroadcastState.Unlock()
+
+	go func() {
+		timer := time.NewTimer(channelPresenceFlushDelay)
+		defer timer.Stop()
+		<-timer.C
+		for {
+			pending := drainPendingChannelPresenceBroadcasts()
+			if len(pending) == 0 {
+				return
+			}
+			now := time.Now().UnixMilli()
+			for _, chID := range pending {
+				if shouldBroadcastChannelPresence(chID, now) {
+					ctx.BroadcastChannelPresenceNow(chID)
+				}
+			}
+		}
+	}()
+}
+
+func drainPendingChannelPresenceBroadcasts() []string {
+	presenceBroadcastState.Lock()
+	defer presenceBroadcastState.Unlock()
+	if len(presenceBroadcastState.pending) == 0 {
+		presenceBroadcastState.timerActive = false
+		return nil
+	}
+	channels := make([]string, 0, len(presenceBroadcastState.pending))
+	for chID := range presenceBroadcastState.pending {
+		channels = append(channels, chID)
+		delete(presenceBroadcastState.pending, chID)
+	}
+	return channels
+}
+
 func broadcastChannelPresenceForActiveChannels(
 	channelUsersMap *utils.SyncMap[string, *utils.SyncSet[string]],
 	userId2ConnInfo *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]],
@@ -226,7 +301,7 @@ func broadcastChannelPresenceForActiveChannels(
 		if !shouldBroadcastChannelPresence(channelID, nowMs) {
 			return true
 		}
-		ctx.BroadcastChannelPresence(channelID)
+		ctx.BroadcastChannelPresenceNow(channelID)
 		broadcasted++
 		return true
 	})
@@ -1103,9 +1178,16 @@ func websocketWorks(app *fiber.App, webUrl string) {
 
 		// 连接断开时删除该 conn 在所有用户映射中的残留，避免历史脏数据泄漏。
 		affectedUserIDs := map[string]struct{}{}
+		affectedChannelIDs := map[string]struct{}{}
+		if curConnInfo != nil && curConnInfo.ChannelId != "" {
+			affectedChannelIDs[curConnInfo.ChannelId] = struct{}{}
+		}
 		userId2ConnInfo.Range(func(key string, value *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
-			if value.Delete(c) {
+			if info, deleted := value.LoadAndDelete(c); deleted {
 				affectedUserIDs[key] = struct{}{}
+				if info != nil && info.ChannelId != "" {
+					affectedChannelIDs[info.ChannelId] = struct{}{}
+				}
 			}
 			return true
 		})
@@ -1122,7 +1204,11 @@ func websocketWorks(app *fiber.App, webUrl string) {
 			ChannelUsersMap: channelUsersMap,
 			UserId2ConnInfo: userId2ConnInfo,
 		}
-		channelUsersMap.Range(func(chId string, value *utils.SyncSet[string]) bool {
+		for chId := range affectedChannelIDs {
+			value, ok := channelUsersMap.Load(chId)
+			if !ok || value == nil {
+				continue
+			}
 			changed := false
 			for userID := range presenceCleanupUsers {
 				if !value.Exists(userID) {
@@ -1136,7 +1222,6 @@ func websocketWorks(app *fiber.App, webUrl string) {
 			if changed {
 				ctx.BroadcastChannelPresence(chId)
 			}
-			return true
-		})
+		}
 	}))
 }

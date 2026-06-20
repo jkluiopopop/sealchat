@@ -14,6 +14,8 @@ import { isTargetWithinElement } from './keywordTooltipHoverBoundary'
 import { shouldReuseHoverTooltipForPin } from './keywordTooltipPinReuse'
 import { shouldHideTooltipBeforePositioning } from './keywordTooltipVisibility'
 import type { WorldKeywordTooltipInteractionPolicy } from './worldKeywordTooltipInteraction'
+import { detectEmbeddedRuntime } from './embeddedRuntime'
+import { resolveEmbeddedWideTooltipTop, resolveKeywordTooltipPresentation } from './keywordTooltipPresentation'
 
 interface TooltipContent {
   title: string
@@ -47,6 +49,10 @@ const TOOLTIP_PADDING = 8
 const TOOLTIP_MAX_WIDTH = 360
 const TOOLTIP_MIN_WIDTH = 180
 const TOOLTIP_MAX_HEIGHT_RATIO = 0.6 // 最大高度为视口高度的60%
+const EMBED_WIDE_TOOLTIP_SIDE_MARGIN = 8
+const EMBED_WIDE_TOOLTIP_TOP_MARGIN = 8
+const EMBED_WIDE_TOOLTIP_BOTTOM_MARGIN = 8
+const EMBED_WIDE_TOOLTIP_MAX_HEIGHT_RATIO = 0.72
 const FONT_SURFACE_ATTR = 'data-sc-font-surface'
 const SWIPE_LOCK_THRESHOLD_PX = 12
 const SWIPE_COMMIT_THRESHOLD_PX = 44
@@ -461,6 +467,14 @@ export function createKeywordTooltip(
   const underlineOnly = options?.underlineOnly ?? false
   const textIndent = options?.textIndent ?? 0
   const interaction = options?.interaction ?? { allowHoverOpen: true, allowClickOpen: true }
+  const resolvePresentation = () => resolveKeywordTooltipPresentation({
+    isEmbeddedRuntime: detectEmbeddedRuntime().isEmbeddedRuntime,
+    finePointer: typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(hover: hover) and (pointer: fine)').matches
+      : true,
+    viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 0,
+    level,
+  })
   let currentTooltip: TooltipInstance | null = null
   let currentSession: TooltipSession | null = null
   let hoverTooltipElement: HTMLDivElement | null = null
@@ -784,11 +798,12 @@ export function createKeywordTooltip(
     session: TooltipSession,
   ) => {
     cleanupNestedControllers()
-
+    const presentation = resolvePresentation()
     tooltip.innerHTML = ''
     tooltip.classList.toggle('keyword-tooltip--pinned', isPinned)
     tooltip.classList.toggle('keyword-tooltip--multi', session.candidates.length > 1)
     tooltip.classList.toggle('keyword-tooltip--swipeable', isPinned && session.candidates.length > 1)
+    tooltip.classList.toggle('keyword-tooltip--embedded-wide', presentation.mode === 'embedded-wide')
 
     const header = document.createElement('div')
     header.className = 'keyword-tooltip__header'
@@ -953,6 +968,46 @@ export function createKeywordTooltip(
   }
 
   const positionTooltip = (tooltip: HTMLDivElement, target: HTMLElement) => {
+    const presentation = resolvePresentation()
+
+    tooltip.style.right = 'auto'
+    tooltip.style.bottom = 'auto'
+    tooltip.style.maxHeight = ''
+    tooltip.style.overflowY = ''
+
+    if (presentation.mode === 'embedded-wide') {
+      const targetRect = target.getBoundingClientRect()
+      const viewportHeight = window.innerHeight
+      const maxHeight = Math.max(
+        220,
+        viewportHeight * EMBED_WIDE_TOOLTIP_MAX_HEIGHT_RATIO - EMBED_WIDE_TOOLTIP_TOP_MARGIN - EMBED_WIDE_TOOLTIP_BOTTOM_MARGIN,
+      )
+      tooltip.style.display = 'block'
+      tooltip.style.visibility = 'hidden'
+      tooltip.style.top = '0'
+      tooltip.style.left = `${EMBED_WIDE_TOOLTIP_SIDE_MARGIN}px`
+      tooltip.style.right = `${EMBED_WIDE_TOOLTIP_SIDE_MARGIN}px`
+      tooltip.style.bottom = 'auto'
+      if (tooltip.offsetHeight > maxHeight) {
+        tooltip.style.maxHeight = `${maxHeight}px`
+        tooltip.style.overflowY = 'auto'
+      }
+      const tooltipHeight = tooltip.offsetHeight
+      const top = resolveEmbeddedWideTooltipTop({
+        targetTop: targetRect.top,
+        targetBottom: targetRect.bottom,
+        tooltipHeight,
+        viewportHeight,
+        topMargin: EMBED_WIDE_TOOLTIP_TOP_MARGIN,
+        bottomMargin: EMBED_WIDE_TOOLTIP_BOTTOM_MARGIN,
+        gap: TOOLTIP_GAP,
+      })
+      tooltip.style.display = 'block'
+      tooltip.style.visibility = 'visible'
+      tooltip.style.top = `${top}px`
+      return
+    }
+
     const shouldHideBeforePositioning = shouldHideTooltipBeforePositioning(tooltip)
     if (shouldHideBeforePositioning) {
       tooltip.style.visibility = 'hidden'
@@ -1333,4 +1388,3 @@ function setupImageViewer(tooltip: HTMLDivElement) {
 }
 
 export { applyHighlightsToText, MAX_NESTING_DEPTH, parseMarkdownImages, renderTextWithImages }
-

@@ -25,6 +25,7 @@ import { addWhisperTargetUnique } from './whisperTargetSelection';
 import { parseLastChannelByWorldMap, resolvePreferredChannelForWorld, updateLastChannelByWorldMap } from './chatWorldChannelSession';
 import { normalizeStoredChannelIcOocMode, resolveChannelRestorePreference, resolveChannelSessionRestoreStrategy as resolveChannelSessionRestoreState, type StoredChannelIcOocMode } from '@/utils/channelSessionRestore';
 import { resolveWindowFocusState } from '@/utils/windowFocusState';
+import { canCreateChannelSession } from '@/utils/channelCreateGuard';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
 const inFlightChannelIdentityVariantLoads = new Map<string, Promise<Record<string, ChannelIdentityVariant[]>>>();
@@ -2337,6 +2338,15 @@ export const useChatStore = defineStore({
     },
 
     async channelCreate(data: any) {
+      const user = useUserStore();
+      if (!canCreateChannelSession({
+        token: user.token,
+        isObserver: this.isObserver,
+        observerMode: this.observerMode,
+        observerWorldId: this.observerWorldId,
+      })) {
+        throw new Error('guest readonly');
+      }
       const targetWorldId = data.worldId || this.currentWorldId;
       if (!targetWorldId) {
         throw new Error('worldId 缺失，无法创建频道');
@@ -6120,6 +6130,18 @@ export const useChatStore = defineStore({
         file_name?: string;
         message?: string;
         finished_at?: number;
+      };
+    },
+
+    async getChannelMessageActiveDays(channelId: string, month: string) {
+      const resp = await api.get(`api/v1/channels/${channelId}/message-active-days`, {
+        params: { month },
+      });
+      return resp.data as {
+        channel_id: string;
+        month: string;
+        timezone?: string;
+        days?: string[];
       };
     },
 

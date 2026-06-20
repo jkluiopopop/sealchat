@@ -12,6 +12,7 @@ import Avatar from '@/components/avatar.vue';
 // import AdminSettings from './admin-settings.vue'
 import { useI18n } from 'vue-i18n'
 import { setLocale, setLocaleByNavigator } from '@/lang';
+import { canCreateChannelSession } from '@/utils/channelCreateGuard';
 import UserPresencePopover from '../chat/components/UserPresencePopover.vue';
 import { useChannelSearchStore } from '@/stores/channelSearch';
 import { useChannelImagesStore } from '@/stores/channelImages';
@@ -38,6 +39,7 @@ const emit = defineEmits<{
 
 const notifShow = ref(false)
 const userProfileShow = ref(false)
+const userProfileOpenAISettings = ref(false)
 const adminShow = ref(false)
 const inputStatsShow = ref(false)
 const inputStatsLoading = ref(false)
@@ -57,6 +59,12 @@ const timelineItems = ref<any[]>([]);
 const timelineLoading = ref(false);
 const notifTimer = ref<number | null>(null);
 const isAdmin = computed(() => !!user.checkPerm('mod_admin'));
+const canCreateChannel = computed(() => canCreateChannelSession({
+  token: user.token,
+  isObserver: chat.isObserver,
+  observerMode: chat.observerMode,
+  observerWorldId: chat.observerWorldId,
+}));
 const hasUnreadUpdate = computed(() => timelineItems.value.some((item) => item?.type === 'system.update' && !item?.isRead));
 const showNotifBell = computed(() => isAdmin.value && (hasUnreadUpdate.value || notifShow.value));
 
@@ -306,12 +314,21 @@ const chOptions = computed(() => {
       props: undefined as any,
     }
   })
-  lst.push({ label: t('channelListNew'), key: 'new', icon: renderIcon(Plus), props: { style: { 'font-weight': 'bold' } } })
+  lst.push({
+    label: t('channelListNew'),
+    key: 'new',
+    icon: renderIcon(Plus),
+    props: { style: { 'font-weight': 'bold' }, disabled: !canCreateChannel.value },
+  })
   return lst;
 })
 
 const channelSelect = async (key: string) => {
   if (key === 'new') {
+    if (!canCreateChannel.value) {
+      message.warning('当前会话为只读，不能创建频道');
+      return;
+    }
     showModal.value = true;
     // chat.channelCreate('测试频道');
     // message.info('暂不支持新建频道');
@@ -651,9 +668,10 @@ const handleRibbonStateUpdate = (state: boolean) => {
   actionRibbonActive.value = !!state;
 };
 
-const handleOpenUserProfile = () => {
+const handleOpenUserProfile = (payload?: { openAISettings?: boolean }) => {
   notifShow.value = false;
   adminShow.value = false;
+  userProfileOpenAISettings.value = payload?.openAISettings === true;
   userProfileShow.value = true;
 };
 
@@ -916,7 +934,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 
   <div v-if="userProfileShow" style="background-color: var(--n-color); margin-left: -1.5rem;"
     class="absolute flex justify-center items-center w-full h-full sc-overlay-layer">
-    <user-profile @close="userProfileShow = false" />
+    <user-profile :openAISettingsOnMount="userProfileOpenAISettings" @close="() => { userProfileShow = false; userProfileOpenAISettings = false; }" />
   </div>
   <div
     v-if="adminShow"

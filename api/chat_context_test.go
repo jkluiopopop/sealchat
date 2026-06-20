@@ -1,9 +1,17 @@
 package api
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
+	fastws "github.com/fasthttp/websocket"
+	wsfiber "github.com/gofiber/contrib/websocket"
+
+	"sealchat/model"
 	"sealchat/protocol"
+	"sealchat/utils"
 )
 
 func TestNormalizeBotCommandContentWithPrefixes_ConvertsTipTapCommand(t *testing.T) {
@@ -68,5 +76,215 @@ func TestNormalizeEventForBot_EscapesPlainTextAmpersandCommand(t *testing.T) {
 	want := ".st &amp;手枪伤害=1d6+1"
 	if got.Message.Content != want {
 		t.Fatalf("expected %q, got %q", want, got.Message.Content)
+	}
+}
+
+func newClosedChatTestConn(t *testing.T) *WsSyncConn {
+	t.Helper()
+
+	serverConnCh := make(chan *fastws.Conn, 1)
+	upgrader := fastws.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade failed: %v", err)
+			return
+		}
+		serverConnCh <- conn
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	clientConn, _, err := fastws.DefaultDialer.Dial("ws"+server.URL[len("http"):], nil)
+	if err != nil {
+		t.Fatalf("dial test websocket failed: %v", err)
+	}
+	defer clientConn.Close()
+
+	serverConn := <-serverConnCh
+	conn := &WsSyncConn{Conn: &wsfiber.Conn{Conn: serverConn}}
+	_ = conn.Close()
+	return conn
+}
+
+func newReadableChatTestConn(t *testing.T) (*WsSyncConn, *fastws.Conn, func()) {
+	t.Helper()
+
+	serverConnCh := make(chan *fastws.Conn, 1)
+	upgrader := fastws.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade failed: %v", err)
+			return
+		}
+		serverConnCh <- conn
+	}))
+
+	clientConn, _, err := fastws.DefaultDialer.Dial("ws"+server.URL[len("http"):], nil)
+	if err != nil {
+		server.Close()
+		t.Fatalf("dial test websocket failed: %v", err)
+	}
+
+	serverConn := <-serverConnCh
+	cleanup := func() {
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+		server.Close()
+	}
+	return &WsSyncConn{Conn: &wsfiber.Conn{Conn: serverConn}}, clientConn, cleanup
+}
+
+func TestBroadcastEventInChannelRemovesBrokenConnection(t *testing.T) {
+	brokenConn := newClosedChatTestConn(t)
+	connMap := &utils.SyncMap[*WsSyncConn, *ConnInfo]{}
+	connMap.Store(brokenConn, &ConnInfo{
+		Conn:          brokenConn,
+		ChannelId:     "channel-test",
+		LastPingTime:  1,
+		LastAliveTime: 1,
+	})
+
+	ctx := &ChatContext{
+		UserId2ConnInfo: &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{},
+	}
+	ctx.UserId2ConnInfo.Store("user-test", connMap)
+
+	ctx.BroadcastEventInChannel("channel-test", &protocol.Event{
+		Type: protocol.EventMessageCreated,
+		Message: &protocol.Message{
+			Content: "hello",
+		},
+	})
+
+	if connMap.Exists(brokenConn) {
+		t.Fatal("expected broken websocket connection to be removed after write failure")
+	}
+}
+
+func TestBroadcastEventInChannelUsesChannelUsersMapTargets(t *testing.T) {
+	targetConn, targetClient, targetCleanup := newReadableChatTestConn(t)
+	defer targetCleanup()
+	otherConn, otherClient, otherCleanup := newReadableChatTestConn(t)
+	defer otherCleanup()
+
+	targetMap := &utils.SyncMap[*WsSyncConn, *ConnInfo]{}
+	targetMap.Store(targetConn, &ConnInfo{
+		Conn:          targetConn,
+		User:          &model.UserModel{Nickname: "Target"},
+		LastPingTime:  1,
+		LastAliveTime: 1,
+	})
+	otherMap := &utils.SyncMap[*WsSyncConn, *ConnInfo]{}
+	otherMap.Store(otherConn, &ConnInfo{
+		Conn:          otherConn,
+		User:          &model.UserModel{Nickname: "Other"},
+		LastPingTime:  1,
+		LastAliveTime: 1,
+	})
+
+	channelUsers := &utils.SyncMap[string, *utils.SyncSet[string]]{}
+	userSet := &utils.SyncSet[string]{}
+	userSet.Add("target-user")
+	channelUsers.Store("channel-target", userSet)
+	userConns := &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{}
+	userConns.Store("target-user", targetMap)
+	userConns.Store("other-user", otherMap)
+	ctx := &ChatContext{
+		ChannelUsersMap: channelUsers,
+		UserId2ConnInfo: userConns,
+	}
+
+	ctx.BroadcastEventInChannel("channel-target", &protocol.Event{
+		Type: protocol.EventMessageCreated,
+		Message: &protocol.Message{
+			Content: "hello",
+		},
+	})
+
+	_ = targetClient.SetReadDeadline(time.Now().Add(time.Second))
+	_, body, err := targetClient.ReadMessage()
+	if err != nil {
+		t.Fatalf("expected target channel user to receive broadcast: %v", err)
+	}
+	if len(body) == 0 {
+		t.Fatal("expected non-empty websocket payload")
+	}
+	_ = otherClient.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	if _, _, err := otherClient.ReadMessage(); err == nil {
+		t.Fatal("expected non-channel user not to receive broadcast")
+	}
+}
+
+func TestBuildChannelPresenceSnapshotUsesConnectionUserWithoutDatabaseLookup(t *testing.T) {
+	channelUsers := &utils.SyncMap[string, *utils.SyncSet[string]]{}
+	userSet := &utils.SyncSet[string]{}
+	userSet.Add("presence-user")
+	channelUsers.Store("channel-presence", userSet)
+
+	connMap := &utils.SyncMap[*WsSyncConn, *ConnInfo]{}
+	connMap.Store(&WsSyncConn{}, &ConnInfo{
+		ChannelId:    "channel-presence",
+		LastPingTime: 1234,
+		LatencyMs:    56,
+		Focused:      true,
+		User: &model.UserModel{
+			StringPKBaseModel: model.StringPKBaseModel{ID: "presence-user"},
+			Nickname:          "Presence User",
+		},
+	})
+	userConns := &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{}
+	userConns.Store("presence-user", connMap)
+
+	got := buildChannelPresenceSnapshot("channel-presence", channelUsers, userConns)
+
+	if len(got) != 1 {
+		t.Fatalf("expected one presence entry from connection user, got %d", len(got))
+	}
+	if got[0].User == nil || got[0].User.Nick != "Presence User" {
+		t.Fatalf("expected presence user from connection info, got %#v", got[0].User)
+	}
+	if got[0].Latency != 56 || !got[0].Focused || got[0].LastSeen != 1234 {
+		t.Fatalf("unexpected presence metadata: %#v", got[0])
+	}
+}
+
+func TestBroadcastEventInChannelToUsersSendsExplicitTargetOutsideChannelUserSet(t *testing.T) {
+	targetConn, targetClient, targetCleanup := newReadableChatTestConn(t)
+	defer targetCleanup()
+
+	targetMap := &utils.SyncMap[*WsSyncConn, *ConnInfo]{}
+	targetMap.Store(targetConn, &ConnInfo{
+		Conn:          targetConn,
+		User:          &model.UserModel{StringPKBaseModel: model.StringPKBaseModel{ID: "target-user"}},
+		ChannelId:     "channel-target",
+		LastPingTime:  1,
+		LastAliveTime: 1,
+	})
+
+	channelUsers := &utils.SyncMap[string, *utils.SyncSet[string]]{}
+	channelUsers.Store("channel-target", &utils.SyncSet[string]{})
+	userConns := &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{}
+	userConns.Store("target-user", targetMap)
+	ctx := &ChatContext{
+		ChannelUsersMap: channelUsers,
+		UserId2ConnInfo: userConns,
+	}
+
+	ctx.BroadcastEventInChannelToUsers("channel-target", []string{"target-user"}, &protocol.Event{
+		Type: protocol.EventMessageCreated,
+		Message: &protocol.Message{
+			Content: "direct",
+		},
+	})
+
+	_ = targetClient.SetReadDeadline(time.Now().Add(time.Second))
+	if _, _, err := targetClient.ReadMessage(); err != nil {
+		t.Fatalf("expected explicit target to receive broadcast: %v", err)
 	}
 }

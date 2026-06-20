@@ -108,6 +108,7 @@ sqlite:
   cacheSizeKB: 512000
   synchronous: NORMAL
   txLockImmediate: true
+  # SQLite 是单文件数据库，默认保守为 2，避免高并发读连接放大锁竞争
   readConnections: 2
   optimizeOnInit: true
 

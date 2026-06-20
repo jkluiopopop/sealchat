@@ -770,6 +770,19 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
         </n-switch>
       </section>
 
+      <section v-if="activeSettingsCategory === 'reading'" class="display-settings__section">
+        <header>
+          <div>
+            <p class="section-title">战报总结卡片展示</p>
+            <p class="section-desc">控制战报总结卡片显示时默认展开或折叠</p>
+          </div>
+        </header>
+        <n-switch v-model:value="draft.battleReportCardExpandedByDefault">
+          <template #checked>默认展开</template>
+          <template #unchecked>默认折叠</template>
+        </n-switch>
+      </section>
+
       <section v-if="activeSettingsCategory === 'input'" class="display-settings__section">
         <header>
           <div>

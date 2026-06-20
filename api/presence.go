@@ -43,7 +43,10 @@ func buildChannelPresenceSnapshot(channelID string, channelUsersMap *utils.SyncM
 		if active == nil {
 			return true
 		}
-		user := model.UserGet(userID)
+		user := active.User
+		if user == nil || user.ID == "" {
+			user = model.UserGet(userID)
+		}
 		if user == nil {
 			return true
 		}
@@ -72,16 +75,20 @@ func buildChannelPresenceSnapshot(channelID string, channelUsersMap *utils.SyncM
 }
 
 func (ctx *ChatContext) BroadcastChannelPresence(channelID string) {
+	scheduleChannelPresenceBroadcast(ctx, channelID)
+}
+
+func (ctx *ChatContext) BroadcastChannelPresenceNow(channelID string) {
 	if ctx == nil || ctx.UserId2ConnInfo == nil || ctx.ChannelUsersMap == nil || channelID == "" {
 		return
 	}
 	now := time.Now().UnixMilli()
 	presence := buildChannelPresenceSnapshot(channelID, ctx.ChannelUsersMap, ctx.UserId2ConnInfo)
 	event := &protocol.Event{
-		Type:     protocol.EventChannelPresenceUpdated,
+		Type:      protocol.EventChannelPresenceUpdated,
 		Timestamp: now,
-		Channel:  &protocol.Channel{ID: channelID},
-		Presence: presence,
+		Channel:   &protocol.Channel{ID: channelID},
+		Presence:  presence,
 	}
 	ctx.BroadcastEventInChannel(channelID, event)
 }

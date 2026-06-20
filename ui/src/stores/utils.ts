@@ -1,5 +1,16 @@
 import { defineStore } from "pinia"
-import type { BotOneBotConfig, CertificateConfig, ServerConfig, UserInfo } from "@/types";
+import type {
+  AIConfig,
+  AIQuotaPolicyConfig,
+  AdminAIQuotaDetail,
+  AdminAIQuotaListResult,
+  AdminAIUsageLogListResult,
+  BotOneBotConfig,
+  CertificateConfig,
+  ServerConfig,
+  UserAIProviderProfile,
+  UserInfo,
+} from "@/types";
 import { Howl, Howler } from 'howler';
 
 import axiosFactory from "axios"
@@ -351,6 +362,108 @@ export const useUtilsStore = defineStore({
     async adminCertificateObtain() {
       const user = useUserStore();
       const resp = await api.post('api/v1/admin/certificates/obtain', {}, {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
+    async adminAIConfigGet() {
+      const user = useUserStore();
+      const resp = await api.get('api/v1/admin/ai/config', {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
+    async adminAIConfigUpdate(config: AIConfig) {
+      const user = useUserStore();
+      const resp = await api.put('api/v1/admin/ai/config', { config }, {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
+    async adminAIProviderTest(payload: { providerId: string; model?: string; prompt?: string }) {
+      const user = useUserStore();
+      const resp = await api.post('api/v1/admin/ai/test', payload, {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
+    async adminAIProviderModelsDiscover(payload: { providerId: string }) {
+      const user = useUserStore();
+      const resp = await api.post<{ providerId: string; models: string[] }>('api/v1/admin/ai/models', payload, {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
+    async adminAIUsageLogs(params?: {
+      page?: number;
+      pageSize?: number;
+      query?: string;
+      featureKey?: string;
+      providerId?: string;
+      model?: string;
+      status?: string;
+      start?: number;
+      end?: number;
+    }) {
+      const user = useUserStore();
+      return await api.get<AdminAIUsageLogListResult>('api/v1/admin/ai/usage-logs', {
+        headers: { 'Authorization': user.token },
+        params,
+      });
+    },
+
+    async adminAIUsageLogsCleanup(payload?: { retentionDays?: number }) {
+      const user = useUserStore();
+      return await api.post<{ affectedRows: number }>('api/v1/admin/ai/usage-logs/cleanup', payload || {}, {
+        headers: { 'Authorization': user.token },
+      });
+    },
+
+    async adminAIQuotaList(params?: { page?: number; pageSize?: number; query?: string }) {
+      const user = useUserStore();
+      return await api.get<AdminAIQuotaListResult>('api/v1/admin/ai-quotas', {
+        headers: { 'Authorization': user.token },
+        params,
+      });
+    },
+
+    async adminAIQuotaGet(userId: string) {
+      const user = useUserStore();
+      return await api.get<AdminAIQuotaDetail>(`api/v1/admin/ai-quotas/${encodeURIComponent(userId)}`, {
+        headers: { 'Authorization': user.token },
+      });
+    },
+
+    async adminAIQuotaUpsert(userId: string, payload: AIQuotaPolicyConfig) {
+      const user = useUserStore();
+      return await api.put<AdminAIQuotaDetail>(`api/v1/admin/ai-quotas/${encodeURIComponent(userId)}`, payload, {
+        headers: { 'Authorization': user.token },
+      });
+    },
+
+    async adminAIQuotaDelete(userId: string) {
+      const user = useUserStore();
+      return await api.delete(`api/v1/admin/ai-quotas/${encodeURIComponent(userId)}`, {
+        headers: { 'Authorization': user.token },
+      });
+    },
+
+    async userAIProfilesGet() {
+      const user = useUserStore();
+      const resp = await api.get<{ items: UserAIProviderProfile[] }>('api/v1/user/ai-profiles', {
+        headers: { 'Authorization': user.token },
+      });
+      return resp;
+    },
+
+    async userAIProfilesUpsert(items: UserAIProviderProfile[]) {
+      const user = useUserStore();
+      const resp = await api.post<{ items: UserAIProviderProfile[] }>('api/v1/user/ai-profiles', { items }, {
         headers: { 'Authorization': user.token },
       });
       return resp;

@@ -72,6 +72,7 @@ export interface DisplaySettings {
   editingSelfActionsPlacement: EditingSelfActionsPlacement
   autoScrollTypingPreview: boolean
   mergeNeighbors: boolean
+  battleReportCardExpandedByDefault: boolean
   showPinnedMessages: boolean
   alwaysShowTimestamp: boolean
   timestampFormat: TimestampFormat
@@ -457,6 +458,7 @@ export const createDefaultDisplaySettings = (): DisplaySettings => ({
   editingSelfActionsPlacement: 'right',
   autoScrollTypingPreview: false,
   mergeNeighbors: true,
+  battleReportCardExpandedByDefault: false,
   showPinnedMessages: true,
   alwaysShowTimestamp: false,
   timestampFormat: TIMESTAMP_FORMAT_DEFAULT,
@@ -624,7 +626,7 @@ const normalizePlatformThemes = (value: any): PlatformTheme[] => {
   return result
 }
 
-const parseStoredSettings = (raw: string | null | undefined): DisplaySettings => {
+export const parseStoredSettings = (raw: string | null | undefined): DisplaySettings => {
   if (!raw) {
     return defaultSettings()
   }
@@ -687,6 +689,7 @@ const parseStoredSettings = (raw: string | null | undefined): DisplaySettings =>
       editingSelfActionsPlacement: coerceEditingSelfActionsPlacement((parsed as any)?.editingSelfActionsPlacement),
       autoScrollTypingPreview: coerceBoolean((parsed as any)?.autoScrollTypingPreview ?? false),
       mergeNeighbors: coerceBoolean(parsed.mergeNeighbors),
+      battleReportCardExpandedByDefault: coerceBoolean((parsed as any)?.battleReportCardExpandedByDefault ?? false),
       showPinnedMessages: coerceBoolean((parsed as any)?.showPinnedMessages ?? true),
       alwaysShowTimestamp: coerceBoolean((parsed as any)?.alwaysShowTimestamp ?? false),
       timestampFormat: coerceTimestampFormat((parsed as any)?.timestampFormat),
@@ -866,6 +869,10 @@ const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>):
     patch && Object.prototype.hasOwnProperty.call(patch, 'mergeNeighbors')
       ? coerceBoolean(patch.mergeNeighbors)
       : base.mergeNeighbors,
+  battleReportCardExpandedByDefault:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'battleReportCardExpandedByDefault')
+      ? coerceBoolean((patch as any).battleReportCardExpandedByDefault)
+      : base.battleReportCardExpandedByDefault,
   showPinnedMessages:
     patch && Object.prototype.hasOwnProperty.call(patch, 'showPinnedMessages')
       ? coerceBoolean((patch as any)?.showPinnedMessages)

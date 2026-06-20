@@ -54,7 +54,14 @@ func applyWhisperVisibilityFilter(q *gorm.DB, userID, channelID string) *gorm.DB
 	if q == nil {
 		return q
 	}
-	if canUserReadAllWhispersInChannel(userID, channelID) {
+	return applyWhisperVisibilityFilterWithReadAll(q, userID, canUserReadAllWhispersInChannel(userID, channelID))
+}
+
+func applyWhisperVisibilityFilterWithReadAll(q *gorm.DB, userID string, canReadAll bool) *gorm.DB {
+	if q == nil {
+		return q
+	}
+	if canReadAll {
 		return q
 	}
 	return q.Where(`(is_whisper = ? OR user_id = ? OR whisper_to = ? OR EXISTS (

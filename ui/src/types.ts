@@ -121,6 +121,55 @@ export interface MessageReactionEvent {
   timestamp: number;
 }
 
+export type BattleReportStatus = 'ready' | 'generating' | 'failed';
+
+export interface BattleReport {
+  id: string;
+  channelId: string;
+  worldId: string;
+  title: string;
+  content?: string;
+  contentPreview: string;
+  periodStart: number;
+  periodEnd: number;
+  contextReportCount: number;
+  sortOrder: number;
+  status: BattleReportStatus;
+  errorMessage?: string;
+  creatorId: string;
+  updaterId: string;
+  aiSource?: string;
+  aiProviderId?: string;
+  aiModel?: string;
+  aiFeatureKey?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface BattleReportPayload {
+  title?: string;
+  content?: string;
+  periodStart?: number;
+  periodEnd?: number;
+  contextReportCount?: number;
+  source?: string;
+  sourceChannelIds?: string[];
+  aiProviderId?: string;
+  aiModel?: string;
+  aiFeatureKey?: string;
+}
+
+export interface BattleReportDisplayChannel {
+  id: string;
+  worldId: string;
+  sourceChannelId: string;
+  displayChannelId: string;
+  displayName: string;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 import type { PlatformTheme } from '@/services/theme/themeTypes';
 
 export interface LogUploadConfig {
@@ -316,6 +365,168 @@ export interface PerformanceProfilerConfig {
   retentionDays: number;
 }
 
+export type AIRoutingMode = 'round_robin';
+export type AIFeatureAccessMode = 'all' | 'users' | 'worlds' | 'users_or_worlds';
+export type AIRunSource = 'platform' | 'user';
+
+export interface AIModelParams {
+  temperature?: number;
+  maxTokens?: number;
+  maxInputChars?: number;
+  topP?: number;
+}
+
+export interface AIFeatureAccessConfig {
+  mode: AIFeatureAccessMode;
+  userIds: string[];
+  worldIds: string[];
+}
+
+export interface AIFeatureConfig {
+  enabled: boolean;
+  userCustomOnly: boolean;
+  defaultPrompt: string;
+  defaultModel: string;
+  params: AIModelParams;
+  access: AIFeatureAccessConfig;
+}
+
+export interface AIRetryConfig {
+  maxAttempts: number;
+  initialDelayMs: number;
+  maxDelayMs: number;
+}
+
+export interface AIRoutingConfig {
+  mode: AIRoutingMode;
+}
+
+export interface AIProviderConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+  baseUrl: string;
+  apiKey?: string;
+  models: string[];
+  selectedModel?: string;
+  weight: number;
+}
+
+export interface AIModelPricingConfig {
+  providerId: string;
+  model: string;
+  promptPricePer1MTokens: number;
+  completionPricePer1MTokens: number;
+  cachePricePer1MTokens: number;
+}
+
+export interface AIQuotaPolicyConfig {
+  dailyLimit?: number | null;
+  monthlyLimit?: number | null;
+  lifetimeLimit?: number | null;
+}
+
+export interface UserAIProviderProfile {
+  id: string;
+  name: string;
+  enabled: boolean;
+  baseUrl: string;
+  apiKey?: string;
+  models: string[];
+  selectedModel?: string;
+  hasApiKey?: boolean;
+}
+
+export interface UserAIFeatureBinding {
+  providerId: string;
+  model: string;
+}
+
+export interface UserAISettings {
+  profiles: UserAIProviderProfile[];
+  featureBindings: Record<string, UserAIFeatureBinding>;
+}
+
+export interface AIConfig {
+  enabled: boolean;
+  routing: AIRoutingConfig;
+  retry: AIRetryConfig;
+  providers: AIProviderConfig[];
+  features: Record<string, AIFeatureConfig>;
+  pricing: AIModelPricingConfig[];
+  logRetentionDays: number;
+  quotaDefault: AIQuotaPolicyConfig;
+}
+
+export interface AIFeatureCapability {
+  key: string;
+  enabled: boolean;
+  userCustomOnly: boolean;
+  defaultPrompt?: string;
+  defaultModel?: string;
+  params?: AIModelParams;
+}
+
+export interface AdminAIUsageLogItem {
+  id: string;
+  userId: string;
+  usernameSnapshot: string;
+  nicknameSnapshot?: string;
+  featureKey: string;
+  providerId: string;
+  model: string;
+  source: AIRunSource;
+  status: string;
+  promptTokens: number;
+  completionTokens: number;
+  cacheTokens: number;
+  promptPricePer1M: number;
+  completionPricePer1M: number;
+  cachePricePer1M: number;
+  promptCost: number;
+  completionCost: number;
+  cacheCost: number;
+  totalCost: number;
+  latencyMs: number;
+  startedAt: string;
+  finishedAt: string;
+  errorMessage?: string;
+}
+
+export interface AdminAIUsageLogListResult {
+  items: AdminAIUsageLogItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export type AdminAIQuotaPolicySource = 'default' | 'override';
+
+export interface AdminAIQuotaUsageSummary {
+  dailySettled: number;
+  monthlySettled: number;
+  lifetimeSettled: number;
+  activeReserved: number;
+}
+
+export interface AdminAIQuotaDetail {
+  userId: string;
+  username: string;
+  nickname: string;
+  source: AdminAIQuotaPolicySource;
+  defaultPolicy: AIQuotaPolicyConfig;
+  override?: AIQuotaPolicyConfig | null;
+  effectivePolicy: AIQuotaPolicyConfig;
+  usage: AdminAIQuotaUsageSummary;
+}
+
+export interface AdminAIQuotaListResult {
+  items: AdminAIQuotaDetail[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
 export interface ServerConfig {
   serveAt: string;
   domain: string;
@@ -352,6 +563,7 @@ export interface ServerConfig {
   themeManagement?: ThemeManagementConfig;
   uiTextReplace?: UITextReplaceConfig;
   certificate?: CertificateConfig;
+  ai?: AIConfig;
   performanceProfiler?: PerformanceProfilerConfig;
 }
 

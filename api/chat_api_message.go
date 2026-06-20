@@ -428,9 +428,10 @@ func apiMessageGet(ctx *ChatContext, data *struct {
 	}
 
 	var item model.MessageModel
+	canReadAllWhispers := canUserReadAllWhispersInChannel(ctx.User.ID, data.ChannelID)
 	q := db.Where("channel_id = ? AND id = ?", data.ChannelID, data.MessageID)
 	q = q.Where("is_deleted = ?", false)
-	q = applyWhisperVisibilityFilter(q, ctx.User.ID, data.ChannelID)
+	q = applyWhisperVisibilityFilterWithReadAll(q, ctx.User.ID, canReadAllWhispers)
 	q.Limit(1).Find(&item)
 
 	if item.ID == "" {
@@ -561,11 +562,12 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 	}
 	beforeLimit := clampMessageContextWindow(data.Before, 12)
 	afterLimit := clampMessageContextWindow(data.After, 12)
+	canReadAllWhispers := canUserReadAllWhispersInChannel(ctx.User.ID, channelID)
 	baseQuery := func() *gorm.DB {
 		q := db.Model(&model.MessageModel{}).
 			Where("channel_id = ?", channelID).
 			Where("is_deleted = ?", false)
-		q = applyWhisperVisibilityFilter(q, ctx.User.ID, channelID)
+		q = applyWhisperVisibilityFilterWithReadAll(q, ctx.User.ID, canReadAllWhispers)
 		if !includeArchived {
 			q = q.Where("is_archived = ?", false)
 		}
@@ -641,6 +643,7 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 	}
 
 	beforeItems := make([]*model.MessageModel, 0, beforeLimit)
+	hasMoreBefore := false
 	if beforeLimit > 0 {
 		baseQuery().
 			Where("(display_order < ?) OR (display_order = ? AND created_at < ?) OR (display_order = ? AND created_at = ? AND id < ?)",
@@ -660,50 +663,17 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 			Preload("Member", func(db *gorm.DB) *gorm.DB {
 				return db.Select("id, nickname, channel_id")
 			}).
-			Limit(beforeLimit).
+			Limit(beforeLimit + 1).
 			Find(&beforeItems)
+		if len(beforeItems) > beforeLimit {
+			hasMoreBefore = true
+			beforeItems = beforeItems[:beforeLimit]
+		}
 		beforeItems = lo.Reverse(beforeItems)
-	}
-	hasMoreBefore := false
-	if len(beforeItems) > 0 {
-		var older model.MessageModel
-		baseQuery().
-			Select("id, display_order, created_at").
-			Where("(display_order < ?) OR (display_order = ? AND created_at < ?) OR (display_order = ? AND created_at = ? AND id < ?)",
-				beforeItems[0].DisplayOrder,
-				beforeItems[0].DisplayOrder,
-				beforeItems[0].CreatedAt,
-				beforeItems[0].DisplayOrder,
-				beforeItems[0].CreatedAt,
-				beforeItems[0].ID,
-			).
-			Order("display_order desc").
-			Order("created_at desc").
-			Order("id desc").
-			Limit(1).
-			Find(&older)
-		hasMoreBefore = older.ID != ""
-	} else if beforeLimit > 0 {
-		var older model.MessageModel
-		baseQuery().
-			Select("id, display_order, created_at").
-			Where("(display_order < ?) OR (display_order = ? AND created_at < ?) OR (display_order = ? AND created_at = ? AND id < ?)",
-				target.DisplayOrder,
-				target.DisplayOrder,
-				target.CreatedAt,
-				target.DisplayOrder,
-				target.CreatedAt,
-				target.ID,
-			).
-			Order("display_order desc").
-			Order("created_at desc").
-			Order("id desc").
-			Limit(1).
-			Find(&older)
-		hasMoreBefore = older.ID != ""
 	}
 
 	afterItems := make([]*model.MessageModel, 0, afterLimit)
+	hasMoreAfter := false
 	if afterLimit > 0 {
 		baseQuery().
 			Where("(display_order > ?) OR (display_order = ? AND created_at > ?) OR (display_order = ? AND created_at = ? AND id > ?)",
@@ -723,46 +693,12 @@ func apiMessageContext(ctx *ChatContext, data *struct {
 			Preload("Member", func(db *gorm.DB) *gorm.DB {
 				return db.Select("id, nickname, channel_id")
 			}).
-			Limit(afterLimit).
+			Limit(afterLimit + 1).
 			Find(&afterItems)
-	}
-	hasMoreAfter := false
-	if len(afterItems) > 0 {
-		var newer model.MessageModel
-		baseQuery().
-			Select("id, display_order, created_at").
-			Where("(display_order > ?) OR (display_order = ? AND created_at > ?) OR (display_order = ? AND created_at = ? AND id > ?)",
-				afterItems[len(afterItems)-1].DisplayOrder,
-				afterItems[len(afterItems)-1].DisplayOrder,
-				afterItems[len(afterItems)-1].CreatedAt,
-				afterItems[len(afterItems)-1].DisplayOrder,
-				afterItems[len(afterItems)-1].CreatedAt,
-				afterItems[len(afterItems)-1].ID,
-			).
-			Order("display_order asc").
-			Order("created_at asc").
-			Order("id asc").
-			Limit(1).
-			Find(&newer)
-		hasMoreAfter = newer.ID != ""
-	} else if afterLimit > 0 {
-		var newer model.MessageModel
-		baseQuery().
-			Select("id, display_order, created_at").
-			Where("(display_order > ?) OR (display_order = ? AND created_at > ?) OR (display_order = ? AND created_at = ? AND id > ?)",
-				target.DisplayOrder,
-				target.DisplayOrder,
-				target.CreatedAt,
-				target.DisplayOrder,
-				target.CreatedAt,
-				target.ID,
-			).
-			Order("display_order asc").
-			Order("created_at asc").
-			Order("id asc").
-			Limit(1).
-			Find(&newer)
-		hasMoreAfter = newer.ID != ""
+		if len(afterItems) > afterLimit {
+			hasMoreAfter = true
+			afterItems = afterItems[:afterLimit]
+		}
 	}
 
 	items := make([]*model.MessageModel, 0, len(beforeItems)+1+len(afterItems))
@@ -2606,7 +2542,7 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	canReadAllWhispers := canUserReadAllWhispersInChannel(ctx.User.ID, data.ChannelID)
 	q := db.Where("channel_id = ?", data.ChannelID)
 	q = q.Where("is_deleted = ?", false)
-	q = applyWhisperVisibilityFilter(q, ctx.User.ID, data.ChannelID)
+	q = applyWhisperVisibilityFilterWithReadAll(q, ctx.User.ID, canReadAllWhispers)
 
 	if data.ArchivedOnly {
 		q = q.Where("is_archived = ?", true)
@@ -2660,7 +2596,6 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		}
 	}
 
-	var count int64
 	cursor := messageListCursor{}
 	hasCursor := false
 	var channel *model.ChannelModel
@@ -2717,7 +2652,12 @@ func apiMessageList(ctx *ChatContext, data *struct {
 	}).
 		Preload("Member", func(db *gorm.DB) *gorm.DB {
 			return db.Select("id, nickname, channel_id")
-		}).Limit(limit).Find(&items)
+		}).Limit(limit + 1).Find(&items)
+
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
 
 	utils.QueryOneToManyMap(model.GetDB(), items, func(i *model.MessageModel) []string {
 		return []string{i.QuoteID}
@@ -2725,17 +2665,16 @@ func apiMessageList(ctx *ChatContext, data *struct {
 		i.Quote = x[0]
 	}, "id, content, created_at, user_id, is_revoked, is_deleted, whisper_to, channel_id, sender_member_name, sender_identity_id, sender_identity_variant_id, sender_identity_name, sender_identity_color, sender_identity_avatar_id, sender_identity_is_temporary, whisper_sender_member_id, whisper_sender_member_name, whisper_sender_user_name, whisper_sender_user_nick, whisper_target_member_id, whisper_target_member_name, whisper_target_user_name, whisper_target_user_nick")
 
-	if !ctx.IsReadOnly() {
+	if !ctx.IsReadOnly() && !hasCursor && data.Type != "time" {
 		_ = model.ChannelReadSet(data.ChannelID, ctx.User.ID)
 	}
 
-	q.Count(&count)
 	var next string
 
 	if direction == messageListBefore {
 		items = lo.Reverse(items)
 	}
-	if count > int64(len(items)) && len(items) > 0 {
+	if hasMore && len(items) > 0 {
 		boundary := items[0]
 		if direction == messageListAfter {
 			boundary = items[len(items)-1]
@@ -3368,6 +3307,7 @@ func apiMessageReorder(ctx *ChatContext, data *struct {
 		return nil, err
 	}
 	msg.DisplayOrder = newOrder
+	_ = service.SyncBattleReportOrderFromDisplayMessage(data.ChannelID)
 
 	if msg.WhisperTo != "" && msg.WhisperTarget == nil {
 		msg.WhisperTarget = loadWhisperTargetForChannel(data.ChannelID, msg.WhisperTo)
