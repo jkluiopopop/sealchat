@@ -1288,6 +1288,7 @@ watch(() => chat.curChannel?.id, (id, prevId) => {
 });
 const INLINE_STACK_BREAKPOINT = 640;
 const { width: windowWidth } = useWindowSize();
+const bridgeStatusDrawerWidth = computed(() => (windowWidth.value > 0 && windowWidth.value < 768 ? '100%' : 560));
 const compactInlineStackLayout = computed(() => {
   if (!compactInlineLayout.value) return false;
   const width = windowWidth.value;
@@ -15467,7 +15468,7 @@ onBeforeUnmount(() => {
       </n-drawer-content>
     </n-drawer>
 
-    <n-drawer v-model:show="bridgeStatusDrawerVisible" placement="right" :width="560">
+    <n-drawer v-model:show="bridgeStatusDrawerVisible" placement="right" :width="bridgeStatusDrawerWidth">
       <n-drawer-content closable>
         <template #header>桥接状态</template>
         <BridgeStatusPanel
