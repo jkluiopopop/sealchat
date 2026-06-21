@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import dayjs from 'dayjs'
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useWindowSize } from '@vueuse/core'
 import { useDialog, useMessage } from 'naive-ui'
 import { useBattleReportStore } from '@/stores/battleReport'
 import { isUserAISettingsRequiredMessage, useAIStore } from '@/stores/ai'
@@ -29,6 +30,7 @@ const dialog = useDialog()
 const store = useBattleReportStore()
 const aiStore = useAIStore()
 const chat = useChatStore()
+const { width: viewportWidth } = useWindowSize()
 
 const createVisible = ref(false)
 const displayVisible = ref(false)
@@ -57,6 +59,8 @@ const sourceReports = computed(() => sourceChannelId.value ? (store.itemsByChann
 const editingReport = computed(() => editingReportId.value ? store.detailById[editingReportId.value] : null)
 const hasGenerating = computed(() => sourceReports.value.some((item) => item.status === 'generating'))
 const createSubmitting = computed(() => store.saving || localSummaryRunning.value)
+const isMobileDrawer = computed(() => viewportWidth.value > 0 && viewportWidth.value < 768)
+const drawerWidth = computed(() => (isMobileDrawer.value ? '100%' : 620))
 
 const flattenChannels = (items: SChannel[] = []): SChannel[] => {
   const out: SChannel[] = []
@@ -482,7 +486,7 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
 <template>
   <n-drawer
     :show="visible"
-    :width="620"
+    :width="drawerWidth"
     placement="right"
     @update:show="emit('update:visible', $event)"
   >
@@ -809,10 +813,6 @@ const handleDrop = async (target: BattleReport, event: DragEvent) => {
 }
 
 @media (max-width: 720px) {
-  :deep(.n-drawer) {
-    width: 100vw !important;
-  }
-
   .battle-report-toolbar {
     align-items: stretch;
     flex-direction: column;

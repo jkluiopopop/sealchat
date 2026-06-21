@@ -84,6 +84,10 @@ func ChannelImagesList(c *fiber.Ctx) error {
 		pageSize = 100
 	}
 	icModeFilter := strings.ToLower(strings.TrimSpace(c.Query("ic_mode", "all")))
+	sortOrder := strings.ToLower(strings.TrimSpace(c.Query("sort", "desc")))
+	if sortOrder != "asc" {
+		sortOrder = "desc"
+	}
 
 	db := model.GetDB()
 
@@ -115,10 +119,14 @@ func ChannelImagesList(c *fiber.Ctx) error {
 
 	// Fetch messages
 	offset := (page - 1) * pageSize
+	orderSuffix := " DESC"
+	if sortOrder == "asc" {
+		orderSuffix = " ASC"
+	}
 	var messages []*model.MessageModel
 	err = baseQuery().
-		Order("display_order DESC").
-		Order("created_at DESC").
+		Order("display_order"+orderSuffix).
+		Order("created_at"+orderSuffix).
 		Offset(offset).
 		Limit(pageSize*3). // Fetch more since not all messages will have images
 		Preload("User", func(tx *gorm.DB) *gorm.DB {

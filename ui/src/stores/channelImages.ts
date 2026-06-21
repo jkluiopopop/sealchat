@@ -2,9 +2,16 @@ import { defineStore } from 'pinia'
 import { api } from './_config'
 import {
     nextChannelImagesIcModeFilter,
+    nextChannelImagesSortOrder,
     readChannelImagesIcModeFilter,
+    readChannelImagesSortOrder,
+    readChannelImagesThumbnailMode,
     writeChannelImagesIcModeFilter,
+    writeChannelImagesSortOrder,
+    writeChannelImagesThumbnailMode,
     type ChannelImagesIcModeFilter,
+    type ChannelImagesSortOrder,
+    type ChannelImagesThumbnailMode,
 } from './channelImagesFilter'
 
 export interface ChannelImageItem {
@@ -31,8 +38,9 @@ interface ChannelImagesState {
     total: number
     hasMore: boolean
     previewIndex: number | null
-    thumbnailMode: 'small' | 'large'  // 小图/大图模式
+    thumbnailMode: ChannelImagesThumbnailMode  // 小图/大图模式
     icModeFilter: ChannelImagesIcModeFilter
+    sortOrder: ChannelImagesSortOrder
 }
 
 interface ChannelImagesApiResponse {
@@ -66,8 +74,9 @@ export const useChannelImagesStore = defineStore('channelImages', {
         total: 0,
         hasMore: false,
         previewIndex: null,
-        thumbnailMode: 'large',  // 默认大图模式
+        thumbnailMode: readChannelImagesThumbnailMode(),  // 默认大图模式
         icModeFilter: readChannelImagesIcModeFilter(),
+        sortOrder: readChannelImagesSortOrder(),
     }),
 
     getters: {
@@ -126,8 +135,9 @@ export const useChannelImagesStore = defineStore('channelImages', {
             }
         },
 
-        setThumbnailMode(mode: 'small' | 'large') {
+        setThumbnailMode(mode: ChannelImagesThumbnailMode) {
             this.thumbnailMode = mode
+            writeChannelImagesThumbnailMode(mode)
         },
 
         toggleThumbnailMode() {
@@ -150,6 +160,24 @@ export const useChannelImagesStore = defineStore('channelImages', {
 
         cycleIcModeFilter() {
             this.setIcModeFilter(nextChannelImagesIcModeFilter(this.icModeFilter))
+        },
+
+        setSortOrder(order: ChannelImagesSortOrder) {
+            if (this.sortOrder === order) return
+            this.sortOrder = order
+            writeChannelImagesSortOrder(order)
+            this.page = 1
+            this.items = []
+            this.total = 0
+            this.hasMore = false
+            this.previewIndex = null
+            if (this.panelVisible && this.channelId) {
+                void this.loadImages(true)
+            }
+        },
+
+        toggleSortOrder() {
+            this.setSortOrder(nextChannelImagesSortOrder(this.sortOrder))
         },
 
         // 刷新图片列表（用于实时更新）
@@ -175,6 +203,7 @@ export const useChannelImagesStore = defineStore('channelImages', {
                             page: this.page,
                             page_size: this.pageSize,
                             ic_mode: this.icModeFilter,
+                            sort: this.sortOrder,
                         },
                     }
                 )
@@ -232,8 +261,9 @@ export const useChannelImagesStore = defineStore('channelImages', {
             this.total = 0
             this.hasMore = false
             this.previewIndex = null
-            this.thumbnailMode = 'large'
+            this.thumbnailMode = readChannelImagesThumbnailMode()
             this.icModeFilter = readChannelImagesIcModeFilter()
+            this.sortOrder = readChannelImagesSortOrder()
         },
     },
 })

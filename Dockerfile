@@ -24,7 +24,8 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG BUILD_VERSION
 RUN --mount=type=cache,target=/root/.cache/go-build \
-  CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
+  test -n "${TARGETOS}" && test -n "${TARGETARCH}" && \
+  CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -o /out/sealchat-server -trimpath -buildvcs=false -ldflags "-s -w -X sealchat/utils.BuildVersion=${BUILD_VERSION}" .
 
 FROM --platform=$BUILDPLATFORM alpine:3.20 AS webp-assets
@@ -32,7 +33,8 @@ ARG TARGETARCH
 WORKDIR /src
 COPY bin/ ./bin/
 RUN set -eux; \
-  case "${TARGETARCH:-amd64}" in \
+  test -n "${TARGETARCH}"; \
+  case "${TARGETARCH}" in \
     amd64) WEBP_DIR="linux-x64" ;; \
     arm64) WEBP_DIR="linux-arm64" ;; \
     *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
@@ -54,7 +56,8 @@ COPY --from=go-builder /out/sealchat-server /app/sealchat-server
 COPY --from=webp-assets /out/bin /app/bin
 COPY --from=webp-assets /out/LICENSE /app/LICENSE
 RUN set -eux; \
-  case "${TARGETARCH:-amd64}" in \
+  test -n "${TARGETARCH}"; \
+  case "${TARGETARCH}" in \
     amd64) WEBP_DIR="linux-x64" ;; \
     arm64) WEBP_DIR="linux-arm64" ;; \
     *) echo "unsupported TARGETARCH=${TARGETARCH}"; exit 1 ;; \
