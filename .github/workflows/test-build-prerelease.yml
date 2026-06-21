@@ -292,6 +292,12 @@ jobs:
               .
           fi
 
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sealchat_test_${{ needs.prepare-prerelease.outputs.version }}_${{ matrix.name }}
+          path: ./release/*
+
       - name: Upload package to prerelease
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
