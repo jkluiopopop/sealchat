@@ -168,6 +168,13 @@ const BOT_USER_ID_PREFIX = 'BOT:';
 const MESSAGE_IFORM_MIN_WIDTH = 120;
 const MESSAGE_IFORM_MIN_HEIGHT = 72;
 const MESSAGE_IFORM_RESIZE_SYNC_DEBOUNCE = 480;
+
+const isCoarsePointer = () => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false;
+  }
+  return window.matchMedia('(hover: none), (pointer: coarse)').matches;
+};
 const StickyNoteCounterEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteCounter.vue'));
 const StickyNoteListEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteList.vue'));
 const StickyNoteSliderEmbed = defineAsyncComponent(() => import('./sticky-notes/StickyNoteSlider.vue'));
@@ -406,6 +413,9 @@ const parseContent = (payload: any, overrideContent?: string) => {
       const widgetHeight = Number.isFinite(embedState.height)
         ? clampStickyNoteEmbedSize(embedState.height as number, STICKY_NOTE_EMBED_RESIZE_MIN_HEIGHT, STICKY_NOTE_EMBED_RESIZE_MAX_HEIGHT)
         : undefined;
+      const widgetAspectRatio = widgetWidth && widgetHeight
+        ? `${widgetWidth} / ${widgetHeight}`
+        : undefined;
       const openStickyNote = (event?: MouseEvent | KeyboardEvent) => {
         event?.preventDefault();
         event?.stopPropagation();
@@ -480,8 +490,9 @@ const parseContent = (payload: any, overrideContent?: string) => {
               {
                 class: 'message-sticky-note-embed__widget',
                 style: {
-                  width: widgetWidth ? `${widgetWidth}px` : undefined,
-                  height: widgetHeight ? `${widgetHeight}px` : undefined,
+                  '--sticky-note-embed-width': widgetWidth ? `${widgetWidth}px` : undefined,
+                  '--sticky-note-embed-height': widgetHeight ? `${widgetHeight}px` : undefined,
+                  '--sticky-note-embed-aspect-ratio': widgetAspectRatio,
                 } as Record<string, string | undefined>,
                 onClick: (event: MouseEvent) => event.stopPropagation(),
                 onPointerdown: (event: PointerEvent) => event.stopPropagation(),
@@ -541,14 +552,22 @@ const parseContent = (payload: any, overrideContent?: string) => {
         class: 'message-iform-embed',
         'data-iform-link': singleIFormLink.rawLink,
         'data-message-id': payload?.id || '',
+        'data-iform-width': String(width),
+        'data-iform-height': String(height),
         style: {
-          width: `${width}px`,
-          height: `${height}px`,
-          minWidth: `${MESSAGE_IFORM_MIN_WIDTH}px`,
-          minHeight: `${MESSAGE_IFORM_MIN_HEIGHT}px`,
+          '--message-iform-width': `${width}px`,
+          '--message-iform-height': `${height}px`,
+          '--message-iform-min-width': `${MESSAGE_IFORM_MIN_WIDTH}px`,
+          '--message-iform-min-height': `${MESSAGE_IFORM_MIN_HEIGHT}px`,
         },
       },
-      [h(IFormEmbedFrame, { form: runtimeForm })],
+      [
+        h(
+          'div',
+          { class: 'message-iform-embed__scale' },
+          [h(IFormEmbedFrame, { form: runtimeForm })],
+        ),
+      ],
     );
   }
 
@@ -698,6 +717,7 @@ const parseContent = (payload: any, overrideContent?: string) => {
 
 
 let messageIFormResizeObserver: ResizeObserver | null = null;
+let messageIFormScaleObserver: ResizeObserver | null = null;
 let messageIFormResizePersistTimer: ReturnType<typeof setTimeout> | null = null;
 let messageIFormPersistInFlight = false;
 let messageIFormQueuedSize: { width: number; height: number } | null = null;
@@ -708,6 +728,10 @@ const cleanupMessageIFormResizeSync = () => {
   if (messageIFormResizeObserver) {
     messageIFormResizeObserver.disconnect();
     messageIFormResizeObserver = null;
+  }
+  if (messageIFormScaleObserver) {
+    messageIFormScaleObserver.disconnect();
+    messageIFormScaleObserver = null;
   }
   if (messageIFormResizePersistTimer) {
     clearTimeout(messageIFormResizePersistTimer);
@@ -803,6 +827,26 @@ const resetMessageIFormSyncBaseline = () => {
     : '';
 };
 
+const syncMessageIFormMobileScale = (embedEl: HTMLElement) => {
+  if (!isCoarsePointer()) {
+    embedEl.style.removeProperty('--message-iform-scale');
+    embedEl.style.removeProperty('--message-iform-scaled-height');
+    return;
+  }
+
+  const originalWidth = Number.parseFloat(embedEl.dataset.iformWidth || '');
+  const originalHeight = Number.parseFloat(embedEl.dataset.iformHeight || '');
+  if (!Number.isFinite(originalWidth) || originalWidth <= 0 || !Number.isFinite(originalHeight) || originalHeight <= 0) {
+    return;
+  }
+
+  const parentWidth = embedEl.parentElement?.clientWidth || embedEl.clientWidth || originalWidth;
+  const availableWidth = Math.max(1, parentWidth);
+  const scale = Math.min(1, availableWidth / originalWidth);
+  embedEl.style.setProperty('--message-iform-scale', String(scale));
+  embedEl.style.setProperty('--message-iform-scaled-height', `${Math.round(originalHeight * scale)}px`);
+};
+
 const setupMessageIFormResizeSync = () => {
   cleanupMessageIFormResizeSync();
   const host = messageContentRef.value;
@@ -811,6 +855,14 @@ const setupMessageIFormResizeSync = () => {
   }
   const embedEl = host.querySelector<HTMLElement>('.message-iform-embed');
   if (!embedEl) {
+    return;
+  }
+  syncMessageIFormMobileScale(embedEl);
+  if (isCoarsePointer()) {
+    messageIFormScaleObserver = new ResizeObserver(() => {
+      syncMessageIFormMobileScale(embedEl);
+    });
+    messageIFormScaleObserver.observe(embedEl.parentElement || embedEl);
     return;
   }
   messageIFormResizeObserver = new ResizeObserver((entries) => {
@@ -855,6 +907,9 @@ const handleMessageIFormPointerDown = (event: MouseEvent | PointerEvent) => {
   if (!canEdit.value) {
     return;
   }
+  if (isCoarsePointer()) {
+    return;
+  }
   if (!target?.closest('.message-iform-embed')) {
     return;
   }
@@ -862,6 +917,9 @@ const handleMessageIFormPointerDown = (event: MouseEvent | PointerEvent) => {
 };
 
 const flushMessageIFormSizeFromDom = () => {
+  if (isCoarsePointer()) {
+    return;
+  }
   const host = messageContentRef.value;
   if (!host) {
     return;
@@ -5385,7 +5443,8 @@ const handleRetrySend = () => {
 }
 
 .message-sticky-note-embed__widget {
-  width: min(430px, 100%);
+  width: min(var(--sticky-note-embed-width, 430px), 100%);
+  height: var(--sticky-note-embed-height, auto);
   max-width: 100%;
   min-width: 0;
   min-height: 0;
@@ -5393,6 +5452,24 @@ const handleRetrySend = () => {
   resize: both;
   overflow: auto;
   scrollbar-width: thin;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .message-sticky-note-embed {
+    max-width: 100%;
+  }
+
+  .message-sticky-note-embed__panel {
+    margin-left: 0;
+  }
+
+  .message-sticky-note-embed__widget {
+    box-sizing: border-box;
+    width: min(var(--sticky-note-embed-width, 430px), 100%);
+    height: auto;
+    aspect-ratio: var(--sticky-note-embed-aspect-ratio, auto);
+    resize: none;
+  }
 }
 
 .message-sticky-note-embed__widget :deep(.sticky-note-counter),
@@ -5527,6 +5604,12 @@ const handleRetrySend = () => {
 
 .message-iform-embed {
   position: relative;
+  box-sizing: border-box;
+  width: var(--message-iform-width);
+  height: var(--message-iform-height);
+  min-width: var(--message-iform-min-width, 120px);
+  min-height: var(--message-iform-min-height, 72px);
+  max-width: 100%;
   overflow: auto;
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--chat-border-mute, rgba(15, 23, 42, 0.08)) 88%, transparent);
@@ -5534,6 +5617,33 @@ const handleRetrySend = () => {
   resize: both;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
+}
+
+.message-iform-embed__scale {
+  width: 100%;
+  height: 100%;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .message-iform-embed {
+    width: min(var(--message-iform-width), 100%);
+    height: var(--message-iform-scaled-height, var(--message-iform-height));
+    min-width: 0;
+    overflow: hidden;
+    resize: none;
+    scrollbar-width: none;
+  }
+
+  .message-iform-embed__scale {
+    width: var(--message-iform-width);
+    height: var(--message-iform-height);
+    transform: scale(var(--message-iform-scale, 1));
+    transform-origin: top left;
+  }
+
+  .message-iform-embed::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .message-iform-embed::-webkit-scrollbar {
