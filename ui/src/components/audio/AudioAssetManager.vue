@@ -1191,6 +1191,17 @@ function summarizeBatchDeleteFailures(failures: AudioBulkDeleteFailure[]) {
     .join('；');
 }
 
+function summarizeBatchUpdateFailures(failures: Array<{ assetId: string; reason: string }>, actionLabel: string) {
+  const grouped = new Map<string, number>();
+  failures.forEach((item) => {
+    const key = item.reason || `${actionLabel}失败`;
+    grouped.set(key, (grouped.get(key) || 0) + 1);
+  });
+  return Array.from(grouped.entries())
+    .map(([reason, count]) => `${count} 条因为${reason}不能${actionLabel}`)
+    .join('；');
+}
+
 function openBatchDeleteFailureDialog(failures: AudioBulkDeleteFailure[]) {
   dialog.warning({
     title: '批量删除失败详情',
@@ -1684,7 +1695,7 @@ async function handleBatchMoveSave() {
       message.success(`已移动 ${summary.success} 条素材`);
     }
     if (summary.failed) {
-      message.warning(`${summary.failed} 条素材移动失败`);
+      message.warning(summarizeBatchUpdateFailures(summary.failures, '移动'));
     }
     batchMoveModalVisible.value = false;
     clearSelection();

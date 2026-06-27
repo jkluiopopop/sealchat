@@ -2628,7 +2628,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
 
     async batchUpdateAssets(assetIds: string[], payload: AudioAssetMutationPayload) {
       if (!assetIds?.length) {
-        return { success: 0, failed: 0 };
+        return { success: 0, failed: 0, failures: [] };
       }
       if ((payload.scope || payload.worldId !== undefined) && !this.isSystemAdmin) {
         throw new Error('无权限调整素材级别');
@@ -2638,6 +2638,7 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         const tasks = assetIds.map((id) => api.patch(`/api/v1/audio/assets/${id}`, payload));
         const results = await Promise.allSettled(tasks);
         let success = 0;
+        const failures: { assetId: string; reason: string }[] = [];
         results.forEach((result, index) => {
           if (result.status === 'fulfilled') {
             success += 1;
@@ -2650,13 +2651,18 @@ export const useAudioStudioStore = defineStore('audioStudio', {
                 this.upsertAssetLocally({ ...existing, ...payload });
               }
             }
+            return;
           }
+          failures.push({
+            assetId: assetIds[index],
+            reason: result.reason?.response?.data?.message || result.reason?.response?.data?.error || result.reason?.message || '更新失败',
+          });
         });
         if (success) {
           await this.persistAssetsToCache();
           await this.fetchAssets({ pagination: { page: this.assetPagination.page }, silent: true });
         }
-        return { success, failed: assetIds.length - success };
+        return { success, failed: failures.length, failures };
       } finally {
         this.assetBulkLoading = false;
       }
