@@ -16,20 +16,20 @@ import type {
   AudioBulkDeleteFailure,
   AudioDeleteConflictPayload,
   AudioDeleteResult,
+  AudioFolder,
+  AudioFolderPayload,
+  AudioImportBrowseResult,
+  AudioImportJobStatus,
   AudioAssetListResult,
   AudioAssetMutationPayload,
   AudioQuotaSummary,
   AudioAssetQueryParams,
   AudioAssetScope,
-  AudioFolder,
-  AudioFolderPayload,
   AudioScene,
   AudioSceneInput,
   AudioSceneTrack,
   AudioSearchFilters,
   AudioTrackType,
-  AudioImportPreview,
-  AudioImportResult,
   AudioPlayableStreamResponse,
   AudioPlaybackStatePayload,
   AudioTrackStatePayload,
@@ -86,10 +86,12 @@ interface AudioStudioState {
   folderActionLoading: boolean;
   filters: AudioSearchFilters;
   uploadTasks: UploadTaskState[];
-  importPreview: AudioImportPreview | null;
-  importPreviewLoading: boolean;
-  importLoading: boolean;
-  importResult: AudioImportResult | null;
+  importBrowse: AudioImportBrowseResult | null;
+  importDirectoryTree: AudioImportBrowseResult['tree'];
+  importCurrentPath: string;
+  importBrowseLoading: boolean;
+  importJobLoading: boolean;
+  importJobStatus: AudioImportJobStatus | null;
   importError: string | null;
   networkMode: 'normal' | 'constrained' | 'minimal';
   bufferMessage: string;
@@ -217,6 +219,7 @@ if (typeof window !== 'undefined' && typeof Howler !== 'undefined') {
 }
 let progressTimer: number | null = null;
 let transcodeTimer: number | null = null;
+let importJobPollingTimer: number | null = null;
 const SYNC_DEBOUNCE_MS = 300;
 const SNAPSHOT_FETCH_MIN_INTERVAL_MS = 1200;
 const SYNC_RETRY_BASE_MS = 600;
@@ -373,6 +376,13 @@ interface FetchAssetsOptions {
   silent?: boolean;
 }
 
+interface FetchFoldersOptions {
+  scope?: AudioAssetScope;
+  worldId?: string | null;
+  includeCommon?: boolean;
+  applyState?: boolean;
+}
+
 function normalizeFolderId(input: string | null | undefined): string | null {
   if (input === undefined || input === null) return null;
   const trimmed = String(input).trim();
@@ -475,10 +485,12 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       includeCommon: true,
     },
     uploadTasks: [],
-    importPreview: null,
-    importPreviewLoading: false,
-    importLoading: false,
-    importResult: null,
+    importBrowse: null,
+    importDirectoryTree: [],
+    importCurrentPath: '',
+    importBrowseLoading: false,
+    importJobLoading: false,
+    importJobStatus: null,
     importError: null,
     networkMode: 'normal',
     bufferMessage: '',
@@ -1789,27 +1801,44 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       return result;
     },
 
-    async fetchFolders() {
+    async fetchFolders(options?: FetchFoldersOptions) {
       try {
         const params: Record<string, unknown> = {};
-        if (!this.isSystemAdmin && !this.filters.worldId) {
-          return;
+        const targetScope = options?.scope ?? this.filters.scope;
+        const targetWorldId = normalizeFolderId(options?.worldId ?? this.filters.worldId);
+        const includeCommon = options?.includeCommon ?? this.filters.includeCommon;
+        const applyState = options?.applyState ?? true;
+        if (!this.isSystemAdmin && !targetWorldId) {
+          if (applyState) {
+            this.folders = [];
+            this.folderPathLookup = {};
+          }
+          return [];
         }
-        if (this.filters.scope) {
-          params.scope = this.filters.scope;
+        if (targetScope) {
+          params.scope = targetScope;
         }
-        if (this.filters.worldId) {
-          params.worldId = this.filters.worldId;
+        if (targetWorldId) {
+          params.worldId = targetWorldId;
         }
-        if (this.filters.includeCommon !== undefined) {
-          params.includeCommon = this.filters.includeCommon;
+        if (includeCommon !== undefined) {
+          params.includeCommon = includeCommon;
         }
         const resp = await api.get('/api/v1/audio/folders', { params });
-        this.folders = resp.data?.items || [];
-        this.folderPathLookup = buildFolderPathLookup(this.folders);
-        await this.refreshLocalCacheWithFolderPaths();
+        const items = (resp.data?.items || []) as AudioFolder[];
+        if (applyState) {
+          this.folders = items;
+          this.folderPathLookup = buildFolderPathLookup(this.folders);
+          await this.refreshLocalCacheWithFolderPaths();
+        }
+        return items;
       } catch (err) {
         console.error('fetchFolders failed', err);
+        if (options?.applyState ?? true) {
+          this.folders = [];
+          this.folderPathLookup = {};
+        }
+        return [];
       }
     },
 
@@ -1829,8 +1858,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         if (effectivePayload.scope === 'world' && !effectivePayload.worldId) {
           effectivePayload.worldId = this.filters.worldId ?? this.currentWorldId ?? undefined;
         }
-        await api.post('/api/v1/audio/folders', effectivePayload);
+        const resp = await api.post('/api/v1/audio/folders', effectivePayload);
         await this.fetchFolders();
+        return (resp.data?.item || null) as AudioFolder | null;
       } catch (err) {
         console.error('createFolder failed', err);
         throw err;
@@ -2835,57 +2865,135 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       await doUpload();
     },
 
-    async previewImport() {
+    async fetchImportBrowser(path = '') {
       if (!this.canManage) return null;
       if (!this.importEnabled) {
         this.importError = '未启用导入目录';
         return null;
       }
-      this.importPreviewLoading = true;
+      this.importBrowseLoading = true;
       this.importError = null;
-      this.importResult = null;
       try {
-        const resp = await api.get('/api/v1/audio/assets/import/preview');
-        this.importPreview = resp.data as AudioImportPreview;
-        return this.importPreview;
+        const params = path ? { path } : undefined;
+        const resp = await api.get('/api/v1/audio/assets/import/browser', { params });
+        const browse = resp.data as AudioImportBrowseResult;
+        this.importBrowse = browse;
+        this.importDirectoryTree = browse.tree || [];
+        this.importCurrentPath = browse.currentPath || '';
+        return browse;
       } catch (err: any) {
         this.importError = err?.response?.data?.message || err?.message || '读取导入目录失败';
-        this.importPreview = null;
+        this.importBrowse = null;
+        this.importDirectoryTree = [];
+        this.importCurrentPath = '';
         return null;
       } finally {
-        this.importPreviewLoading = false;
+        this.importBrowseLoading = false;
       }
     },
 
-    async importFromDir(options: { all: boolean; paths?: string[]; scope?: AudioAssetScope; worldId?: string }) {
+    async startImportJob(options: {
+      directory?: string;
+      all: boolean;
+      paths?: string[];
+      scope?: AudioAssetScope;
+      worldId?: string;
+      folderId?: string | null;
+    }) {
       if (!this.canManage) return null;
       if (!this.importEnabled) {
         this.importError = '未启用导入目录';
         return null;
       }
-      this.importLoading = true;
+      this.importJobLoading = true;
       this.importError = null;
-      this.importResult = null;
+      this.importJobStatus = null;
       try {
         const resp = await api.post('/api/v1/audio/assets/import', {
+          directory: options.directory ?? this.importCurrentPath,
           all: options.all,
           paths: options.paths || [],
           scope: options.scope,
           worldId: options.worldId,
+          folderId: normalizeFolderId(options.folderId) ?? undefined,
         });
-        this.importResult = resp.data as AudioImportResult;
-        try {
-          await this.fetchAssets();
-        } catch (err) {
-          console.warn('refresh assets after import failed', err);
-        }
-        return this.importResult;
+        this.importJobStatus = resp.data as AudioImportJobStatus;
+        return this.importJobStatus;
       } catch (err: any) {
         this.importError = err?.response?.data?.message || err?.message || '导入失败';
         return null;
       } finally {
-        this.importLoading = false;
+        this.importJobLoading = false;
       }
+    },
+
+    async pollImportJobStatus(jobId?: string) {
+      const targetJobId = (jobId || this.importJobStatus?.jobId || '').trim();
+      if (!targetJobId) {
+        return null;
+      }
+      try {
+        const resp = await api.get(`/api/v1/audio/assets/import/jobs/${targetJobId}`);
+        const status = resp.data as AudioImportJobStatus;
+        this.importJobStatus = status;
+        if (status.status === 'done' || status.status === 'failed') {
+          this.stopImportJobPolling();
+          if (status.status === 'done') {
+            const refreshResults = await Promise.allSettled([
+              this.fetchAssets({ pagination: { page: 1 } }),
+              this.fetchTrackSelectableAssets(),
+              this.fetchImportBrowser(this.importCurrentPath),
+            ]);
+            refreshResults.forEach((result, index) => {
+              if (result.status === 'rejected') {
+                console.warn(`audio import refresh ${index} failed`, result.reason);
+              }
+            });
+          }
+        }
+        return status;
+      } catch (err: any) {
+        this.importError = err?.response?.data?.message || err?.message || '读取导入任务失败';
+        this.stopImportJobPolling();
+        return null;
+      }
+    },
+
+    startImportJobPolling(jobId?: string) {
+      const targetJobId = (jobId || this.importJobStatus?.jobId || '').trim();
+      if (!targetJobId) {
+        return;
+      }
+      this.stopImportJobPolling();
+      void this.pollImportJobStatus(targetJobId);
+      if (typeof window === 'undefined') {
+        return;
+      }
+      importJobPollingTimer = window.setInterval(() => {
+        void this.pollImportJobStatus(targetJobId);
+      }, 2000);
+    },
+
+    stopImportJobPolling() {
+      if (importJobPollingTimer !== null) {
+        clearInterval(importJobPollingTimer);
+        importJobPollingTimer = null;
+      }
+    },
+
+    async previewImport() {
+      return this.fetchImportBrowser('');
+    },
+
+    async importFromDir(options: {
+      directory?: string;
+      all: boolean;
+      paths?: string[];
+      scope?: AudioAssetScope;
+      worldId?: string;
+      folderId?: string | null;
+    }) {
+      return this.startImportJob(options);
     },
 
     async refreshTranscodeTasks() {
