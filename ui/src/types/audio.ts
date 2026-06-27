@@ -20,6 +20,8 @@ export interface AudioAsset {
   updatedAt: string;
   lastAccessedAt?: string | null;
   accessCount?: number;
+  sortOrder?: number;
+  manualSorted?: boolean;
   scope: AudioAssetScope;
   worldId?: string | null;
 }
@@ -248,6 +250,9 @@ export interface AudioSearchFilters {
   creatorIds: string[];
   durationRange: [number, number] | null;
   hasSceneOnly?: boolean;
+  sortBy?: 'name' | 'scope' | 'duration' | 'updatedAt';
+  sortOrder?: 'asc' | 'desc';
+  manualSort?: boolean;
   scope?: AudioAssetScope;
   worldId?: string | null;
   includeCommon?: boolean;

@@ -31,11 +31,14 @@ type audioPlayTokenResponse struct {
 
 func AudioAssetList(c *fiber.Ctx) error {
 	filters := service.AudioAssetFilters{
-		Query:      c.Query("query"),
-		Page:       c.QueryInt("page", 1),
-		PageSize:   c.QueryInt("pageSize", 200),
-		Tags:       queryStringSlice(c, "tags[]", "tags"),
-		CreatorIDs: queryStringSlice(c, "creatorIds[]", "creatorIds"),
+		Query:             c.Query("query"),
+		Page:              c.QueryInt("page", 1),
+		PageSize:          c.QueryInt("pageSize", 200),
+		Tags:              queryStringSlice(c, "tags[]", "tags"),
+		CreatorIDs:        queryStringSlice(c, "creatorIds[]", "creatorIds"),
+		SortBy:            strings.TrimSpace(c.Query("sortBy")),
+		SortOrder:         strings.TrimSpace(c.Query("sortOrder")),
+		ManualSortEnabled: c.QueryBool("manualSort", true),
 	}
 	if folder := strings.TrimSpace(c.Query("folderId")); folder != "" {
 		switch folder {
@@ -444,6 +447,29 @@ func AudioAssetUpdate(c *fiber.Ctx) error {
 		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "更新素材失败")
 	}
 	return c.JSON(fiber.Map{"item": updated})
+}
+
+func AudioAssetReorder(c *fiber.Ctx) error {
+	var req struct {
+		IDs      []string `json:"ids"`
+		MovedIDs []string `json:"movedIds"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return wrapErrorStatus(c, fiber.StatusBadRequest, err, "请求体格式错误")
+	}
+	user := getCurUser(c)
+	if user == nil {
+		return wrapErrorStatus(c, fiber.StatusUnauthorized, nil, "未登录")
+	}
+	isSystemAdmin := pm.CanWithSystemRole(user.ID, pm.PermModAdmin)
+	items, err := service.AudioReorderAssets(req.IDs, req.MovedIDs, user.ID, isSystemAdmin)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wrapErrorStatus(c, fiber.StatusNotFound, err, "素材不存在或无权排序")
+		}
+		return wrapErrorStatus(c, fiber.StatusInternalServerError, err, "更新素材排序失败")
+	}
+	return c.JSON(fiber.Map{"items": items})
 }
 
 func AudioAssetDelete(c *fiber.Ctx) error {

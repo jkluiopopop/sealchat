@@ -594,6 +594,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	audioAdmin.Post("/assets/upload", AudioAssetUpload)
 	audioAdmin.Get("/assets/import/preview", AudioAssetImportPreview)
 	audioAdmin.Post("/assets/import", AudioAssetImport)
+	audioAdmin.Post("/assets/reorder", AudioAssetReorder)
 	audioAdmin.Patch("/assets/:id", AudioAssetUpdate)
 	audioAdmin.Delete("/assets/:id", AudioAssetDelete)
 	audioAdmin.Post("/folders", AudioFolderCreate)

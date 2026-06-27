@@ -357,6 +357,8 @@ function normalizeAssetTags(tags: AudioAsset['tags'] | null | undefined): string
 function normalizeAudioAsset(asset: AudioAsset): AudioAsset {
   return {
     ...asset,
+    sortOrder: Number(asset.sortOrder ?? 0) || 0,
+    manualSorted: !!asset.manualSorted,
     tags: normalizeAssetTags(asset.tags),
   };
 }
@@ -415,6 +417,15 @@ function buildAssetQueryParams(filters: AudioSearchFilters, pagination: Paginati
   if (filters.includeCommon !== undefined) {
     params.includeCommon = filters.includeCommon;
   }
+  if (filters.sortBy) {
+    params.sortBy = filters.sortBy;
+  }
+  if (filters.sortOrder) {
+    params.sortOrder = filters.sortOrder;
+  }
+  if (filters.manualSort !== undefined) {
+    params.manualSort = filters.manualSort;
+  }
   return params;
 }
 
@@ -456,6 +467,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       creatorIds: [],
       durationRange: null,
       hasSceneOnly: false,
+      sortBy: 'name',
+      sortOrder: 'asc',
+      manualSort: true,
       scope: undefined,
       worldId: null,
       includeCommon: true,
@@ -2489,6 +2503,22 @@ export const useAudioStudioStore = defineStore('audioStudio', {
       await this.fetchAssets({ pagination: { page: 1, pageSize } });
     },
 
+    async setAssetSort(sortBy: NonNullable<AudioSearchFilters['sortBy']>) {
+      const currentSortBy = this.filters.sortBy ?? 'updatedAt';
+      const currentSortOrder = this.filters.sortOrder ?? 'asc';
+      const nextSortOrder = currentSortBy === sortBy ? (currentSortOrder === 'asc' ? 'desc' : 'asc') : 'asc';
+      await this.applyFilters({
+        sortBy,
+        sortOrder: nextSortOrder,
+      });
+    },
+
+    async setManualSortEnabled(enabled: boolean) {
+      await this.applyFilters({
+        manualSort: enabled,
+      });
+    },
+
     setSelectedAsset(assetId: string | null) {
       this.selectedAssetId = assetId;
     },
@@ -2630,6 +2660,38 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         }
         await this.fetchAssets({ pagination: { page: this.assetPagination.page }, silent: false });
         return { success, failed: failures.length, failures };
+      } finally {
+        this.assetBulkLoading = false;
+      }
+    },
+
+    async reorderAssets(assetIds: string[], movedIds: string[]) {
+      if (!assetIds.length) return;
+      this.assetBulkLoading = true;
+      const previousAssets = [...this.assets];
+      const previousFilteredAssets = [...this.filteredAssets];
+      try {
+        const draggedAssets = this.filteredAssets.filter((asset) => assetIds.includes(asset.id));
+        const positiveOrders = draggedAssets.map((asset) => asset.sortOrder ?? 0).filter((order) => order > 0);
+        const baseSortOrder = positiveOrders.length ? Math.min(...positiveOrders) : 1000;
+        const orderMap = new Map(assetIds.map((id, index) => [id, baseSortOrder + index * 1000] as const));
+        const applyLocalOrder = (list: AudioAsset[]) =>
+          list.map((asset) => ({
+            ...asset,
+            sortOrder: orderMap.get(asset.id) ?? asset.sortOrder ?? 0,
+            manualSorted: movedIds.includes(asset.id) ? true : asset.manualSorted,
+          }));
+        this.assets = applyLocalOrder(this.assets);
+        this.filteredAssets = applyLocalOrder(this.filteredAssets);
+        const resp = await api.post<{ items?: AudioAsset[] }>('/api/v1/audio/assets/reorder', { ids: assetIds, movedIds });
+        const items = normalizeAudioAssets(resp.data?.items || []);
+        items.forEach((item) => this.upsertAssetLocally(item));
+        await this.persistAssetsToCache();
+        await this.fetchAssets({ pagination: { page: this.assetPagination.page }, silent: true });
+      } catch (err) {
+        this.assets = previousAssets;
+        this.filteredAssets = previousFilteredAssets;
+        throw err;
       } finally {
         this.assetBulkLoading = false;
       }

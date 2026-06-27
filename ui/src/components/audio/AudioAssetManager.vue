@@ -182,6 +182,21 @@
             <span>条素材</span>
           </div>
           <div class="audio-library__table-actions">
+            <n-tooltip trigger="hover">
+              <template #trigger>
+                <n-button
+                  size="small"
+                  :class="['audio-library__manual-sort-toggle', manualSortEnabled && 'is-active']"
+                  :secondary="manualSortEnabled"
+                  :quaternary="!manualSortEnabled"
+                  :type="manualSortEnabled ? 'primary' : 'default'"
+                  @click="toggleManualSort"
+                >
+                  手动排序
+                </n-button>
+              </template>
+              {{ manualSortTooltip }}
+            </n-tooltip>
             <n-button quaternary size="small" @click="toggleFolderPanel">
               {{ isMobileLayout ? '文件夹' : folderPanelCollapsed ? '展开文件夹' : '收起文件夹' }}
             </n-button>
@@ -514,6 +529,7 @@ import {
   NButton,
   NSpace,
   NTag,
+  NTooltip,
   useDialog,
   useMessage,
   type DataTableColumns,
@@ -530,6 +546,7 @@ import type {
   AudioDeleteConflictPayload,
   AudioDeleteImpact,
   AudioAssetUsageSummary,
+  AudioSearchFilters,
   AudioFolder,
   AudioFolderPayload,
 } from '@/types/audio';
@@ -613,6 +630,8 @@ const uploadDrawerVisible = ref(false);
 const assetManagementVisible = ref(false);
 const dragUploadActive = ref(false);
 const dragUploadDepth = ref(0);
+const draggingAssetId = ref<string | null>(null);
+const dragOverAssetId = ref<string | null>(null);
 const folderEditMode = ref(false);
 
 const { width: viewportWidth } = useWindowSize();
@@ -736,6 +755,13 @@ const contentClassNames = computed(() => ({
   'is-folder-collapsed': folderPanelCollapsed.value,
   'is-detail-collapsed': detailPanelCollapsed.value,
 }));
+const manualSortEnabled = computed(() => audio.filters.manualSort !== false);
+const canReorderAssets = computed(() => audio.canManage && !audio.assetsLoading);
+const manualSortTooltip = computed(() =>
+  manualSortEnabled.value
+    ? '当前排序会叠加手动拖拽顺序。拖拽素材可调整排序号。'
+    : '开启后，手动拖拽顺序会作为当前排序的次级规则。'
+);
 
 const detailContent = defineComponent({
   name: 'AudioLibraryDetailContent',
@@ -866,6 +892,23 @@ const detailContent = defineComponent({
   },
 });
 
+function renderSortableHeader(label: string, field: NonNullable<AudioSearchFilters['sortBy']>) {
+  const active = (audio.filters.sortBy ?? 'updatedAt') === field;
+  const glyph = active ? (audio.filters.sortOrder === 'desc' ? '↓' : '↑') : '↕';
+  return h(
+    'button',
+    {
+      type: 'button',
+      class: ['audio-table__header-sort', active && 'audio-table__header-sort--active'],
+      onClick: (event: MouseEvent) => {
+        event.stopPropagation();
+        void audio.setAssetSort(field);
+      },
+    },
+    [h('span', label), h('span', { class: 'audio-table__header-sort-glyph' }, glyph)]
+  );
+}
+
 const columns = computed<DataTableColumns<AudioAsset>>(() => [
   {
     type: 'selection',
@@ -874,7 +917,7 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
     fixed: 'left',
   },
   {
-    title: '名称',
+    title: () => renderSortableHeader('名称', 'name'),
     key: 'name',
     minWidth: 320,
     render: (row) =>
@@ -891,6 +934,20 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
             ].join(' · ')
           ),
           row.description ? h('p', { class: 'audio-table__desc' }, row.description) : null,
+          isMobileLayout.value && audio.canEditAsset(row)
+            ? h('div', { class: 'audio-table__mobile-reorder' }, [
+                h(
+                  NButton,
+                  { size: 'tiny', quaternary: true, onClick: (event: MouseEvent) => moveAssetByStep(event, row.id, -1) },
+                  { default: () => '上移' }
+                ),
+                h(
+                  NButton,
+                  { size: 'tiny', quaternary: true, onClick: (event: MouseEvent) => moveAssetByStep(event, row.id, 1) },
+                  { default: () => '下移' }
+                ),
+              ])
+            : null,
         ]),
         h('div', { class: 'audio-table__inline-actions' }, [
           h(
@@ -942,13 +999,13 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
       ]),
   },
   {
-    title: '级别',
+    title: () => renderSortableHeader('级别', 'scope'),
     key: 'scope',
     width: 84,
     render: (row) => (row.scope === 'common' ? '通用级' : '世界级'),
   },
   {
-    title: '时长',
+    title: () => renderSortableHeader('时长', 'duration'),
     key: 'duration',
     width: 76,
     render: (row) => formatDuration(row.duration),
@@ -978,7 +1035,7 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
     },
   },
   {
-    title: '更新时间',
+    title: () => renderSortableHeader('更新时间', 'updatedAt'),
     key: 'updatedAt',
     width: 148,
     render: (row) => formatDate(row.updatedAt),
@@ -986,8 +1043,14 @@ const columns = computed<DataTableColumns<AudioAsset>>(() => [
 ]);
 
 const rowKey = (row: AudioAsset) => row.id;
-const rowClassName = (row: AudioAsset) => (row.id === audio.selectedAssetId ? 'is-selected-row' : '');
+const rowClassName = (row: AudioAsset) =>
+  [
+    row.id === audio.selectedAssetId ? 'is-selected-row' : '',
+    row.id === draggingAssetId.value ? 'is-dragging-row' : '',
+    row.id === dragOverAssetId.value ? 'is-drag-over-row' : '',
+  ].filter(Boolean).join(' ');
 const rowProps = (row: AudioAsset) => ({
+  draggable: canReorderAssets.value && audio.canEditAsset(row),
   onClick: () => {
     detailFocus.value = 'asset';
     audio.setSelectedAsset(row.id);
@@ -995,6 +1058,11 @@ const rowProps = (row: AudioAsset) => ({
       detailDrawerVisible.value = true;
     }
   },
+  onDragstart: (event: DragEvent) => handleAssetDragStart(event, row),
+  onDragover: (event: DragEvent) => handleAssetDragOver(event, row),
+  onDragleave: () => handleAssetDragLeave(row),
+  onDrop: (event: DragEvent) => handleAssetDrop(event, row),
+  onDragend: handleAssetDragEnd,
 });
 
 const worldOptions = computed(() => {
@@ -1166,6 +1234,8 @@ function handleResetFilters() {
     tags: [],
     creatorIds: [],
     durationRange: null,
+    sortBy: 'name',
+    sortOrder: 'asc',
     scope: undefined,
   });
   clearSelection();
@@ -1183,6 +1253,10 @@ async function handleRefresh() {
   await audio.fetchFolders();
   await audio.fetchAssets();
   message.success('素材列表已刷新');
+}
+
+function toggleManualSort() {
+  void audio.setManualSortEnabled(!manualSortEnabled.value);
 }
 
 function openAssetManagement() {
@@ -1478,13 +1552,95 @@ function openDetailPanel() {
   detailPanelCollapsed.value = false;
 }
 
+function isAssetReorderDrag(event: DragEvent) {
+  return Array.from(event.dataTransfer?.types || []).includes('application/x-audio-asset-id');
+}
+
+function handleAssetDragStart(event: DragEvent, row: AudioAsset) {
+  if (!canReorderAssets.value || !audio.canEditAsset(row) || !event.dataTransfer) {
+    event.preventDefault();
+    return;
+  }
+  draggingAssetId.value = row.id;
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('application/x-audio-asset-id', row.id);
+}
+
+function handleAssetDragOver(event: DragEvent, row: AudioAsset) {
+  if (!draggingAssetId.value || draggingAssetId.value === row.id || !isAssetReorderDrag(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'move';
+  }
+  dragOverAssetId.value = row.id;
+}
+
+function handleAssetDragLeave(row: AudioAsset) {
+  if (dragOverAssetId.value === row.id) {
+    dragOverAssetId.value = null;
+  }
+}
+
+async function handleAssetDrop(event: DragEvent, row: AudioAsset) {
+  if (!draggingAssetId.value || !isAssetReorderDrag(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const sourceId = event.dataTransfer?.getData('application/x-audio-asset-id') || draggingAssetId.value;
+  const targetId = row.id;
+  dragOverAssetId.value = null;
+  draggingAssetId.value = null;
+  if (!sourceId || sourceId === targetId) return;
+  const next = [...tableData.value];
+  const sourceIndex = next.findIndex((item) => item.id === sourceId);
+  const targetIndex = next.findIndex((item) => item.id === targetId);
+  if (sourceIndex < 0 || targetIndex < 0) return;
+  const [moved] = next.splice(sourceIndex, 1);
+  next.splice(targetIndex, 0, moved);
+  await saveAssetManualOrder(next.map((item) => item.id), [sourceId]);
+}
+
+async function moveAssetByStep(event: MouseEvent, assetId: string, step: -1 | 1) {
+  event.stopPropagation();
+  if (!canReorderAssets.value) return;
+  const next = [...tableData.value];
+  const currentIndex = next.findIndex((item) => item.id === assetId);
+  if (currentIndex < 0) return;
+  const targetIndex = currentIndex + step;
+  if (targetIndex < 0 || targetIndex >= next.length) return;
+  const [moved] = next.splice(currentIndex, 1);
+  next.splice(targetIndex, 0, moved);
+  await saveAssetManualOrder(next.map((item) => item.id), [assetId]);
+}
+
+async function saveAssetManualOrder(ids: string[], movedIds: string[]) {
+  try {
+    await audio.reorderAssets(ids, movedIds);
+    if (manualSortEnabled.value) {
+      message.success('素材手动顺序已更新');
+    } else {
+      message.success('手动顺序已保存，开启手动排序后生效');
+    }
+  } catch (err) {
+    console.warn(err);
+    message.error('素材手动顺序更新失败');
+  }
+}
+
+function handleAssetDragEnd() {
+  draggingAssetId.value = null;
+  dragOverAssetId.value = null;
+}
+
 function handleListDragEnter(event: DragEvent) {
+  if (isAssetReorderDrag(event)) return;
   if (!audio.canManage || !event.dataTransfer?.files?.length) return;
   dragUploadDepth.value += 1;
   dragUploadActive.value = true;
 }
 
 function handleListDragOver(event: DragEvent) {
+  if (isAssetReorderDrag(event)) return;
   if (!audio.canManage || !event.dataTransfer?.files?.length) return;
   event.dataTransfer.dropEffect = 'copy';
   dragUploadActive.value = true;
@@ -1499,6 +1655,7 @@ function handleListDragLeave() {
 }
 
 function handleListDrop(event: DragEvent) {
+  if (isAssetReorderDrag(event)) return;
   dragUploadDepth.value = 0;
   dragUploadActive.value = false;
   if (!audio.canManage || !event.dataTransfer?.files?.length) return;
@@ -1901,6 +2058,20 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
+.audio-library__manual-sort-toggle {
+  --n-box-shadow: none;
+  --n-box-shadow-hover: none;
+  --n-box-shadow-pressed: none;
+  box-shadow: none !important;
+}
+
+.audio-library__manual-sort-toggle.is-active {
+  --n-box-shadow: 0 4px 12px rgba(37, 99, 235, 0.18);
+  --n-box-shadow-hover: 0 5px 14px rgba(37, 99, 235, 0.22);
+  --n-box-shadow-pressed: 0 2px 8px rgba(37, 99, 235, 0.16);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.18);
+}
+
 .audio-library__drop-overlay {
   position: absolute;
   inset: 0;
@@ -2071,12 +2242,39 @@ onMounted(() => {
   white-space: nowrap;
 }
 
+.audio-table__mobile-reorder {
+  display: none;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+
 .audio-table__inline-actions {
   display: inline-flex;
   align-items: center;
   gap: 0.2rem;
   opacity: 0;
   transition: opacity 0.18s ease;
+}
+
+.audio-table__header-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.audio-table__header-sort--active {
+  color: var(--sc-primary, #2563eb);
+}
+
+.audio-table__header-sort-glyph {
+  font-size: 0.7rem;
+  opacity: 0.75;
 }
 
 :deep(.n-data-table-tr:hover .audio-table__inline-actions),
@@ -2093,6 +2291,15 @@ onMounted(() => {
   background-color: rgba(99, 179, 237, 0.08);
 }
 
+:deep(.is-dragging-row td) {
+  opacity: 0.55;
+}
+
+:deep(.is-drag-over-row td) {
+  background-color: rgba(37, 99, 235, 0.12);
+  box-shadow: inset 0 2px 0 rgba(37, 99, 235, 0.75);
+}
+
 @media (max-width: 960px) {
   .audio-library__content {
     grid-template-columns: 1fr;
@@ -2106,6 +2313,12 @@ onMounted(() => {
 
   .audio-library__detail {
     display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .audio-table__mobile-reorder {
+    display: inline-flex;
   }
 }
 

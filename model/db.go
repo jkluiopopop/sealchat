@@ -201,6 +201,9 @@ func DBInit(cfg *utils.AppConfig) {
 	if err := BackfillMessageDisplayOrder(); err != nil {
 		log.Printf("补齐消息 display_order 失败: %v", err)
 	}
+	if err := BackfillAudioAssetSortOrder(); err != nil {
+		log.Printf("补齐音频素材 sort_order 失败: %v", err)
+	}
 
 	if err := BackfillChannelRecentSentAt(); err != nil {
 		log.Printf("回填频道最近发言时间失败: %v", err)

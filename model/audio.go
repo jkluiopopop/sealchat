@@ -104,6 +104,8 @@ type AudioAsset struct {
 	UpdatedBy       string                      `json:"updatedBy"`
 	LastAccessedAt  *time.Time                  `json:"lastAccessedAt"`
 	AccessCount     int64                       `json:"accessCount" gorm:"not null;default:0"`
+	SortOrder       int                         `json:"sortOrder" gorm:"default:0;index"`
+	ManualSorted    bool                        `json:"manualSorted" gorm:"not null;default:false;index"`
 	Variants        JSONList[AudioAssetVariant] `json:"variants" gorm:"type:json"`
 	TranscodeStatus AudioTranscodeStatus        `json:"transcodeStatus" gorm:"type:varchar(16);default:'ready'"`
 	Scope           AudioAssetScope             `json:"scope" gorm:"type:varchar(16);index;default:'common'"`

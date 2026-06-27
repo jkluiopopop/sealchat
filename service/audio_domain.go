@@ -19,18 +19,21 @@ import (
 )
 
 type AudioAssetFilters struct {
-	Query         string
-	Tags          []string
-	FolderID      *string
-	CreatorIDs    []string
-	DurationMin   float64
-	DurationMax   float64
-	HasSceneOnly  bool
-	Page          int
-	PageSize      int
-	Scope         model.AudioAssetScope
-	WorldID       *string
-	IncludeCommon bool
+	Query             string
+	Tags              []string
+	FolderID          *string
+	CreatorIDs        []string
+	DurationMin       float64
+	DurationMax       float64
+	HasSceneOnly      bool
+	Page              int
+	PageSize          int
+	SortBy            string
+	SortOrder         string
+	ManualSortEnabled bool
+	Scope             model.AudioAssetScope
+	WorldID           *string
+	IncludeCommon     bool
 }
 
 type AudioAssetUpdateInput struct {
@@ -300,6 +303,8 @@ var audioPlaybackRuntimeStore = struct {
 
 func (f *AudioAssetFilters) normalize() {
 	f.Query = strings.TrimSpace(f.Query)
+	f.SortBy = normalizeAudioAssetSortField(f.SortBy)
+	f.SortOrder = normalizeAdminAudioSortOrder(f.SortOrder)
 	if f.Page <= 0 {
 		f.Page = 1
 	}
@@ -518,8 +523,56 @@ func AudioListAssets(filters AudioAssetFilters) ([]*model.AudioAsset, int64, err
 				q = q.Where("scope = ? AND world_id = ?", model.AudioScopeWorld, *filters.WorldID)
 			}
 		}
-		return q.Order("updated_at DESC")
+		return applyAudioAssetListOrder(q, filters.SortBy, filters.SortOrder, filters.ManualSortEnabled)
 	})
+}
+
+func normalizeAudioAssetSortField(value string) string {
+	switch strings.TrimSpace(value) {
+	case "", "manual":
+		return "manual"
+	case "name", "scope", "duration", "updatedAt":
+		return strings.TrimSpace(value)
+	default:
+		return "manual"
+	}
+}
+
+func applyAudioAssetListOrder(q *gorm.DB, sortBy, sortOrder string, manualSortEnabled bool) *gorm.DB {
+	desc := sortOrder == "desc"
+	manualFirst := func(q *gorm.DB) *gorm.DB {
+		if manualSortEnabled {
+			return q.Order("manual_sorted DESC").Order("CASE WHEN manual_sorted THEN sort_order ELSE 0 END ASC")
+		}
+		return q
+	}
+	withStableTail := func(q *gorm.DB) *gorm.DB {
+		return q.Order("id ASC")
+	}
+	switch sortBy {
+	case "name":
+		if desc {
+			return withStableTail(manualFirst(q).Order("LOWER(name) DESC"))
+		}
+		return withStableTail(manualFirst(q).Order("LOWER(name) ASC"))
+	case "scope":
+		if desc {
+			return withStableTail(manualFirst(q).Order("scope DESC"))
+		}
+		return withStableTail(manualFirst(q).Order("scope ASC"))
+	case "duration":
+		if desc {
+			return withStableTail(manualFirst(q).Order("duration DESC"))
+		}
+		return withStableTail(manualFirst(q).Order("duration ASC"))
+	case "updatedAt":
+		if desc {
+			return withStableTail(manualFirst(q).Order("updated_at DESC"))
+		}
+		return withStableTail(manualFirst(q).Order("updated_at ASC"))
+	default:
+		return q.Order("sort_order ASC").Order("id ASC")
+	}
 }
 
 func GetAudioImportPreview() (*AudioImportPreview, error) {
@@ -1358,6 +1411,101 @@ func AudioUpdateAsset(id string, input AudioAssetUpdateInput) (*model.AudioAsset
 		return nil, err
 	}
 	return asset, nil
+}
+
+func AudioReorderAssets(assetIDs []string, movedAssetIDs []string, actorID string, isSystemAdmin bool) ([]*model.AudioAsset, error) {
+	if len(assetIDs) == 0 {
+		return []*model.AudioAsset{}, nil
+	}
+	cleaned := make([]string, 0, len(assetIDs))
+	seen := map[string]struct{}{}
+	for _, rawID := range assetIDs {
+		id := strings.TrimSpace(rawID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		cleaned = append(cleaned, id)
+	}
+	if len(cleaned) == 0 {
+		return []*model.AudioAsset{}, nil
+	}
+	movedSet := map[string]struct{}{}
+	for _, rawID := range movedAssetIDs {
+		id := strings.TrimSpace(rawID)
+		if id != "" {
+			movedSet[id] = struct{}{}
+		}
+	}
+	if len(movedSet) == 0 && len(cleaned) > 0 {
+		movedSet[cleaned[0]] = struct{}{}
+	}
+
+	assets := make([]*model.AudioAsset, 0, len(cleaned))
+	assetByID := map[string]*model.AudioAsset{}
+	if err := model.GetDB().Where("id IN ? AND deleted_at IS NULL", cleaned).Find(&assets).Error; err != nil {
+		return nil, err
+	}
+	if len(assets) != len(cleaned) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	for _, asset := range assets {
+		ok, err := audioManageAssetInScope(actorID, asset, isSystemAdmin)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, gorm.ErrRecordNotFound
+		}
+		assetByID[asset.ID] = asset
+	}
+
+	baseSortOrder := 1000
+	for index, id := range cleaned {
+		asset := assetByID[id]
+		if asset == nil || asset.SortOrder <= 0 {
+			continue
+		}
+		if index == 0 || asset.SortOrder < baseSortOrder {
+			baseSortOrder = asset.SortOrder
+		}
+	}
+	now := time.Now()
+	if err := model.GetDB().Transaction(func(tx *gorm.DB) error {
+		for index, id := range cleaned {
+			if _, ok := assetByID[id]; !ok {
+				return gorm.ErrRecordNotFound
+			}
+			sortOrder := baseSortOrder + index*1000
+			_, manualSorted := movedSet[id]
+			if err := tx.Model(&model.AudioAsset{}).
+				Where("id = ?", id).
+				Updates(map[string]interface{}{
+					"sort_order":    sortOrder,
+					"manual_sorted": manualSorted || assetByID[id].ManualSorted,
+					"updated_by":    actorID,
+					"updated_at":    now,
+				}).Error; err != nil {
+				return err
+			}
+			assetByID[id].SortOrder = sortOrder
+			assetByID[id].ManualSorted = manualSorted || assetByID[id].ManualSorted
+			assetByID[id].UpdatedBy = actorID
+			assetByID[id].UpdatedAt = now
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	ordered := make([]*model.AudioAsset, 0, len(cleaned))
+	for _, id := range cleaned {
+		ordered = append(ordered, assetByID[id])
+	}
+	return ordered, nil
 }
 
 func AudioDeleteAsset(id string, hard bool) error {
