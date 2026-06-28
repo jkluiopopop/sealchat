@@ -30,3 +30,7 @@ export function buildSceneListRequestParams(state: SceneListRequestState): Recor
   }
   return params;
 }
+
+export function shouldAutoplayLoadedTrack(isPlaying: boolean, muted: boolean): boolean {
+  return isPlaying && !muted;
+}

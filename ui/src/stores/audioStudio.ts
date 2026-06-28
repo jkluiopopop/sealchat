@@ -10,7 +10,7 @@ import { ensurePinyinLoaded, matchText } from '@/utils/pinyinMatch';
 import { detectEmbeddedRuntime, type EmbeddedRuntimeInfo } from '@/utils/embeddedRuntime';
 import { hasAnyActivePlayback, isTrackPlaybackActive, normalizeTrackStatus } from './audioPlaybackState';
 import { upsertAudioAssetCollections } from './audioStudioAssetCollections';
-import { buildSceneListRequestParams } from './audioStudioSceneHelpers';
+import { buildSceneListRequestParams, shouldAutoplayLoadedTrack } from './audioStudioSceneHelpers';
 import type {
   AudioAsset,
   AudioAssetBatchDeleteSummary,
@@ -1993,6 +1993,9 @@ export const useAudioStudioStore = defineStore('audioStudio', {
         track.pendingSeek = options?.initialSeek ?? track.pendingSeek ?? null;
         track.howl = await this.createHowlInstance(track, asset, { initialSeek: track.pendingSeek ?? undefined });
         track.status = 'ready';
+        if (shouldAutoplayLoadedTrack(this.isPlaying, !!track.muted) && track.howl && !track.howl.playing()) {
+          track.howl.play();
+        }
       } catch (err) {
         console.error('loadTrackAsset error', err);
         track.status = 'error';
