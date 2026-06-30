@@ -14,6 +14,7 @@ import { useUtilsStore } from '@/stores/utils';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 import { matchText } from '@/utils/pinyinMatch';
 import { contentUnescape } from '@/utils/tools';
+import { plainTextToTiptapJson } from '@/utils/tiptap-render';
 import type { PlatformFontAsset } from '@/services/font/platformFontTypes';
 import {
   SMART_LINK_DATA_ATTR,
@@ -276,6 +277,19 @@ const serializeMentionNodesToTokens = (json: any) => {
   }
   const serialized = serializeMentionNodesInNode(json);
   return serialized[0] ?? json;
+};
+
+const parseIncomingRichContent = (value: string) => {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) {
+    return cloneEmptyDoc();
+  }
+  try {
+    const json = JSON.parse(trimmed);
+    return normalizeMentionTokensInDoc(json);
+  } catch {
+    return normalizeMentionTokensInDoc(plainTextToTiptapJson(value));
+  }
 };
 
 const parseMentionOption = (option: MentionOption) => {
@@ -1501,6 +1515,26 @@ const initEditor = async () => {
         const name = String(node.attrs?.name || '').trim();
         return `@${name || id || '用户'}`;
       },
+      addKeyboardShortcuts() {
+        const deleteAdjacentMention = (direction: 'backward' | 'forward') => ({ editor }: any) => {
+          const { from, empty } = editor.state.selection;
+          if (!empty) {
+            return false;
+          }
+          const $from = editor.state.selection.$from;
+          const targetNode = direction === 'backward' ? $from.nodeBefore : $from.nodeAfter;
+          if (!targetNode || targetNode.type?.name !== 'satoriMention') {
+            return false;
+          }
+          const targetPos = direction === 'backward' ? from - targetNode.nodeSize : from;
+          editor.chain().focus().deleteRange({ from: targetPos, to: targetPos + targetNode.nodeSize }).run();
+          return true;
+        };
+        return {
+          Backspace: deleteAdjacentMention('backward'),
+          Delete: deleteAdjacentMention('forward'),
+        };
+      },
     });
 
     const PlatformFontTextStyle = Extension.create({
@@ -1799,14 +1833,7 @@ const initEditor = async () => {
           bumpEditorStateVersion();
           return;
         }
-        try {
-          const json = JSON.parse(props.modelValue);
-          const normalized = normalizeMentionTokensInDoc(json);
-          ed.commands.setContent(normalized, SILENT_SET_CONTENT_OPTIONS);
-        } catch {
-          // 如果不是 JSON，当作纯文本
-          ed.commands.setContent(props.modelValue, SILENT_SET_CONTENT_OPTIONS);
-        }
+        ed.commands.setContent(parseIncomingRichContent(props.modelValue), SILENT_SET_CONTENT_OPTIONS);
         bumpEditorStateVersion();
       },
     }) as unknown as Editor;
@@ -1831,8 +1858,7 @@ watch(() => props.modelValue, (newValue) => {
   }
 
   try {
-    const incomingJson = JSON.parse(newValue);
-    const normalizedIncoming = normalizeMentionTokensInDoc(incomingJson);
+    const normalizedIncoming = parseIncomingRichContent(newValue);
     const currentSerialized = JSON.stringify(serializeMentionNodesToTokens(editor.value.getJSON()));
     const incomingSerialized = JSON.stringify(serializeMentionNodesToTokens(normalizedIncoming));
     if (currentSerialized !== incomingSerialized) {
@@ -1840,7 +1866,7 @@ watch(() => props.modelValue, (newValue) => {
       bumpEditorStateVersion();
     }
   } catch {
-    // 非 JSON 格式，跳过
+    // ignore
   }
 });
 
