@@ -4,6 +4,12 @@ import { chatEvent, useChatStore } from './chat';
 import { useUserStore } from './user';
 import { useDisplayStore } from './display';
 import { extractTemplateKeys, getWorldCardTemplate, hasRenderableBadgeData } from '@/utils/characterCardTemplate';
+import {
+  clearNarratorBadgeCacheEntries,
+  isCharacterCardNarratorIdentity,
+  normalizeCharacterCardNarratorSettings,
+  type CharacterCardNarratorSettings,
+} from '@/utils/characterCardNarratorSettings';
 import { cleanupDeletedCharacterCardState } from './characterCardDeleteCleanup';
 import {
   buildBotNicknameSyncCommand,
@@ -102,6 +108,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const identityBindings = ref<Record<string, string>>({});
   const lastBotNicknameSyncByChannel = ref<Record<string, string>>({});
   const badgeCacheByChannel = ref<Record<string, Record<string, CharacterCardBadgeEntry>>>({});
+  const narratorIdentityIdsByChannel = ref<CharacterCardNarratorSettings>({});
   const botCharacterDisabledByChannel = ref<Record<string, boolean>>({});
   const characterApiHealthySessionByChannel = ref<Record<string, boolean>>({});
 
@@ -113,6 +120,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
   const displayStore = useDisplayStore();
   let loadedBindingsKey = '';
   let loadedBadgeCacheKey = '';
+  let loadedNarratorSettingsKey = '';
   let badgeGatewayBound = false;
   const revalidateCharacterApiInFlight = new Map<string, Promise<CharacterApiRevalidateResult>>();
 
@@ -282,6 +290,14 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     return `characterCardBadgeCache:${userId}`;
   };
 
+  const getNarratorSettingsStorageKey = () => {
+    const userId = getUserId();
+    if (!userId || typeof window === 'undefined') {
+      return '';
+    }
+    return `characterCardNarratorSettings:${userId}`;
+  };
+
   const ensureBadgeCacheLoaded = () => {
     const key = getBadgeCacheStorageKey();
     if (!key || key === loadedBadgeCacheKey) {
@@ -319,6 +335,91 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
   };
 
+  const ensureNarratorSettingsLoaded = () => {
+    const key = getNarratorSettingsStorageKey();
+    if (!key || key === loadedNarratorSettingsKey) {
+      return key;
+    }
+    loadedNarratorSettingsKey = key;
+    try {
+      narratorIdentityIdsByChannel.value = normalizeCharacterCardNarratorSettings(localStorage.getItem(key)
+        ? JSON.parse(localStorage.getItem(key) || '{}')
+        : {});
+    } catch (e) {
+      console.warn('Failed to load character card narrator settings from localStorage', e);
+      narratorIdentityIdsByChannel.value = {};
+    }
+    return key;
+  };
+
+  const persistNarratorSettings = () => {
+    const key = ensureNarratorSettingsLoaded();
+    if (!key) {
+      return;
+    }
+    try {
+      localStorage.setItem(key, JSON.stringify(narratorIdentityIdsByChannel.value));
+    } catch (e) {
+      console.warn('Failed to persist character card narrator settings to localStorage', e);
+    }
+  };
+
+  const isNarratorIdentity = (channelId: string, identityId: string) => {
+    ensureNarratorSettingsLoaded();
+    return isCharacterCardNarratorIdentity(narratorIdentityIdsByChannel.value, channelId, identityId);
+  };
+
+  const getNarratorIdentityIds = (channelId: string) => {
+    ensureNarratorSettingsLoaded();
+    const normalizedChannelId = String(channelId || '').trim();
+    if (!normalizedChannelId) {
+      return [];
+    }
+    return narratorIdentityIdsByChannel.value[normalizedChannelId] || [];
+  };
+
+  const applyNarratorBadgeCleanup = (channelId: string, identityIds: string[]) => {
+    const normalizedChannelId = String(channelId || '').trim();
+    if (!normalizedChannelId || identityIds.length === 0) {
+      return;
+    }
+    const removeSet = new Set(identityIds.map(item => String(item || '').trim()).filter(Boolean));
+    if (removeSet.size === 0) {
+      return;
+    }
+    const nextBadgeByIdentity = { ...badgeByIdentity.value };
+    for (const identityId of removeSet) {
+      if (nextBadgeByIdentity[identityId]?.channelId === normalizedChannelId) {
+        delete nextBadgeByIdentity[identityId];
+      }
+    }
+    badgeByIdentity.value = nextBadgeByIdentity;
+    badgeCacheByChannel.value = clearNarratorBadgeCacheEntries(
+      badgeCacheByChannel.value,
+      normalizedChannelId,
+      Array.from(removeSet),
+    );
+    persistBadgeCache();
+  };
+
+  const setNarratorIdentityIds = (channelId: string, identityIds: string[]) => {
+    const normalizedChannelId = String(channelId || '').trim();
+    if (!normalizedChannelId) {
+      return;
+    }
+    ensureNarratorSettingsLoaded();
+    const normalized = Array.from(new Set(identityIds.map(item => String(item || '').trim()).filter(Boolean)));
+    const next = { ...narratorIdentityIdsByChannel.value };
+    if (normalized.length === 0) {
+      delete next[normalizedChannelId];
+    } else {
+      next[normalizedChannelId] = normalized;
+    }
+    narratorIdentityIdsByChannel.value = next;
+    persistNarratorSettings();
+    applyNarratorBadgeCleanup(normalizedChannelId, normalized);
+  };
+
   const loadBadgeCache = (channelId: string) => {
     if (!channelId) return;
     const key = ensureBadgeCacheLoaded();
@@ -333,6 +434,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       if (!entry || typeof entry !== 'object') return;
       const identityId = typeof entry.identityId === 'string' ? entry.identityId : '';
       if (!identityId) return;
+      if (isNarratorIdentity(channelId, identityId)) return;
       const updatedAt = typeof entry.updatedAt === 'number' ? entry.updatedAt : 0;
       const normalized: CharacterCardBadgeEntry = {
         identityId,
@@ -449,6 +551,11 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     const channelId = typeof event?.channel?.id === 'string'
       ? event.channel.id
       : badgeByIdentity.value[identityId]?.channelId || '';
+    if (channelId && isNarratorIdentity(channelId, identityId)) {
+      removeBadgeEntry(identityId);
+      removeBadgeCacheEntry(channelId, identityId);
+      return;
+    }
     if (action === 'clear') {
       const existing = channelId ? badgeCacheByChannel.value[channelId]?.[identityId] : null;
       if (existing && updatedAt < existing.updatedAt) {
@@ -495,6 +602,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     for (const item of items) {
       const identityId = typeof item?.identityId === 'string' ? item.identityId : '';
       if (!identityId) continue;
+      if (isNarratorIdentity(channelId, identityId)) continue;
       if (item?.action === 'clear') continue;
       const updatedAt = Number(
         item?.updatedAt
@@ -1188,6 +1296,10 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     }
     const resolvedIdentityId = identityId || chatStore.getActiveIdentityId(channelId);
     if (!resolvedIdentityId) return;
+    if (isNarratorIdentity(channelId, resolvedIdentityId)) {
+      action = 'clear';
+      applyNarratorBadgeCleanup(channelId, [resolvedIdentityId]);
+    }
     await chatStore.ensureConnectionReady();
     if (!displayStore.settings.characterCardBadgeEnabled) {
       action = 'clear';
@@ -1248,6 +1360,7 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
 
   const getBadgeByIdentity = (channelId: string, identityId: string) => {
     if (!channelId || !identityId) return null;
+    if (isNarratorIdentity(channelId, identityId)) return null;
     return badgeCacheByChannel.value[channelId]?.[identityId] || null;
   };
 
@@ -1255,7 +1368,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     () => userStore.info?.id,
     () => {
       loadedBindingsKey = '';
+      loadedNarratorSettingsKey = '';
       loadIdentityBindings();
+      ensureNarratorSettingsLoaded();
     },
     { immediate: true },
   );
@@ -1285,6 +1400,9 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
     getActiveCardId,
     getCardsByChannel,
     getBadgeByIdentity,
+    getNarratorIdentityIds,
+    setNarratorIdentityIds,
+    isNarratorIdentity,
     getBoundCardId,
     syncCardForIdentity,
     syncBotNicknameForIdentity,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { NDrawer, NDrawerContent, NButton, NIcon, NEmpty, NCard, NInput, NForm, NFormItem, NModal, NPopconfirm, NTag, NSwitch, NSelect, NDivider, NCheckbox, NRadioGroup, NRadioButton, NCollapseTransition, useMessage } from 'naive-ui';
-import { Plus, Trash, Edit, Link, Eye, Upload, X, Refresh, ChevronDown, ChevronRight } from '@vicons/tabler';
+import { Plus, Trash, Edit, Link, Eye, Upload, X, Refresh, ChevronDown, ChevronRight, Settings } from '@vicons/tabler';
 import { characterApiUnsupportedText, useCharacterCardStore, type CharacterCard } from '@/stores/characterCard';
 import { useCharacterSheetStore } from '@/stores/characterSheet';
 import { useCharacterCardTemplateStore, type CharacterCardTemplate } from '@/stores/characterCardTemplate';
@@ -9,6 +9,7 @@ import { useCharacterCardAvatarStore } from '@/stores/characterCardAvatar';
 import { useChatStore } from '@/stores/chat';
 import { useDisplayStore } from '@/stores/display';
 import { useUtilsStore } from '@/stores/utils';
+import { resolveCharacterCardNarratorCountBadge } from '@/utils/characterCardNarratorSettings';
 import { DEFAULT_CARD_TEMPLATE, getWorldCardTemplate, setWorldCardTemplate } from '@/utils/characterCardTemplate';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
 import AvatarVue from '@/components/avatar.vue';
@@ -124,6 +125,45 @@ const badgeVisibilityScope = computed({
   },
 });
 
+const narratorSettingsVisible = ref(false);
+const narratorIdentityIdsDraft = ref<string[]>([]);
+
+const syncNarratorIdentityIdsDraft = () => {
+  narratorIdentityIdsDraft.value = cardStore.getNarratorIdentityIds(resolvedChannelId.value);
+};
+
+const narratorCountBadge = computed(() => resolveCharacterCardNarratorCountBadge(
+  cardStore.getNarratorIdentityIds(resolvedChannelId.value),
+));
+
+const openNarratorSettings = () => {
+  syncNarratorIdentityIdsDraft();
+  narratorSettingsVisible.value = true;
+};
+
+const handleNarratorIdentityChecked = (identityId: string, checked: boolean) => {
+  if (!identityId) {
+    return;
+  }
+  narratorIdentityIdsDraft.value = checked
+    ? Array.from(new Set([...narratorIdentityIdsDraft.value, identityId]))
+    : narratorIdentityIdsDraft.value.filter(id => id !== identityId);
+};
+
+const handleNarratorSettingsSave = async () => {
+  const channelId = resolvedChannelId.value;
+  if (!channelId) {
+    message.warning('请先选择频道');
+    return false;
+  }
+  cardStore.setNarratorIdentityIds(channelId, narratorIdentityIdsDraft.value);
+  for (const identityId of narratorIdentityIdsDraft.value) {
+    await cardStore.broadcastActiveBadge(channelId, identityId, 'clear');
+  }
+  narratorSettingsVisible.value = false;
+  return true;
+};
+
 const autoSyncBotNicknameEnabled = computed({
   get: () => displayStore.settings.characterCardAutoSyncBotNickname,
   set: (value: boolean) => {
@@ -232,6 +272,7 @@ watch(() => props.visible, async (val) => {
 }, { immediate: true });
 
 watch(resolvedChannelId, async (newId) => {
+  syncNarratorIdentityIdsDraft();
   if (props.visible && newId && !characterApiDisabled.value) {
     await loadPanelData(newId);
   }
@@ -1153,6 +1194,18 @@ const openEditPanel = async (card: CharacterCard) => {
             </div>
             <div class="settings-row">
               <div>
+                <p class="settings-title">
+                  旁白角色
+                  <span v-if="narratorCountBadge" class="settings-count-badge">{{ narratorCountBadge }}</span>
+                </p>
+                <p class="settings-desc">为当前频道指定旁白身份；这些身份不会显示或广播角色徽章。</p>
+              </div>
+              <n-button quaternary circle size="small" title="旁白角色设置" aria-label="旁白角色设置" @click="openNarratorSettings">
+                <template #icon><n-icon :component="Settings" /></template>
+              </n-button>
+            </div>
+            <div class="settings-row">
+              <div>
                 <p class="settings-title">自动同步 BOT 昵称</p>
                 <p class="settings-desc">切换频道角色或人物卡后，后台向所选 BOT 静默发送 nn 同步昵称</p>
               </div>
@@ -1503,6 +1556,31 @@ const openEditPanel = async (card: CharacterCard) => {
   </n-modal>
 
   <n-modal
+    v-model:show="narratorSettingsVisible"
+    preset="dialog"
+    :show-icon="false"
+    title="旁白角色设置"
+    positive-text="保存"
+    negative-text="取消"
+    @positive-click="handleNarratorSettingsSave"
+  >
+    <div class="narrator-settings">
+      <p class="settings-desc">可为当前频道选择多个旁白身份。保存后会立刻停止这些身份的角色徽章广播，并清掉本地缓存。</p>
+      <div v-if="identities.length > 0" class="narrator-settings__list">
+        <n-checkbox
+          v-for="identity in identities"
+          :key="identity.id"
+          :checked="narratorIdentityIdsDraft.includes(identity.id)"
+          @update:checked="(checked: boolean) => handleNarratorIdentityChecked(identity.id, checked)"
+        >
+          {{ identity.displayName || identity.id }}
+        </n-checkbox>
+      </div>
+      <n-empty v-else description="当前频道暂无可选身份" />
+    </div>
+  </n-modal>
+
+  <n-modal
     v-model:show="avatarEditorVisible"
     preset="card"
     title="裁剪人物卡头像"
@@ -1638,6 +1716,9 @@ const openEditPanel = async (card: CharacterCard) => {
 }
 
 .settings-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   font-weight: 500;
   margin-bottom: 0.1rem;
 }
@@ -1647,11 +1728,39 @@ const openEditPanel = async (card: CharacterCard) => {
   font-size: 0.8rem;
 }
 
+.settings-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.14);
+  color: rgb(37, 99, 235);
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
 .settings-template-input {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
   min-width: 210px;
+}
+
+.narrator-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.narrator-settings__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: min(320px, 50vh);
+  overflow: auto;
 }
 
 .template-manager {
