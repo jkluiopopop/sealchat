@@ -4,6 +4,7 @@ import { chatEvent, useChatStore } from './chat';
 import { useUserStore } from './user';
 import { useDisplayStore } from './display';
 import { extractTemplateKeys, getWorldCardTemplate, hasRenderableBadgeData } from '@/utils/characterCardTemplate';
+import { cleanupDeletedCharacterCardState } from './characterCardDeleteCleanup';
 import {
   buildBotNicknameSyncCommand,
   resolveBotNicknameSyncName,
@@ -937,6 +938,22 @@ export const useCharacterCardStore = defineStore('characterCard', () => {
       const resp = await chatStore.sendAPI<{ data: { ok: boolean; error?: string; binding_groups?: string[] } }>('character.delete', payload);
       maybeDisableFromResponse(resolvedChannelId, resp);
       if (resp?.data?.ok) {
+        const deletedCardId = String(payload.id || '').trim();
+        const cleanup = cleanupDeletedCharacterCardState({
+          channelId: resolvedChannelId,
+          deletedCardId,
+          activeCardId: resolvedChannelId ? getActiveCardId(resolvedChannelId) : '',
+          identityBindings: identityBindings.value,
+          badgeByIdentity: badgeByIdentity.value,
+          badgeCacheByChannel: badgeCacheByChannel.value,
+          activeCards: activeCards.value,
+        });
+        identityBindings.value = cleanup.identityBindings;
+        badgeByIdentity.value = cleanup.badgeByIdentity;
+        badgeCacheByChannel.value = cleanup.badgeCacheByChannel;
+        activeCards.value = cleanup.activeCards;
+        persistIdentityBindings();
+        persistBadgeCache();
         await loadCardList(resolvedChannelId);
         return resp.data;
       } else if (resp?.data?.error) {
