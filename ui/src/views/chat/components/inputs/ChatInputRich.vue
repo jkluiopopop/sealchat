@@ -1335,7 +1335,7 @@ const insertPerformanceCommandNode = () => {
       command,
       value: command === 'delay' ? numericValue : null,
     },
-  }).run();
+  }).setMark('performance', getPerformanceBlockAttrs()).run();
   closePerformancePopoverAfterSubmit();
 };
 
