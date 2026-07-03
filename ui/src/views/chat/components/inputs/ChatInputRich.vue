@@ -1111,6 +1111,12 @@ const closePerformancePopover = () => {
   performancePopoverShow.value = false;
 };
 
+const closePerformancePopoverAfterSubmit = () => {
+  if (isMobile.value) {
+    closePerformancePopover();
+  }
+};
+
 const syncPerformanceControlsFromSelection = () => {
   const attrs = (editor.value?.getAttributes('performance') || {}) as Record<string, any>;
   const effect = normalizePerformanceEffect(attrs.effect);
@@ -1290,7 +1296,7 @@ const applyPerformanceEffectToSelection = () => {
     ...baseAttrs,
     effect: performanceEffect.value,
   }));
-  closePerformancePopover();
+  closePerformancePopoverAfterSubmit();
 };
 
 const setPerformanceEnterMode = (mode: PerformanceEnterMode) => {
@@ -1330,7 +1336,7 @@ const insertPerformanceCommandNode = () => {
       value: command === 'delay' ? numericValue : null,
     },
   }).run();
-  closePerformancePopover();
+  closePerformancePopoverAfterSubmit();
 };
 
 const applyCustomHighlightColor = () => {
