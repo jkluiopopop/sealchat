@@ -2555,7 +2555,12 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
             fragment.appendChild(document.createTextNode(seg.content));
           }
         } else {
-          fragment.appendChild(document.createTextNode(seg.content));
+          const externalLink = createExternalLinkElement(url);
+          if (externalLink) {
+            fragment.appendChild(externalLink);
+          } else {
+            fragment.appendChild(document.createTextNode(seg.content));
+          }
         }
       } else if (seg.type === 'external' && url) {
         const externalLink = createExternalLinkElement(url);
@@ -2565,7 +2570,12 @@ const processPlainTextMessageLinks = (host: HTMLElement) => {
           fragment.appendChild(document.createTextNode(seg.content));
         }
       } else {
-        fragment.appendChild(document.createTextNode(seg.content));
+        const externalLink = url ? createExternalLinkElement(url) : null;
+        if (externalLink) {
+          fragment.appendChild(externalLink);
+        } else {
+          fragment.appendChild(document.createTextNode(seg.content));
+        }
       }
 
       lastIndex = seg.index + seg.length;
