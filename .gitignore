@@ -63,3 +63,5 @@ ui/tsconfig.app.tsbuildinfo
 config yun.yaml
 /.mindfs
 /bin/cn-font-split
+/.agents
+skills-lock.json
