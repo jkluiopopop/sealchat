@@ -19,6 +19,10 @@ import {
   resolveCustomThemeEnabledUpdate,
   resolveEffectiveThemeSelection,
 } from '@/services/theme/themeSelection'
+import {
+  resolveEffectiveDisplayPalette,
+  type StoredDisplayPalette,
+} from '@/services/theme/systemPalette'
 import type {
   CustomTheme,
   CustomThemeColors,
@@ -29,7 +33,7 @@ import { MESSAGE_SOUND_MODE_VALUES, type MessageSoundMode } from '@/utils/messag
 import { DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION } from '@/utils/worldKeywordTooltipInteraction'
 
 export type DisplayLayout = 'bubble' | 'compact'
-export type DisplayPalette = 'day' | 'night'
+export type DisplayPalette = StoredDisplayPalette
 export type BotBadgeStyle = 'solidBlue' | 'solidTone' | 'outline' | 'dice'
 export type EditingSelfActionsPlacement = 'left' | 'right'
 export type InterjectSwitchRule = 'invert' | 'preserve' | 'forceOoc' | 'forceIc'
@@ -299,7 +303,10 @@ const normalizeFontAssetId = (value: unknown): string | null => {
 }
 
 const coerceLayout = (value?: string): DisplayLayout => (value === 'compact' ? 'compact' : 'bubble')
-const coercePalette = (value?: string): DisplayPalette => (value === 'day' ? 'day' : 'night')
+const coercePalette = (value?: string): DisplayPalette => {
+  if (value === 'day' || value === 'auto') return value
+  return 'night'
+}
 const coerceEditingSelfActionsPlacement = (value: unknown): EditingSelfActionsPlacement => (value === 'left' ? 'left' : 'right')
 const BOT_BADGE_STYLE_VALUES: BotBadgeStyle[] = ['solidBlue', 'solidTone', 'outline', 'dice']
 const BOT_BADGE_STYLE_DEFAULT: BotBadgeStyle = 'solidBlue'
@@ -1235,7 +1242,7 @@ export const useDisplayStore = defineStore('display', {
   }),
   getters: {
     layout: (state) => state.settings.layout,
-    palette: (state) => state.settings.palette,
+    palette: (state) => resolveEffectiveDisplayPalette(state.settings.palette),
     showAvatar: (state) => state.settings.showAvatar,
     favoriteBarEnabled: (state) => state.settings.favoriteChannelBarEnabled,
   },
@@ -1524,7 +1531,8 @@ export const useDisplayStore = defineStore('display', {
       if (typeof document === 'undefined') return
       const effective = target || this.settings
       const root = document.documentElement
-      root.dataset.displayPalette = effective.palette
+      const resolvedPalette = resolveEffectiveDisplayPalette(effective.palette)
+      root.dataset.displayPalette = resolvedPalette
       root.dataset.displayLayout = effective.layout
       const setVar = (name: string, value: string) => {
         root.style.setProperty(name, value)

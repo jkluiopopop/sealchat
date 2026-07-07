@@ -5185,7 +5185,7 @@ const submitIdentityForm = async () => {
         accentColor: payload.color,
         size: 256,
         themeSeed: {
-          palette: display.settings.palette,
+          palette: display.palette,
           customThemeEnabled: display.settings.customThemeEnabled,
           activeCustomThemeId: display.settings.activeCustomThemeId,
         },

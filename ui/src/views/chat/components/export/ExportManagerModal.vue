@@ -27,7 +27,7 @@ const { width } = useWindowSize();
 const isMobile = computed(() => width.value <= 720);
 const modalWidth = computed(() => (isMobile.value ? '92vw' : '760px'));
 const display = useDisplayStore();
-const isNightMode = computed(() => display.settings?.palette === 'night');
+const isNightMode = computed(() => display.palette === 'night');
 const exportManagerClasses = computed(() => ({
   'export-manager--mobile': isMobile.value,
   'export-manager--night': !!isNightMode.value,

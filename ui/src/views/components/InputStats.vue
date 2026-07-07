@@ -37,9 +37,9 @@ const props = defineProps<{
 const isDark = computed(() => {
   if (display.settings.customThemeEnabled && display.settings.activeCustomThemeId) {
     // Custom theme active – read CSS variable to determine brightness
-    return display.settings.palette === 'night'
+    return display.palette === 'night'
   }
-  return display.settings.palette === 'night'
+  return display.palette === 'night'
 })
 
 // === State ===

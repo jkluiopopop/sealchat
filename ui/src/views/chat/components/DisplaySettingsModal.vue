@@ -8,6 +8,7 @@ import {
   type DisplaySettings,
   type ThemeSelectionMode,
 } from '@/stores/display'
+import { resolveEffectiveDisplayPalette } from '@/services/theme/systemPalette'
 import { useOnboardingStore } from '@/stores/onboarding'
 import {
   downloadDisplaySettingsTransfer,
@@ -75,6 +76,7 @@ const layoutModeOptions: Array<{ label: string; value: DisplaySettings['layout']
   { label: '紧凑模式', value: 'compact' },
 ]
 const paletteModeOptions: Array<{ label: string; value: DisplaySettings['palette'] }> = [
+  { label: '自动适应', value: 'auto' },
   { label: '日间模式', value: 'day' },
   { label: '夜间模式', value: 'night' },
 ]
@@ -206,7 +208,7 @@ watch(
 
 const previewClasses = computed(() => [
   'display-preview',
-  `display-preview--${draft.palette}`,
+  `display-preview--${resolveEffectiveDisplayPalette(draft.palette)}`,
   `display-preview--${draft.layout}`,
 ])
 
