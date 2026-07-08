@@ -1126,6 +1126,12 @@ func websocketWorks(app *fiber.App, webUrl string) {
 					case "character.remark.snapshot":
 						apiWrap(ctx, msg, apiCharacterRemarkSnapshot)
 						solved = true
+					case "auth.quick_login.approve":
+						apiWrap(ctx, msg, apiQuickLoginApprove)
+						solved = true
+					case "auth.quick_login.deny":
+						apiWrap(ctx, msg, apiQuickLoginDeny)
+						solved = true
 					}
 				}
 			}

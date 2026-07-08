@@ -95,6 +95,12 @@ func mergeConfigForWrite(current *utils.AppConfig, incoming *utils.AppConfig) *u
 	if strings.TrimSpace(out.Audio.ImportDir) == "" {
 		out.Audio.ImportDir = current.Audio.ImportDir
 	}
+	if strings.TrimSpace(out.Proxy.ProxyHeader) == "" {
+		out.Proxy.ProxyHeader = current.Proxy.ProxyHeader
+	}
+	if len(out.Proxy.TrustedProxies) == 0 && len(current.Proxy.TrustedProxies) > 0 {
+		out.Proxy.TrustedProxies = append([]string(nil), current.Proxy.TrustedProxies...)
+	}
 	if strings.TrimSpace(out.Certificate.ZeroSSLAPIKey) == "" {
 		out.Certificate.ZeroSSLAPIKey = current.Certificate.ZeroSSLAPIKey
 	}

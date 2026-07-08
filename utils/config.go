@@ -75,24 +75,28 @@ const (
 )
 
 const (
-	defaultPageTitle                = "海豹尬聊 SealChat"
-	maxPageDescriptionLength        = 60
-	defaultExportStorageDir         = "./data/exports"
-	defaultExportHTMLPageSize       = 100
-	defaultExportHTMLPageSizeMax    = 500
-	defaultExportHTMLMaxConcurrency = 2
-	defaultLogUploadEndpoint        = "https://dice.weizaima.com/dice/api/log"
-	defaultLogUploadTimeoutSeconds  = 15
-	defaultLogUploadClient          = "Others"
-	defaultLogUploadUniformID       = "Sealchat"
-	defaultLogUploadVersion         = 105
-	defaultLogUploadNote            = "默认上传到海豹染色器获取 BBcode/Docx"
-	defaultBackupPath               = "./backups"
-	defaultBackupIntervalHours      = 12
-	defaultBackupRetentionCount     = 5
-	defaultAuthTokenMaxAgeDays      = 15
-	defaultAuthRefreshThresholdDays = 7
-	defaultCertificateStorageDir    = "./data/certmagic"
+	defaultPageTitle                     = "海豹尬聊 SealChat"
+	maxPageDescriptionLength             = 60
+	defaultExportStorageDir              = "./data/exports"
+	defaultExportHTMLPageSize            = 100
+	defaultExportHTMLPageSizeMax         = 500
+	defaultExportHTMLMaxConcurrency      = 2
+	defaultLogUploadEndpoint             = "https://dice.weizaima.com/dice/api/log"
+	defaultLogUploadTimeoutSeconds       = 15
+	defaultLogUploadClient               = "Others"
+	defaultLogUploadUniformID            = "Sealchat"
+	defaultLogUploadVersion              = 105
+	defaultLogUploadNote                 = "默认上传到海豹染色器获取 BBcode/Docx"
+	defaultBackupPath                    = "./backups"
+	defaultBackupIntervalHours           = 12
+	defaultBackupRetentionCount          = 5
+	defaultAuthTokenMaxAgeDays           = 15
+	defaultAuthRefreshThresholdDays      = 7
+	defaultCertificateStorageDir         = "./data/certmagic"
+	defaultQuickLoginRateWindowSec       = 60
+	defaultQuickLoginRateLimitPerIP      = 6
+	defaultQuickLoginRateLimitPerUser    = 3
+	defaultQuickLoginRateLimitPerAccount = 3
 )
 
 type CaptchaMode string
@@ -229,6 +233,22 @@ type BackupConfig struct {
 type AuthSessionConfig struct {
 	MaxAgeDays           int `json:"maxAgeDays" yaml:"maxAgeDays"`
 	RefreshThresholdDays int `json:"refreshThresholdDays" yaml:"refreshThresholdDays"`
+}
+
+type QuickLoginRequestRateLimitConfig struct {
+	WindowSeconds    int `json:"windowSeconds" yaml:"windowSeconds"`
+	MaxPerIP         int `json:"maxPerIP" yaml:"maxPerIP"`
+	MaxPerTargetUser int `json:"maxPerTargetUser" yaml:"maxPerTargetUser"`
+	MaxPerAccount    int `json:"maxPerAccount" yaml:"maxPerAccount"`
+}
+
+type QuickLoginConfig struct {
+	RequestRateLimit QuickLoginRequestRateLimitConfig `json:"requestRateLimit" yaml:"requestRateLimit"`
+}
+
+type ProxyConfig struct {
+	TrustedProxies []string `json:"-" yaml:"trustedProxies"`
+	ProxyHeader    string   `json:"-" yaml:"proxyHeader"`
 }
 
 // LoginBackgroundConfig 登录页背景配置
@@ -414,6 +434,8 @@ type AppConfig struct {
 	UpdateCheck               UpdateCheckConfig         `json:"updateCheck" yaml:"updateCheck"`
 	Backup                    BackupConfig              `json:"backup" yaml:"backup"`
 	AuthSession               AuthSessionConfig         `json:"authSession" yaml:"authSession"`
+	QuickLogin                QuickLoginConfig          `json:"quickLogin" yaml:"quickLogin"`
+	Proxy                     ProxyConfig               `json:"-" yaml:"proxy"`
 	LoginBackground           LoginBackgroundConfig     `json:"loginBackground" yaml:"loginBackground"`
 	ThemeManagement           ThemeManagementConfig     `json:"themeManagement" yaml:"themeManagement"`
 	UITextReplace             UITextReplaceConfig       `json:"uiTextReplace" yaml:"uiTextReplace"`
@@ -581,6 +603,17 @@ func ReadConfig() *AppConfig {
 			MaxAgeDays:           defaultAuthTokenMaxAgeDays,
 			RefreshThresholdDays: defaultAuthRefreshThresholdDays,
 		},
+		QuickLogin: QuickLoginConfig{
+			RequestRateLimit: QuickLoginRequestRateLimitConfig{
+				WindowSeconds:    defaultQuickLoginRateWindowSec,
+				MaxPerIP:         defaultQuickLoginRateLimitPerIP,
+				MaxPerTargetUser: defaultQuickLoginRateLimitPerUser,
+				MaxPerAccount:    defaultQuickLoginRateLimitPerAccount,
+			},
+		},
+		Proxy: NormalizeProxyConfig(ProxyConfig{
+			ProxyHeader: "X-Forwarded-For",
+		}),
 		LoginBackground: LoginBackgroundConfig{
 			Mode:                "cover",
 			Opacity:             30,
@@ -685,6 +718,7 @@ func ReadConfig() *AppConfig {
 	applyUpdateCheckDefaults(&config.UpdateCheck)
 	applyBackupDefaults(&config.Backup)
 	applyAuthSessionDefaults(&config.AuthSession)
+	config.Proxy = NormalizeProxyConfig(config.Proxy)
 	config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
 	config.UITextReplace = NormalizeUITextReplaceConfig(config.UITextReplace)
 	config.Certificate = NormalizeCertificateConfig(config.Certificate)
@@ -744,6 +778,36 @@ func defaultCertificateConfig() CertificateConfig {
 		RetryInitialMinutes:  5,
 		RetryMaxMinutes:      240,
 	})
+}
+
+func NormalizeProxyConfig(cfg ProxyConfig) ProxyConfig {
+	cfg.ProxyHeader = strings.TrimSpace(cfg.ProxyHeader)
+	if cfg.ProxyHeader == "" {
+		cfg.ProxyHeader = "X-Forwarded-For"
+	}
+	if len(cfg.TrustedProxies) == 0 {
+		cfg.TrustedProxies = nil
+		return cfg
+	}
+	out := make([]string, 0, len(cfg.TrustedProxies))
+	seen := make(map[string]struct{}, len(cfg.TrustedProxies))
+	for _, item := range cfg.TrustedProxies {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	if len(out) == 0 {
+		cfg.TrustedProxies = nil
+		return cfg
+	}
+	cfg.TrustedProxies = out
+	return cfg
 }
 
 const legacyAIBattleSummaryPrompt = "你是跑团战报助手。根据提供内容整理清晰、忠实原意的战报摘要。"
@@ -1575,6 +1639,7 @@ func WriteConfig(config *AppConfig) {
 	if config != nil {
 		config.Captcha.normalize()
 		config.Storage.normalize()
+		config.Proxy = NormalizeProxyConfig(config.Proxy)
 		config.Certificate = NormalizeCertificateConfig(config.Certificate)
 		config.UITextReplace = NormalizeUITextReplaceConfig(config.UITextReplace)
 		config.AI = NormalizeAIConfig(config.AI)
@@ -1763,6 +1828,12 @@ func WriteConfig(config *AppConfig) {
 		// 登录会话配置
 		_ = k.Set("authSession.maxAgeDays", config.AuthSession.MaxAgeDays)
 		_ = k.Set("authSession.refreshThresholdDays", config.AuthSession.RefreshThresholdDays)
+		_ = k.Set("quickLogin.requestRateLimit.windowSeconds", config.QuickLogin.RequestRateLimit.WindowSeconds)
+		_ = k.Set("quickLogin.requestRateLimit.maxPerIP", config.QuickLogin.RequestRateLimit.MaxPerIP)
+		_ = k.Set("quickLogin.requestRateLimit.maxPerTargetUser", config.QuickLogin.RequestRateLimit.MaxPerTargetUser)
+		_ = k.Set("quickLogin.requestRateLimit.maxPerAccount", config.QuickLogin.RequestRateLimit.MaxPerAccount)
+		_ = k.Set("proxy.proxyHeader", config.Proxy.ProxyHeader)
+		_ = k.Set("proxy.trustedProxies", config.Proxy.TrustedProxies)
 
 		// 登录页背景配置
 		_ = k.Set("loginBackground.attachmentId", config.LoginBackground.AttachmentId)

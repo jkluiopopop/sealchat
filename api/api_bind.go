@@ -308,6 +308,44 @@ func renderIndexHTML(c *fiber.Ctx, indexHTML []byte, config *utils.AppConfig) er
 	return c.Status(http.StatusOK).Send(body)
 }
 
+func normalizeTrustedProxies(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		out = append(out, item)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func resolveFiberProxyConfig(cfg *utils.AppConfig) (string, bool, []string) {
+	if cfg == nil {
+		return "", false, nil
+	}
+	trusted := normalizeTrustedProxies(cfg.Proxy.TrustedProxies)
+	if len(trusted) == 0 {
+		return "", false, nil
+	}
+	header := strings.TrimSpace(cfg.Proxy.ProxyHeader)
+	if header == "" {
+		header = fiber.HeaderXForwardedFor
+	}
+	return header, true, trusted
+}
+
 func registerFrontendStaticRoutes(app *fiber.App, webURL string, uiStatic fs.FS, indexHandler fiber.Handler) {
 	if indexHandler != nil {
 		for _, routePath := range buildIndexPaths(webURL) {
@@ -351,9 +389,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	if bodyLimit < 32*1024*1024 {
 		bodyLimit = 32 * 1024 * 1024
 	}
+	proxyHeader, enableTrustedProxyCheck, trustedProxies := resolveFiberProxyConfig(config)
 
 	app := fiber.New(fiber.Config{
-		BodyLimit: bodyLimit,
+		BodyLimit:               bodyLimit,
+		ProxyHeader:             proxyHeader,
+		EnableTrustedProxyCheck: enableTrustedProxyCheck,
+		TrustedProxies:          trustedProxies,
 	})
 	app.Use(certificateHTTPRedirectMiddleware(config))
 	app.Use(corsConfig)
@@ -364,6 +406,9 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1 := app.Group(joinWebPath(config.WebUrl, "api/v1"))
 	v1.Post("/user-signup", UserSignup)
 	v1.Post("/user-signin", UserSignin)
+	v1.Post("/auth/quick-login/check", QuickLoginCheck)
+	v1.Post("/auth/quick-login/request", QuickLoginRequest)
+	v1.Post("/auth/quick-login/poll", QuickLoginPoll)
 	v1.Get("/captcha/new", CaptchaNew)
 	v1.Get("/captcha/:id.png", CaptchaImage)
 	v1.Get("/captcha/:id/reload", CaptchaReload)
