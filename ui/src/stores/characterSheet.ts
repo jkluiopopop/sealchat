@@ -4204,6 +4204,9 @@ const getCocDefaultTemplate = () => `<!DOCTYPE html>
         const rawVal  = input.value.trim();
         const finalVal = strategy.parseValue(rawVal);
         if (finalVal === undefined) { closed = false; cancel(); return; }
+        target.textContent = String(finalVal);
+        target.dataset.value = String(finalVal);
+        target.dataset.editing = '';
         sealchat.updateAttrs(strategy.buildPatch(finalVal, ctx));
       };
 
@@ -4232,6 +4235,9 @@ const getCocDefaultTemplate = () => `<!DOCTYPE html>
       if (document.querySelector('[data-editing="1"]')) return;
       const currentVal = target.dataset.value || '';
       const originalHTML = target.innerHTML;
+      const originalContent = target.querySelector('.editable-textarea-content');
+      const scrollMemoryId = originalContent?.getAttribute('scroll-memory-id') || '';
+      const emptyDisplayText = !currentVal ? (originalContent?.textContent || target.textContent || '') : '';
       const editor = document.createElement('textarea');
       editor.className = 'text-editor';
       editor.name = attrKey; 
@@ -4253,6 +4259,12 @@ const getCocDefaultTemplate = () => `<!DOCTYPE html>
         cleanup();
         const val = editor.value;
         const patch = { [CHAR_INFO_KEY]: { ...state.charInfo, [attrKey]: val } };
+        target.dataset.value = val;
+        target.dataset.editing = '';
+        target.classList.toggle('empty', !val);
+        target.innerHTML = '<span class="editable-textarea-content"' +
+          (scrollMemoryId ? ' scroll-memory-id="' + scrollMemoryId + '"' : '') +
+          '>' + escapeHtml(val || emptyDisplayText) + '</span>';
         sealchat.updateAttrs(patch);
       };
       const cancel = () => {
