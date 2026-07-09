@@ -421,6 +421,7 @@ type AppConfig struct {
 	KeywordMaxLength          int64                     `json:"keywordMaxLength" yaml:"keywordMaxLength"` // 术语最大字数
 	DSN                       string                    `json:"-" yaml:"dbUrl" koanf:"dbUrl"`
 	BuiltInSealBotEnable      bool                      `json:"builtInSealBotEnable" yaml:"builtInSealBotEnable"` // 内置小海豹启用
+	BotIncomingParenAsOOC     bool                      `json:"botIncomingParenAsOoc" yaml:"botIncomingParenAsOoc"`
 	Version                   int                       `json:"version" yaml:"version"`
 	GalleryQuotaMB            int64                     `json:"galleryQuotaMB" yaml:"galleryQuotaMB"`
 	LogUpload                 LogUploadConfig           `json:"logUpload" yaml:"logUpload"`
@@ -502,6 +503,7 @@ func ReadConfig() *AppConfig {
 		KeywordMaxLength:          2000,
 		DSN:                       "./data/chat.db",
 		BuiltInSealBotEnable:      true,
+		BotIncomingParenAsOOC:     true,
 		Version:                   1,
 		GalleryQuotaMB:            100,
 		LogUpload: LogUploadConfig{
@@ -1677,6 +1679,7 @@ func WriteConfig(config *AppConfig) {
 		_ = k.Set("imageCompressQuality", config.ImageCompressQuality)
 		_ = k.Set("keywordMaxLength", config.KeywordMaxLength)
 		_ = k.Set("builtInSealBotEnable", config.BuiltInSealBotEnable)
+		_ = k.Set("botIncomingParenAsOoc", config.BotIncomingParenAsOOC)
 		_ = k.Set("galleryQuotaMB", config.GalleryQuotaMB)
 		_ = k.Set("imageBaseUrl", config.ImageBaseURL)
 		_ = k.Set("logUpload.enabled", config.LogUpload.Enabled)

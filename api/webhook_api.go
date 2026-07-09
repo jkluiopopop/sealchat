@@ -385,6 +385,9 @@ func webhookMessageCreate(c *fiber.Ctx, integration *model.ChannelWebhookIntegra
 	content = protocol.EscapeSatoriText(content)
 
 	icMode := strings.ToLower(strings.TrimSpace(req.Message.ICMode))
+	if isExternalBotIncomingUser(botUser) {
+		icMode = resolveExternalBotIncomingICMode(icMode, content)
+	}
 	if icMode == "" {
 		icMode = "ic"
 	}

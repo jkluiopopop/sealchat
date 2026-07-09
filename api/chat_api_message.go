@@ -1847,10 +1847,18 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 	var privateOtherUser string
 	botMsgContext := resolveBotMessageContext(ctx, channelId)
+	botContextICMode := ""
+	if botMsgContext != nil {
+		botContextICMode = strings.TrimSpace(strings.ToLower(botMsgContext.ICMode))
+	}
 
-	icMode := strings.TrimSpace(strings.ToLower(data.ICMode))
-	if icMode == "" && botMsgContext != nil {
-		icMode = strings.TrimSpace(strings.ToLower(botMsgContext.ICMode))
+	requestedICMode := strings.TrimSpace(strings.ToLower(data.ICMode))
+	if isExternalBotIncomingUser(ctx.User) {
+		requestedICMode = resolveExternalBotIncomingICMode(requestedICMode, data.Content)
+	}
+	icMode := requestedICMode
+	if icMode == "" && botContextICMode != "" {
+		icMode = botContextICMode
 	}
 	if icMode == "" {
 		icMode = "ic"
@@ -1879,6 +1887,10 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 
 	content := data.Content
+	messageContextICMode := icMode
+	if ctx.User.IsBot && requestedICMode == "ooc" && botContextICMode != "" && shouldTreatExternalBotMessageAsOOC(content) {
+		messageContextICMode = botContextICMode
+	}
 
 	// BOT 消息的 Satori 内容规范化
 	if ctx.User.IsBot {
@@ -2347,7 +2359,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		var msgContext *protocol.MessageContext
 		if effectiveBotFeatureEnabled || appConfig.BuiltInSealBotEnable {
 			msgContext = &protocol.MessageContext{
-				ICMode:       icMode,
+				ICMode:       messageContextICMode,
 				IsWhisper:    whisperUser != nil,
 				IsHiddenDice: isHiddenDice,
 				SenderUserID: ctx.User.ID,
@@ -4310,8 +4322,10 @@ func forwardBotWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, 
 	}
 
 	msgICMode := strings.TrimSpace(strings.ToLower(msg.ICMode))
-	if botCtx := resolveBotMessageContext(ctx, targetChannelID); botCtx != nil && botCtx.ICMode != "" {
-		msgICMode = strings.TrimSpace(strings.ToLower(botCtx.ICMode))
+	if msgICMode == "" {
+		if botCtx := resolveBotMessageContext(ctx, targetChannelID); botCtx != nil && botCtx.ICMode != "" {
+			msgICMode = strings.TrimSpace(strings.ToLower(botCtx.ICMode))
+		}
 	}
 	if msgICMode == "" {
 		msgICMode = "ic"
