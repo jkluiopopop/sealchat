@@ -2095,8 +2095,11 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		senderID := strings.TrimSpace(botMsgContext.SenderUserID)
 		if senderID != "" {
 			whisperRecipientIDs = resolveWhisperRecipients(whisperTo, append(whisperRecipientIDs, senderID), ctx.User.ID)
-			if whisperTo == "" && len(whisperRecipientIDs) > 0 {
-				whisperTo = whisperRecipientIDs[0]
+			if len(whisperRecipientIDs) > 0 && (whisperTo == "" || whisperTo == ctx.User.ID) {
+				whisperTo = senderID
+				if whisperTo == "" || whisperTo == ctx.User.ID {
+					whisperTo = whisperRecipientIDs[0]
+				}
 			}
 		}
 	}

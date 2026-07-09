@@ -314,3 +314,68 @@ func TestBroadcastEventInChannelToUsersSendsExplicitTargetOutsideChannelUserSet(
 		t.Fatalf("expected explicit target to receive broadcast: %v", err)
 	}
 }
+
+func TestBroadcastEventInChannelForBotSkipsDuplicateWriteForWhisperTarget(t *testing.T) {
+	initOneBotAPITestEnv(t)
+
+	botUser, _ := createOneBotTestBot(t, "ctx-whisper-target", model.BotKindManual)
+	_, channel := createOneBotTestWorldAndChannel(t, botUser.ID)
+
+	targetConn, targetClient, targetCleanup := newReadableChatTestConn(t)
+	defer targetCleanup()
+
+	targetInfo := &ConnInfo{
+		Conn:          targetConn,
+		User:          botUser,
+		ChannelId:     channel.ID,
+		LastPingTime:  1,
+		LastAliveTime: 1,
+	}
+	targetMap := &utils.SyncMap[*WsSyncConn, *ConnInfo]{}
+	targetMap.Store(targetConn, targetInfo)
+
+	userConns := &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{}
+	userConns.Store(botUser.ID, targetMap)
+	ctx := &ChatContext{
+		UserId2ConnInfo: userConns,
+	}
+
+	event := &protocol.Event{
+		Type:    protocol.EventMessageCreated,
+		Channel: channel.ToProtocolType(),
+		User:    &protocol.User{ID: "sender-user", Nick: "sender"},
+		Message: &protocol.Message{
+			ID:        "msg-" + utils.NewIDWithLength(8),
+			Content:   ".r",
+			IsWhisper: true,
+			WhisperTo: &protocol.User{ID: botUser.ID},
+		},
+		MessageContext: &protocol.MessageContext{
+			IsWhisper:       true,
+			SenderUserID:    "sender-user",
+			WhisperToUserID: botUser.ID,
+		},
+	}
+
+	ctx.BroadcastEventInChannelToUsers(channel.ID, []string{botUser.ID}, event)
+
+	_ = targetClient.SetReadDeadline(time.Now().Add(time.Second))
+	if _, _, err := targetClient.ReadMessage(); err != nil {
+		t.Fatalf("expected whisper target bot to receive direct payload: %v", err)
+	}
+
+	ctx.BroadcastEventInChannelForBot(channel.ID, event)
+
+	_ = targetClient.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	if _, _, err := targetClient.ReadMessage(); err == nil {
+		t.Fatal("expected bot broadcast path not to duplicate whisper payload")
+	}
+
+	msgContext, ok := targetInfo.BotLastMessageContext.Load(channel.ID)
+	if !ok || msgContext == nil {
+		t.Fatal("expected bot message context to be cached for whisper target")
+	}
+	if !msgContext.IsWhisper || msgContext.WhisperToUserID != botUser.ID {
+		t.Fatalf("unexpected cached message context: %#v", msgContext)
+	}
+}

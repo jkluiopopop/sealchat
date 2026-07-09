@@ -270,14 +270,16 @@ func (ctx *ChatContext) BroadcastEventInChannelForBot(channelId string, data *pr
 			})
 			if active != nil && activeConn != nil {
 				cacheBotEventContext(active, channelId, data)
-				writeConnJSONAndPrune(x, activeConn, struct {
-					protocol.Event
-					Op protocol.Opcode `json:"op"`
-				}{
-					// 协议规定: 事件中必须含有 channel，message，user
-					Event: *data,
-					Op:    protocol.OpEvent,
-				})
+				if !shouldSkipDirectBotEventWrite(botID, data) {
+					writeConnJSONAndPrune(x, activeConn, struct {
+						protocol.Event
+						Op protocol.Opcode `json:"op"`
+					}{
+						// 协议规定: 事件中必须含有 channel，message，user
+						Event: *data,
+						Op:    protocol.OpEvent,
+					})
+				}
 			}
 		}
 		getOneBotRuntime().publishProtocolEvent(botID, data, ctx.OneBotSessionID)
@@ -483,6 +485,18 @@ func extractBotWhisperTargetIDs(event *protocol.Event) []string {
 		collected = append(collected, event.MessageContext.WhisperToUserID)
 	}
 	return normalizeWhisperTargetIDs(collected)
+}
+
+func shouldSkipDirectBotEventWrite(botID string, event *protocol.Event) bool {
+	if strings.TrimSpace(botID) == "" || event == nil || event.Message == nil || !event.Message.IsWhisper {
+		return false
+	}
+	for _, targetID := range extractBotWhisperTargetIDs(event) {
+		if targetID == botID {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeWhisperTargetIDs(ids []string) []string {
