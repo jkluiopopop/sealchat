@@ -1,0 +1,2721 @@
+<!DOCTYPE html>
+<!-- sealchat-shinobigami-template:v1 -->
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    :root {
+      /* 和风色彩系统 */
+      --bg: #e6e4dc; /* 偏灰暗的和纸背景色 */
+      --paper: #f2f0e9; /* 纸张面板色 */
+      --paper-strong: #faf9f5; /* 强高光面板 */
+      --ink: #1a1714; /* 浓墨 */
+      --ink-dim: #6b645b; /* 淡墨 */
+      --panel: #1f1b18; /* 漆黑面板 */
+      --panel-soft: #38332e;
+      --line: #b0a89d;
+      --line-strong: #1a1714; /* 边线使用实墨 */
+      
+      --active: #a61b12; /* 朱砂/暗红 */
+      --active-ink: #f0eee6;
+      --roll: #731008;
+      --roll-ink: #f0eee6;
+      --warn: #8a1d13;
+      --warn-ink: #fff;
+      --muted: #b8b3a7;
+      --chip: #e8e6df;
+      
+      --shadow: rgba(26, 23, 20, 0.15);
+      
+      /* 忍神特化分野颜色（加深处理，仿印泥质感） */
+      --cat-0: #ad5307; /* 器术：暗橙 */
+      --cat-1: #4a6b22; /* 体术：苔绿 */
+      --cat-2: #8f1212; /* 忍术：血红 */
+      --cat-3: #8a782e; /* 谋术：枯黄 */
+      --cat-4: #1c3d66; /* 战术：靛蓝 */
+      --cat-5: #4e356e; /* 妖术：紫黑 */
+      
+      /* 字体：优先采用明朝体/宋体及楷体，凸显忍法帖质感 */
+      --font-main: "Noto Serif SC", "Noto Serif TC", "Noto Serif JP", "Songti SC", "SimSun", serif;
+      --font-ui: "STKaiti", "KaiTi", "Kaiti SC", "Noto Serif SC", "Songti SC", serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background-color: var(--bg);
+      /* 和纸纹理暗花 */
+      background-image:
+        linear-gradient(90deg, rgba(26,23,20,0.04) 1px, transparent 1px),
+        linear-gradient(rgba(26,23,20,0.04) 1px, transparent 1px);
+      background-size: 24px 24px;
+      background-position: center;
+      color: var(--ink);
+      font-family: var(--font-main);
+      min-height: 100vh;
+      scrollbar-width: thin;
+      scrollbar-color: var(--line) transparent;
+    }
+
+    body {
+      padding: 16px;
+    }
+
+    textarea,
+    .matrix-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: var(--line) transparent;
+    }
+
+    ::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--line);
+      border-radius: 0;
+    }
+
+    body:hover::-webkit-scrollbar-thumb,
+    textarea:hover::-webkit-scrollbar-thumb,
+    .matrix-scroll:hover::-webkit-scrollbar-thumb {
+      background: var(--ink-dim);
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--ink);
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+      outline: none;
+    }
+
+    button {
+      border: 0;
+      background: none;
+      cursor: pointer;
+      color: inherit;
+    }
+
+    #app {
+      max-width: 1180px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .sheet {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* 具有TRPG实物风格的硬朗卡片基类 */
+    .summary, .matrix-tools, .section-card {
+      background: var(--paper);
+      border: 2px solid var(--line-strong);
+      border-radius: 0;
+      box-shadow: 4px 4px 0 rgba(26, 23, 20, 0.1);
+    }
+
+    .summary {
+      padding: 14px 16px;
+    }
+
+    .summary__top,
+    .summary__bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    
+    .summary__bottom {
+      margin-top: 12px;
+    }
+
+    .summary__name {
+      font-size: 24px;
+      font-weight: 900;
+      letter-spacing: 2px;
+      position: relative;
+      padding-left: 14px;
+    }
+
+    /* 角色名前方的朱砂红线装饰 */
+    .summary__name::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 10%;
+      height: 80%;
+      width: 4px;
+      background: var(--active);
+    }
+
+    .summary__avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 0;
+      object-fit: cover;
+      border: 2px solid var(--line-strong);
+      background: var(--paper-strong);
+    }
+
+    .summary__identity {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .summary__chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    /* 刻印风格芯片标签 */
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 0;
+      background: var(--paper-strong);
+      border: 1px solid var(--line-strong);
+      font-family: var(--font-ui);
+      font-size: 13px;
+      line-height: 1.2;
+      box-shadow: 1px 1px 0 rgba(26, 23, 20, 0.2);
+      transition: all 0.1s ease;
+    }
+
+    .chip--danger {
+      background: rgba(166, 27, 18, 0.08);
+      border-color: var(--active);
+      color: var(--active);
+      font-weight: bold;
+    }
+
+    .chip--toggle:hover {
+      transform: translate(-1px, -1px);
+      box-shadow: 2px 2px 0 rgba(26, 23, 20, 0.2);
+    }
+    
+    .chip--toggle:active {
+      transform: translate(1px, 1px);
+      box-shadow: 0 0 0 transparent;
+    }
+
+    .chip--toggle.is-active {
+      background: var(--panel);
+      color: #fff;
+      border-color: var(--panel);
+    }
+
+    /* 生命值计分板 */
+    .hp-panel {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-ui);
+      padding: 6px 12px;
+      background: var(--paper-strong);
+      border: 2px solid var(--line-strong);
+      border-radius: 0;
+      box-shadow: 2px 2px 0 rgba(26, 23, 20, 0.1);
+    }
+
+    .hp-panel__value {
+      font-size: 24px;
+      font-weight: 900;
+      font-family: var(--font-main);
+      color: var(--active);
+      letter-spacing: 2px;
+    }
+
+    .hp-panel__meta {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    /* 小功能按钮实体化 */
+    .mini-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      min-height: 24px;
+      padding: 2px 8px;
+      border-radius: 0;
+      background: var(--paper-strong);
+      border: 1px solid var(--line-strong);
+      font-size: 12px;
+      font-weight: bold;
+      font-family: var(--font-ui);
+      box-shadow: 1px 1px 0 rgba(26, 23, 20, 0.2);
+      transition: all 0.1s ease;
+    }
+
+    .mini-btn:hover {
+      background: var(--panel);
+      color: #fff;
+      transform: translate(-1px, -1px);
+      box-shadow: 2px 2px 0 rgba(26, 23, 20, 0.3);
+    }
+
+    .mini-btn:active {
+      transform: translate(1px, 1px);
+      box-shadow: 0 0 0 transparent;
+    }
+
+    .matrix-shell {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(118px, 1fr));
+      gap: 0;
+      align-items: start;
+      min-width: 720px;
+      border: 2px solid var(--line-strong); /* 整个矩阵外框 */
+      background: var(--paper-strong);
+      box-shadow: 4px 4px 0 rgba(26, 23, 20, 0.1);
+    }
+
+    .matrix-scroll {
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding-bottom: 8px;
+      scrollbar-width: thin;
+    }
+
+    .matrix-scroll.is-dragging {
+      cursor: grabbing;
+      user-select: none;
+    }
+
+    /* 矩阵列：取消圆角，改用清晰的列分割 */
+    .matrix-col {
+      border-right: 1px solid var(--line-strong);
+      border-radius: 0;
+      overflow: hidden;
+      min-width: 0;
+      position: relative;
+      isolation: isolate;
+      background: transparent;
+    }
+    .matrix-col:last-child {
+      border-right: none;
+    }
+
+    /* 强损伤列：黑暗沉沦与血印 */
+    .matrix-col.is-damaged-strong {
+      background: #1c1917;
+      border-color: #38332e;
+    }
+
+    .matrix-col.is-damaged-strong::before,
+    .matrix-col.is-damaged-strong::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 6px;
+      pointer-events: none;
+      z-index: 4;
+      background: linear-gradient(180deg, #570602, #b8160e, #7a0d08);
+      box-shadow: 0 0 4px rgba(0,0,0,0.5);
+    }
+
+    .matrix-col.is-damaged-strong::before {
+      left: 0;
+      clip-path: polygon(100% 0, 34% 5%, 78% 12%, 18% 19%, 82% 27%, 22% 36%, 76% 46%, 14% 56%, 84% 66%, 22% 77%, 74% 88%, 16% 96%, 100% 100%, 0 100%, 0 0);
+    }
+
+    .matrix-col.is-damaged-strong::after {
+      right: 0;
+      clip-path: polygon(0 0, 66% 4%, 22% 12%, 84% 20%, 20% 28%, 78% 37%, 16% 46%, 82% 57%, 24% 68%, 80% 79%, 26% 89%, 86% 96%, 0 100%, 100% 100%, 100% 0);
+    }
+
+    /* 矩阵表头：黑色木牌质感 */
+    .matrix-col__header {
+      background: var(--panel);
+      color: #fff;
+      padding: 8px 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      border-bottom: 2px solid var(--line-strong);
+    }
+
+    .matrix-col__title {
+      display: grid;
+      grid-template-columns: 14px 1fr 14px;
+      align-items: center;
+      gap: 0;
+      font-size: 16px;
+      font-weight: 900;
+      letter-spacing: 2px;
+      font-family: var(--font-main);
+    }
+
+    .matrix-col__title span:first-child {
+      grid-column: 2;
+      justify-self: center;
+      text-align: center;
+    }
+
+    .matrix-col__title span:last-child {
+      grid-column: 3;
+      justify-self: end;
+      min-width: 10px;
+      text-align: right;
+    }
+
+    /* 损伤封印血章 */
+    .matrix-col__seal-icon {
+      grid-column: 3;
+      justify-self: end;
+      width: 14px;
+      height: 14px;
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .matrix-col__seal-icon::before {
+      content: '';
+      width: 12px;
+      height: 12px;
+      border-radius: 58% 42% 62% 38% / 64% 46% 54% 36%;
+      background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.2) 0 14%, transparent 15%),
+                  linear-gradient(180deg, #d82b1c, #8f0800);
+      transform: rotate(28deg);
+      box-shadow: inset 0 -1px 0 rgba(0,0,0,0.5), 0 0 2px rgba(0,0,0,0.5);
+    }
+
+    .matrix-col__seal-icon::after {
+      content: '';
+      position: absolute;
+      width: 2px;
+      height: 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.6);
+      transform: rotate(28deg) translateX(1px);
+    }
+
+    .matrix-col__toggles {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    /* 得意/损伤 按钮（类似和风附笺） */
+    .matrix-col__toggle {
+      width: 100%;
+      min-height: 20px;
+      padding: 0 2px;
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid rgba(255,255,255,0.2);
+      font-family: var(--font-ui);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 1px;
+      transition: all 0.1s;
+    }
+
+    .matrix-col__toggle:hover {
+      background: rgba(255,255,255,0.1);
+      color: #fff;
+    }
+
+    .matrix-col__toggle.is-active {
+      background: #fff;
+      color: #000;
+      border-color: #fff;
+    }
+
+    .matrix-col__toggle--specialty.is-active {
+      background: var(--active);
+      color: #fff;
+      border-color: var(--active);
+    }
+
+    .matrix-col__damage-bar {
+      min-height: 8px;
+      background: repeating-linear-gradient(
+        -45deg,
+        rgba(166, 27, 18, 0.4) 0,
+        rgba(166, 27, 18, 0.4) 2px,
+        transparent 2px,
+        transparent 6px
+      );
+      border-bottom: 1px solid var(--panel);
+    }
+
+    .matrix-col.is-damaged-strong .matrix-col__header {
+      background: #000;
+      border-bottom: 2px solid var(--active);
+    }
+
+    .matrix-col.is-damaged-strong .matrix-col__toggle {
+      background: transparent;
+      color: rgba(255,255,255,0.4);
+      border-color: rgba(255,255,255,0.1);
+    }
+
+    .matrix-col.is-damaged-strong .matrix-col__toggle.is-active {
+      background: var(--active);
+      color: #fff;
+      border-color: var(--active);
+    }
+
+    .matrix-grid {
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* 矩阵行 */
+    .matrix-row {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) 42px;
+      align-items: stretch;
+      min-height: 36px;
+      border-bottom: 1px solid var(--line);
+      background: transparent;
+      transition: background 0.1s;
+    }
+
+    .matrix-row:nth-child(even) {
+      background: rgba(0,0,0,0.03);
+    }
+
+    /* 行状态与修饰 */
+    .matrix-row.is-active {
+      background: rgba(0,0,0,0.05);
+    }
+
+    .matrix-row.is-active.category-0 { background: rgba(171, 83, 7, 0.1); border-left: 2px solid var(--cat-0); }
+    .matrix-row.is-active.category-1 { background: rgba(74, 107, 34, 0.1); border-left: 2px solid var(--cat-1); }
+    .matrix-row.is-active.category-2 { background: rgba(143, 18, 18, 0.08); border-left: 2px solid var(--cat-2); }
+    .matrix-row.is-active.category-3 { background: rgba(138, 120, 46, 0.1); border-left: 2px solid var(--cat-3); }
+    .matrix-row.is-active.category-4 { background: rgba(28, 61, 102, 0.08); border-left: 2px solid var(--cat-4); }
+    .matrix-row.is-active.category-5 { background: rgba(78, 53, 110, 0.08); border-left: 2px solid var(--cat-5); }
+
+    .matrix-row.is-active.category-0 .matrix-row__toggle { color: var(--cat-0); }
+    .matrix-row.is-active.category-1 .matrix-row__toggle { color: var(--cat-1); }
+    .matrix-row.is-active.category-2 .matrix-row__toggle { color: var(--cat-2); }
+    .matrix-row.is-active.category-3 .matrix-row__toggle { color: var(--cat-3); }
+    .matrix-row.is-active.category-4 .matrix-row__toggle { color: var(--cat-4); }
+    .matrix-row.is-active.category-5 .matrix-row__toggle { color: var(--cat-5); }
+
+    /* 简洁模式色彩适配 */
+    .sheet.is-compact .matrix-row.is-active.category-0,
+    .sheet.is-compact .matrix-row.is-active.category-1,
+    .sheet.is-compact .matrix-row.is-active.category-2,
+    .sheet.is-compact .matrix-row.is-active.category-3,
+    .sheet.is-compact .matrix-row.is-active.category-4,
+    .sheet.is-compact .matrix-row.is-active.category-5 {
+      background: rgba(0,0,0,0.06);
+      border-left: 2px solid var(--ink);
+    }
+    .sheet.is-compact .matrix-row.is-active .matrix-row__toggle {
+      color: var(--ink);
+    }
+
+    /* 黑点（墨迹印记） */
+    .matrix-row__toggle {
+      border-right: 1px dotted var(--line);
+      background: transparent;
+      font-family: var(--font-main);
+      font-size: 14px;
+      color: transparent; /* 未激活时不显示点，虽然逻辑中未输出点 */
+    }
+
+    .matrix-row__toggle.is-on {
+      background: transparent;
+    }
+
+    .matrix-row__name,
+    .matrix-row__value {
+      min-width: 0;
+      text-align: left;
+      font-family: var(--font-main);
+      transition: all 0.1s;
+    }
+
+    .matrix-row__name {
+      padding: 0 8px;
+      font-size: 15px;
+      font-weight: 900;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      position: relative;
+    }
+
+    .matrix-row__name:hover {
+      background: rgba(0,0,0,0.05);
+      color: var(--active);
+    }
+
+    .matrix-row__value {
+      text-align: center;
+      font-size: 15px;
+      font-weight: 900;
+      border-left: 1px dotted var(--line);
+      background: transparent;
+      position: relative;
+    }
+
+    .matrix-row__value:hover {
+      background: var(--roll);
+      color: var(--roll-ink);
+    }
+
+    /* 损伤行的强覆盖感（横线划掉） */
+    .matrix-row.is-damaged-strong {
+      background: transparent;
+      border-bottom: 1px solid #333;
+    }
+
+    .matrix-row.is-damaged-strong .matrix-row__toggle {
+      border-right-color: #333;
+      color: #666;
+    }
+
+    .matrix-row.is-damaged-strong .matrix-row__name {
+      color: #666;
+      text-decoration: line-through; /* 划线作废视觉 */
+      opacity: 1;
+    }
+
+    .matrix-row.is-damaged-strong .matrix-row__name:hover {
+      background: transparent;
+      color: var(--active);
+    }
+
+    .matrix-row.is-damaged-strong .matrix-row__value {
+      color: #888;
+      border-left-color: #333;
+    }
+
+    .matrix-row.is-damaged-strong .matrix-row__value:hover {
+      background: var(--active);
+      color: #fff;
+    }
+
+    /* 列底难度提示 */
+    .matrix-col__footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      border-top: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+      font-family: var(--font-ui);
+      font-size: 13px;
+      color: var(--ink);
+    }
+
+    .matrix-col.is-damaged-strong .matrix-col__footer {
+      background: #111;
+      color: #666;
+      border-top-color: #333;
+    }
+
+    /* 操作工具栏 */
+    .matrix-tools {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+      padding: 12px 16px;
+      font-family: var(--font-ui);
+    }
+
+    .matrix-tools__group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .matrix-help-btn {
+      width: 24px;
+      min-width: 24px;
+      min-height: 24px;
+      padding: 0;
+      border-radius: 0;
+      background: var(--paper-strong);
+      border: 1px solid var(--line-strong);
+      color: var(--ink);
+      font-family: var(--font-ui);
+      font-size: 13px;
+      font-weight: bold;
+      line-height: 1;
+      box-shadow: 1px 1px 0 rgba(26,23,20,0.2);
+    }
+
+    .matrix-help-btn:hover,
+    .matrix-help-btn.is-active {
+      background: var(--panel);
+      border-color: var(--panel);
+      color: #fff;
+      transform: translate(-1px, -1px);
+      box-shadow: 2px 2px 0 rgba(26,23,20,0.3);
+    }
+
+    .matrix-help-text {
+      font-size: 13px;
+      color: var(--ink-dim);
+    }
+
+    .gap-btn {
+      min-width: 32px;
+    }
+
+    .mini-btn.is-active,
+    .gap-btn.is-active {
+      background: var(--roll);
+      color: var(--roll-ink);
+      border-color: var(--roll);
+    }
+
+    .gap-summary {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      padding: 4px 10px;
+      border-radius: 0;
+      background: var(--paper-strong);
+      border: 1px solid var(--line-strong);
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    .gap-summary.is-muted {
+      background: rgba(166, 27, 18, 0.05);
+      border-color: var(--active);
+      color: var(--active);
+    }
+
+    .gap-edge-track {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 6px;
+      border-radius: 0;
+      background: var(--paper-strong);
+      border: 1px solid var(--line-strong);
+    }
+
+    .gap-edge {
+      width: 34px;
+      min-height: 20px;
+      border-radius: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: bold;
+      line-height: 1;
+      color: #fff;
+      background: rgba(166, 27, 18, 0.8);
+      border: 1px solid rgba(0,0,0,0.3);
+    }
+
+    .gap-edge.is-open {
+      background: rgba(74, 107, 34, 0.8);
+      color: #fff;
+    }
+
+    /* 损伤角标：低饱和暗色提示 */
+    .damage-corner {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 0;
+      height: 0;
+      border-top: 12px solid rgba(58, 28, 28, 0.48);
+      border-left: 14px solid transparent;
+      filter: saturate(0.45);
+      pointer-events: none;
+    }
+
+    /* 栏目区块 (忍法/背景/忍具) */
+    .section-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .section-card {
+      overflow: hidden;
+    }
+
+    .section-card__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 12px 16px;
+      background: var(--panel);
+      color: #fff;
+      border-bottom: 2px solid var(--line-strong);
+    }
+
+    .section-card__title {
+      font-size: 16px;
+      font-weight: 900;
+      letter-spacing: 2px;
+      font-family: var(--font-main);
+    }
+
+    .section-card__actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .section-card__actions .mini-btn {
+      min-width: 74px;
+      min-height: 30px;
+      background: var(--paper);
+      border-color: #fff;
+      color: var(--ink);
+    }
+
+    .section-card__body {
+      padding: 12px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+    }
+
+    .section-card__body--scroll {
+      grid-template-columns: minmax(0, 1fr);
+      max-height: 382px;
+      overflow-y: auto;
+      align-content: start;
+    }
+
+    /* 记录槽按钮：和风附笺质感 */
+    .slot-btn {
+      min-height: 48px;
+      padding: 10px 12px;
+      border-radius: 0;
+      text-align: left;
+      background: var(--paper-strong);
+      border: 1px solid var(--line);
+      box-shadow: 2px 2px 0 rgba(26,23,20,0.05);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      justify-content: center;
+      transition: all 0.1s;
+      position: relative;
+    }
+
+    .slot-btn:hover {
+      border-color: var(--line-strong);
+      background: #fff;
+      transform: translate(-1px, -1px);
+      box-shadow: 3px 3px 0 rgba(26,23,20,0.1);
+    }
+
+    .slot-btn__index {
+      font-family: var(--font-ui);
+      font-size: 12px;
+      color: var(--active);
+      font-weight: bold;
+      border-bottom: 1px dotted var(--line);
+      padding-bottom: 2px;
+    }
+
+    .slot-btn__text {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      overflow: hidden;
+      font-size: 14px;
+      line-height: 1.4;
+      min-height: 39px;
+      word-break: break-all;
+      white-space: normal;
+      font-family: var(--font-main);
+    }
+
+    .tool-slot .slot-btn__text {
+      font-size: 18px;
+      font-weight: 900;
+      line-height: 1.35;
+    }
+
+    .tool-slot {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 118px;
+      gap: 10px;
+      align-items: stretch;
+      min-height: 86px;
+    }
+
+    .tool-slot__main {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      justify-content: center;
+    }
+
+    .tool-slot__count-wrap {
+      align-self: stretch;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 6px;
+      padding-left: 10px;
+      border-left: 1px dotted var(--line);
+      min-height: 100%;
+    }
+
+    .tool-slot__meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--ink-dim);
+      border-top: 1px dotted var(--line);
+      padding-top: 4px;
+    }
+
+    .tool-slot__kind {
+      font-family: var(--font-ui);
+      letter-spacing: 1px;
+    }
+
+    .tool-slot__count {
+      color: var(--active);
+      font-weight: 900;
+      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .tool-slot__count-label {
+      color: var(--active);
+      font-weight: 900;
+      font-family: var(--font-ui);
+      font-size: 12px;
+      letter-spacing: 1px;
+    }
+
+    .tool-slot__inline-input {
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      background: rgba(255,255,255,0.85);
+      padding: 6px 8px;
+      font-size: 14px;
+      font-family: var(--font-main);
+      color: var(--ink);
+    }
+
+    .tool-slot__inline-input--count {
+      width: 100%;
+      text-align: center;
+      font-size: 20px;
+      font-weight: 900;
+      padding: 8px 6px;
+    }
+
+    .slot-btn.is-empty .slot-btn__text {
+      color: var(--ink-dim);
+      font-style: normal;
+    }
+
+    .empty-tip {
+      padding: 24px 16px;
+      text-align: center;
+      color: var(--ink-dim);
+      background: transparent;
+      border: 1px dashed var(--line);
+      font-family: var(--font-ui);
+    }
+
+    /* 浮窗：压迫感与日式复古弹出窗 */
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(2px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 20;
+    }
+
+    .dialog {
+      width: min(480px, 100%);
+      background: var(--paper-strong);
+      border: 2px solid var(--line-strong);
+      border-radius: 0;
+      box-shadow: 8px 8px 0 rgba(0,0,0,0.8);
+      overflow: hidden;
+    }
+
+    .dialog__header {
+      background: var(--panel);
+      color: #fff;
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border-bottom: 2px solid var(--line-strong);
+    }
+
+    .dialog__title {
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: 2px;
+      font-family: var(--font-main);
+    }
+
+    .dialog__header .dialog-btn {
+      min-height: 28px;
+      padding: 0 10px;
+      background: transparent;
+      border-color: rgba(255,255,255,0.4);
+      color: #fff;
+    }
+
+    .dialog__header .dialog-btn:hover {
+      background: #fff;
+      color: var(--ink);
+    }
+
+    .dialog__body {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .dialog__footer {
+      padding: 0 16px 16px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .field-label {
+      font-family: var(--font-ui);
+      font-size: 13px;
+      color: var(--ink);
+      font-weight: bold;
+    }
+
+    /* 输入框：内嵌感 */
+    .field-input,
+    .field-textarea {
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: 0;
+      background: var(--paper-strong);
+      box-shadow: inset 2px 2px 0 rgba(26,23,20,0.05);
+      padding: 12px 14px;
+      color: var(--ink);
+      font-size: 15px;
+      font-family: var(--font-main);
+      transition: all 0.1s;
+    }
+
+    .field-input:focus,
+    .field-textarea:focus {
+      border-color: var(--active);
+      box-shadow: inset 2px 2px 0 rgba(166, 27, 18, 0.1);
+    }
+
+    .field-textarea {
+      min-height: 120px;
+      resize: vertical;
+    }
+
+    .tool-editor-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 108px;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .tool-editor-grid.is-fixed {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .tool-editor-readonly {
+      padding: 12px 14px;
+      border: 1px solid var(--line-strong);
+      background: rgba(0,0,0,0.03);
+      font-size: 15px;
+      color: var(--ink);
+    }
+
+    .modifier-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .modifier-btn {
+      min-height: 36px;
+      border-radius: 0;
+      border: 1px solid var(--line-strong);
+      background: var(--paper-strong);
+      font-family: var(--font-main);
+      font-size: 15px;
+      font-weight: 900;
+      box-shadow: 2px 2px 0 rgba(26,23,20,0.1);
+      transition: all 0.1s;
+    }
+
+    .modifier-btn.is-active,
+    .modifier-btn:hover {
+      background: var(--roll);
+      color: var(--roll-ink);
+      border-color: var(--roll);
+      transform: translate(-1px, -1px);
+      box-shadow: 3px 3px 0 rgba(26,23,20,0.2);
+    }
+
+    .modifier-btn:active {
+      transform: translate(1px, 1px);
+      box-shadow: 0 0 0 transparent;
+    }
+
+    .formula-preview {
+      border-radius: 0;
+      padding: 12px 14px;
+      background: rgba(0,0,0,0.03);
+      border: 1px dashed var(--line-strong);
+      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.5;
+      word-break: break-all;
+      color: var(--ink);
+    }
+
+    .dialog-btn {
+      min-height: 36px;
+      padding: 0 18px;
+      border-radius: 0;
+      background: var(--paper-strong);
+      border: 1px solid var(--line-strong);
+      font-family: var(--font-main);
+      font-size: 14px;
+      font-weight: 900;
+      box-shadow: 2px 2px 0 rgba(26,23,20,0.15);
+      transition: all 0.1s;
+    }
+    
+    .dialog-btn:hover {
+      transform: translate(-1px, -1px);
+      box-shadow: 3px 3px 0 rgba(26,23,20,0.25);
+    }
+
+    .dialog-btn:active {
+      transform: translate(1px, 1px);
+      box-shadow: 0 0 0 transparent;
+    }
+
+    .dialog-btn--primary {
+      background: var(--active);
+      border-color: var(--active);
+      color: #fff;
+    }
+
+    /* 移动端/窄屏响应式修饰 */
+    .sheet.is-narrow-layout .matrix-scroll {
+      padding-bottom: 8px;
+      scrollbar-color: var(--line) transparent;
+      cursor: grab;
+    }
+
+    .sheet.is-narrow-layout .matrix-scroll::-webkit-scrollbar {
+      height: 6px;
+    }
+
+    .sheet.is-narrow-layout .matrix-scroll::-webkit-scrollbar-thumb {
+      background: var(--line);
+    }
+
+    .sheet.is-narrow-layout .matrix-row {
+      grid-template-columns: 20px minmax(54px, 1fr) 36px;
+    }
+
+    .sheet.is-narrow-layout .matrix-row__name {
+      padding: 0 4px;
+      font-size: 14px;
+    }
+
+    .sheet.is-narrow-layout .matrix-row__value {
+      font-size: 14px;
+    }
+
+    .sheet.is-narrow-layout .section-card__body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .sheet.is-narrow-layout .section-card__body--scroll {
+      max-height: 320px;
+    }
+
+    .sheet.is-narrow-layout .tool-editor-grid,
+    .sheet.is-narrow-layout .tool-editor-grid.is-fixed {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .sheet.is-narrow-layout .summary__top,
+    .sheet.is-narrow-layout .summary__bottom,
+    .sheet.is-narrow-layout .matrix-tools {
+      align-items: stretch;
+    }
+
+    @media (max-width: 720px) {
+      body {
+        padding: 10px;
+      }
+
+      .summary__name {
+        font-size: 20px;
+      }
+
+      .matrix-scroll {
+        padding-bottom: 8px;
+        scrollbar-color: var(--line) transparent;
+        cursor: grab;
+      }
+
+      .matrix-scroll::-webkit-scrollbar {
+        height: 6px;
+      }
+
+      .matrix-scroll::-webkit-scrollbar-thumb {
+        background: var(--line);
+      }
+
+      .matrix-row {
+        grid-template-columns: 20px minmax(54px, 1fr) 36px;
+      }
+
+      .matrix-row__name {
+        padding: 0 4px;
+        font-size: 14px;
+      }
+
+      .matrix-row__value {
+        font-size: 14px;
+      }
+
+      .modifier-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 520px) {
+      .section-card__body {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .summary__top,
+      .summary__bottom,
+      .matrix-tools {
+        align-items: stretch;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    var _windowId = null;
+    var _rollDispatchMode = 'default';
+
+    function postEvent(action, payload) {
+      if (!_windowId) return;
+      window.parent.postMessage({
+        type: 'SEALCHAT_EVENT',
+        version: 1,
+        windowId: _windowId,
+        action: action,
+        payload: payload
+      }, '*');
+    }
+
+    window.sealchat = {
+      onUpdate: function (cb) {
+        window.addEventListener('message', function (e) {
+          if (e.source !== window.parent) return;
+          if (e.data && e.data.type === 'SEALCHAT_UPDATE') {
+            _windowId = e.data.payload.windowId;
+            cb(e.data.payload);
+          }
+        });
+      },
+      setRollDispatchMode: function (mode) {
+        _rollDispatchMode = mode === 'template' ? 'template' : 'default';
+      },
+      setRollMode: function (mode) {
+        _rollDispatchMode = mode === 'template' ? 'template' : 'default';
+      },
+      roll: function (template, label, args) {
+        postEvent('ROLL_DICE', {
+          roll: {
+            template: template,
+            label: label || '',
+            args: args || {},
+            dispatchMode: _rollDispatchMode
+          }
+        });
+      },
+      updateAttrs: function (attrs) {
+        postEvent('UPDATE_ATTRS', { attrs: attrs });
+      }
+    };
+
+    sealchat.setRollDispatchMode('template');
+
+    const SHINOBI_META_KEY = '$忍神';
+    var CATEGORIES = ['器术', '体术', '忍术', '谋术', '战术', '妖术'];
+    var SKILL_MATRIX = {
+      器术: ['机关术', '火术', '水术', '针术', '藏兵术', '衣装术', '绳术', '登术', '拷问术', '坏器术', '挖掘术'],
+      体术: ['骑乘术', '炮术', '手里剑术', '手练', '身体操术', '步法', '走法', '飞术', '骨法术', '刀术', '怪力'],
+      忍术: ['生存术', '潜伏术', '遁走术', '盗听术', '腹语术', '隐形术', '变装术', '香术', '分身术', '隐蔽术', '第六感'],
+      谋术: ['医术', '毒术', '陷阱术', '调查术', '诈术', '对人术', '游艺', '女忍术', '傀儡术', '流言术', '经济力'],
+      战术: ['兵粮术', '鸟兽术', '野战术', '地利', '意气', '用兵术', '记忆术', '见敌术', '暗号术', '传达术', '人脉'],
+      妖术: ['异形化', '召唤术', '死灵术', '结界术', '封术', '言灵术', '幻术', '瞳术', '千里眼之术', '凭依术', '咒术']
+    };
+    var TRADITIONAL_LABEL_MAP = {
+      器术: '器術',
+      体术: '體術',
+      忍术: '忍術',
+      谋术: '謀術',
+      战术: '戰術',
+      妖术: '妖術',
+      机关术: '絡繰術',
+      火术: '火術',
+      水术: '水術',
+      针术: '針術',
+      藏兵术: '藏兵術',
+      衣装术: '衣裝術',
+      绳术: '繩術',
+      登术: '登術',
+      拷问术: '拷問術',
+      坏器术: '壞器術',
+      挖掘术: '掘削術',
+      骑乘术: '騎乘術',
+      炮术: '砲術',
+      手里剑术: '手裏劍術',
+      手练: '手練',
+      身体操术: '身體操術',
+      步法: '步法',
+      走法: '走法',
+      飞术: '飛術',
+      骨法术: '骨法術',
+      刀术: '刀術',
+      怪力: '怪力',
+      生存术: '生存術',
+      潜伏术: '潛伏術',
+      遁走术: '遁走術',
+      盗听术: '盜聽術',
+      腹语术: '腹話術',
+      隐形术: '隱形術',
+      变装术: '變裝術',
+      香术: '香術',
+      分身术: '分身術',
+      隐蔽术: '隱蔽術',
+      第六感: '第六感',
+      医术: '醫術',
+      毒术: '毒術',
+      陷阱术: '陷阱術',
+      调查术: '調查術',
+      诈术: '詐術',
+      对人术: '對人術',
+      游艺: '遊藝',
+      女忍术: '女忍術',
+      傀儡术: '傀儡術',
+      流言术: '流言術',
+      经济力: '經濟力',
+      兵粮术: '兵糧術',
+      鸟兽术: '鳥獸術',
+      野战术: '野戰術',
+      地利: '地之利',
+      意气: '意氣',
+      用兵术: '用兵術',
+      记忆术: '記憶術',
+      见敌术: '見敵術',
+      暗号术: '暗號術',
+      传达术: '傳達術',
+      人脉: '人脈',
+      异形化: '異形化',
+      召唤术: '召喚術',
+      死灵术: '死靈術',
+      结界术: '結界術',
+      封术: '封術',
+      言灵术: '言靈術',
+      幻术: '幻術',
+      瞳术: '瞳術',
+      千里眼之术: '千里眼之術',
+      凭依术: '憑依術',
+      咒术: '咒術'
+    };
+    var SLOT_CONFIG = {
+      ninpo: { label: '忍法', count: 16, preview: 6 },
+      background: { label: '背景', count: 8, preview: 6 },
+      tool: { label: '忍具', fixed: ['兵粮丸', '神通丸', '遁甲符'], customCount: 5, preview: 8 }
+    };
+    var ROW_COUNT = SKILL_MATRIX[CATEGORIES[0]].length;
+    var GAP_PAIRS = CATEGORIES.map(function (_, idx) { return idx; }).slice(0, CATEGORIES.length - 1);
+    var ALL_SKILLS = [];
+    var SKILL_TO_POS = {};
+
+    CATEGORIES.forEach(function (category, col) {
+      SKILL_MATRIX[category].forEach(function (skill, row) {
+        ALL_SKILLS.push(skill);
+        SKILL_TO_POS[skill] = { row: row, col: col, category: category };
+      });
+    });
+
+    var state = {
+      name: '',
+      avatarUrl: '',
+      attrs: {},
+      meta: null,
+      lastIncomingHash: '',
+      lastSentPatchHash: '',
+      pendingPatchHash: '',
+      pendingPatch: null,
+      narrowLayout: false,
+      dragScroll: {
+        active: false,
+        moved: false,
+        suppressClick: false,
+        startX: 0,
+        startScrollLeft: 0,
+        scroller: null
+      },
+      helpUi: {
+        matrixHintOpen: false
+      },
+      toolInlineEditor: {
+        open: false,
+        kind: '',
+        index: -1,
+        type: '',
+        count: '0'
+      },
+      matrixScrollLeft: 0,
+      sectionScrollTop: {},
+      touchToolEdit: {
+        time: 0,
+        kind: '',
+        index: -1
+      },
+      sectionUi: {
+        ninpo: { collapsed: false, expanded: false },
+        background: { collapsed: false, expanded: false },
+        tool: { collapsed: false, expanded: false }
+      },
+      rollDialog: {
+        open: false,
+        skill: '',
+        targetValue: 0,
+        modifier: ''
+      },
+      editorDialog: {
+        open: false,
+        kind: 'text',
+        title: '',
+        key: '',
+        group: '',
+        index: -1,
+        value: ''
+      }
+    };
+
+    function escapeHtml(value) {
+      var div = document.createElement('div');
+      div.textContent = value == null ? '' : String(value);
+      return div.innerHTML;
+    }
+
+    function stableClone(value) {
+      if (Array.isArray(value)) {
+        return value.map(stableClone);
+      }
+      if (value && typeof value === 'object') {
+        var out = {};
+        Object.keys(value).sort().forEach(function (key) {
+          out[key] = stableClone(value[key]);
+        });
+        return out;
+      }
+      return value;
+    }
+
+    function stableStringify(value) {
+      try {
+        return JSON.stringify(stableClone(value));
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function deepEqual(a, b) {
+      return stableStringify(a) === stableStringify(b);
+    }
+
+    function clamp(value, min, max) {
+      var safe = Number(value);
+      if (!Number.isFinite(safe)) safe = min;
+      return Math.min(Math.max(safe, min), max);
+    }
+
+    function toNumber(value, fallback) {
+      var num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    }
+
+    function toInteger(value, fallback) {
+      var num = parseInt(value, 10);
+      return Number.isFinite(num) ? num : fallback;
+    }
+
+    function normalizeBinary(value) {
+      return Number(value) ? 1 : 0;
+    }
+
+    function createEmptySlots(count) {
+      var result = [];
+      for (var i = 0; i < count; i += 1) result.push('');
+      return result;
+    }
+
+    function createEmptyToolEntries(count) {
+      var result = [];
+      for (var i = 0; i < count; i += 1) {
+        result.push({ type: '', count: 0 });
+      }
+      return result;
+    }
+
+    function createDefaultToolSlots() {
+      return {
+        fixed: SLOT_CONFIG.tool.fixed.map(function (name) {
+          return { type: name, count: 0 };
+        }),
+        custom: createEmptyToolEntries(SLOT_CONFIG.tool.customCount)
+      };
+    }
+
+    function createDefaultSwitchMap(keys) {
+      var map = {};
+      keys.forEach(function (key) {
+        map[key] = 0;
+      });
+      return map;
+    }
+
+    function createDefaultGapMap() {
+      return {
+        0: 0,
+        1: 0,
+        2: 0,
+        3: 0,
+        4: 0,
+        5: 0
+      };
+    }
+
+    function createDefaultMeta() {
+      return {
+        version: 1,
+        locale: 'zh-Hant',
+        compactMode: 0,
+        specialtySwitches: createDefaultSwitchMap(CATEGORIES),
+        damageSwitches: createDefaultSwitchMap(CATEGORIES),
+        skillSwitches: createDefaultSwitchMap(ALL_SKILLS),
+        connectivity: {
+          topBottom: 0,
+          leftRight: 0
+        },
+        manualGaps: createDefaultGapMap(),
+        slots: {
+          ninpo: createEmptySlots(16),
+          background: createEmptySlots(8),
+          tool: createDefaultToolSlots()
+        }
+      };
+    }
+
+    function normalizeSlotArray(value, count) {
+      var result = Array.isArray(value) ? value.slice(0, count) : [];
+      while (result.length < count) result.push('');
+      return result.map(function (item) { return item == null ? '' : String(item); });
+    }
+
+    function normalizeToolCount(value) {
+      return Math.max(0, toInteger(value, 0));
+    }
+
+    function normalizeToolEntry(value, fixedType) {
+      var source = value && typeof value === 'object' ? value : {};
+      return {
+        type: fixedType != null ? String(fixedType) : String(source.type == null ? '' : source.type).trim(),
+        count: normalizeToolCount(source.count)
+      };
+    }
+
+    function normalizeToolSlots(value) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return createDefaultToolSlots();
+      }
+      var source = value;
+      var fixed = Array.isArray(source.fixed) ? source.fixed.slice(0, SLOT_CONFIG.tool.fixed.length) : [];
+      var custom = Array.isArray(source.custom) ? source.custom.slice(0, SLOT_CONFIG.tool.customCount) : [];
+      while (fixed.length < SLOT_CONFIG.tool.fixed.length) fixed.push({});
+      while (custom.length < SLOT_CONFIG.tool.customCount) custom.push({});
+      return {
+        fixed: fixed.map(function (entry, index) {
+          return normalizeToolEntry(entry, SLOT_CONFIG.tool.fixed[index]);
+        }),
+        custom: custom.map(function (entry) {
+          return normalizeToolEntry(entry, null);
+        })
+      };
+    }
+
+    function normalizeMeta(raw) {
+      var meta = createDefaultMeta();
+      var source = raw && typeof raw === 'object' ? raw : {};
+      meta.version = 1;
+      meta.locale = source.locale === 'zh-Hans' ? 'zh-Hans' : 'zh-Hant';
+      meta.compactMode = normalizeBinary(source.compactMode);
+
+      CATEGORIES.forEach(function (category) {
+        meta.specialtySwitches[category] = normalizeBinary(source.specialtySwitches && source.specialtySwitches[category]);
+        meta.damageSwitches[category] = normalizeBinary(source.damageSwitches && source.damageSwitches[category]);
+      });
+
+      ALL_SKILLS.forEach(function (skill) {
+        meta.skillSwitches[skill] = normalizeBinary(source.skillSwitches && source.skillSwitches[skill]);
+      });
+
+      meta.connectivity.topBottom = normalizeBinary(source.connectivity && source.connectivity.topBottom);
+      meta.connectivity.leftRight = normalizeBinary(source.connectivity && source.connectivity.leftRight);
+
+      Object.keys(meta.manualGaps).forEach(function (key) {
+        meta.manualGaps[key] = normalizeBinary(source.manualGaps && source.manualGaps[key]);
+      });
+
+      meta.slots.ninpo = normalizeSlotArray(source.slots && source.slots.ninpo, SLOT_CONFIG.ninpo.count);
+      meta.slots.background = normalizeSlotArray(source.slots && source.slots.background, SLOT_CONFIG.background.count);
+      meta.slots.tool = normalizeToolSlots(source.slots && source.slots.tool);
+      return meta;
+    }
+
+    function getDisplayLabel(key, locale) {
+      if (locale === 'zh-Hant' && TRADITIONAL_LABEL_MAP[key]) {
+        return TRADITIONAL_LABEL_MAP[key];
+      }
+      return key;
+    }
+
+    function getDamageCategories(meta) {
+      return CATEGORIES.filter(function (category) {
+        return meta.damageSwitches[category] === 1;
+      });
+    }
+
+    function getDamageText(meta) {
+      var damaged = getDamageCategories(meta);
+      return damaged.length ? damaged.join('、') : '无';
+    }
+
+    function getLocalizedDamageText(meta) {
+      var damaged = getDamageCategories(meta);
+      if (!damaged.length) return meta.locale === 'zh-Hant' ? '無' : '无';
+      return damaged.map(function (category) {
+        return getDamageTagLabel(category, meta);
+      }).join('、');
+    }
+
+    function getDamageTagLabel(category, meta) {
+      if (category === '器术') return '器';
+      if (category === '体术') return meta.locale === 'zh-Hant' ? '體' : '体';
+      if (category === '忍术') return '忍';
+      if (category === '谋术') return meta.locale === 'zh-Hant' ? '謀' : '谋';
+      if (category === '战术') return meta.locale === 'zh-Hant' ? '戰' : '战';
+      if (category === '妖术') return '妖';
+      return getDisplayLabel(category, meta.locale);
+    }
+
+    function getSpecialtyCategories(meta) {
+      return CATEGORIES.filter(function (category) {
+        return meta.specialtySwitches[category] === 1;
+      });
+    }
+
+    function getManualGapIndices(meta) {
+      return Object.keys(meta.manualGaps).filter(function (key) {
+        return meta.manualGaps[key] === 1;
+      }).map(function (key) {
+        return Number(key);
+      }).sort(function (a, b) {
+        return a - b;
+      });
+    }
+
+    function getGapSummaryText(meta) {
+      var specialtyCount = getSpecialtyCategories(meta).length;
+      var gapIndices = getManualGapIndices(meta);
+      if (specialtyCount > 0) {
+        return '得意分野优先；清空得意后手动空隙生效';
+      }
+      if (!gapIndices.length) {
+        return '手动空隙：未设置';
+      }
+      return '手动空隙：' + gapIndices.map(function (idx) { return idx + 1; }).join('、');
+    }
+
+    function getGapEdgeLabel(index, wrapEnabled) {
+      if (wrapEnabled && index === GAP_PAIRS.length) {
+        return '环';
+      }
+      return String(index + 1);
+    }
+
+    function attrsContainsPatch(attrs, patch) {
+      if (!patch || typeof patch !== 'object') return true;
+      return Object.keys(patch).every(function (key) {
+        return deepEqual(attrs ? attrs[key] : undefined, patch[key]);
+      });
+    }
+
+    function buildDerivedPatch(attrs) {
+      var patch = {};
+      var meta = normalizeMeta(attrs && attrs[SHINOBI_META_KEY]);
+      var rawMeta = attrs && attrs[SHINOBI_META_KEY];
+      if (!deepEqual(meta, rawMeta || {})) {
+        patch[SHINOBI_META_KEY] = meta;
+      }
+
+      var extraHp = toInteger(attrs && attrs['额外生命值'], 0);
+      var hpMax = 6 + extraHp;
+      var damageCount = getDamageCategories(meta).length;
+      var hpCurrent = clamp(hpMax - damageCount, 0, hpMax);
+
+      if (toInteger(attrs && attrs['生命值上限'], hpMax) !== hpMax || attrs['生命值上限'] == null) {
+        patch['生命值上限'] = hpMax;
+      }
+      if (toInteger(attrs && attrs['生命值'], hpCurrent) !== hpCurrent || attrs['生命值'] == null) {
+        patch['生命值'] = hpCurrent;
+      }
+
+      var damageText = getDamageText(meta);
+      if (String(attrs && attrs['损伤分野'] != null ? attrs['损伤分野'] : '') !== damageText) {
+        patch['损伤分野'] = damageText;
+      }
+      return patch;
+    }
+
+    function sendPatch(patch) {
+      if (!patch || !Object.keys(patch).length) return;
+      if (attrsContainsPatch(state.attrs, patch)) return;
+      var patchHash = stableStringify(patch);
+      if (!patchHash) return;
+      if (patchHash === state.pendingPatchHash) return;
+      state.lastSentPatchHash = patchHash;
+      state.pendingPatchHash = patchHash;
+      state.pendingPatch = patch;
+      sealchat.updateAttrs(patch);
+    }
+
+    function applyMetaMutation(mutator) {
+      var currentMeta = normalizeMeta(state.meta || state.attrs[SHINOBI_META_KEY]);
+      var nextMeta = normalizeMeta(currentMeta);
+      mutator(nextMeta);
+      nextMeta = normalizeMeta(nextMeta);
+      if (deepEqual(currentMeta, nextMeta)) return;
+      var patch = {};
+      patch[SHINOBI_META_KEY] = nextMeta;
+      sendPatch(patch);
+    }
+
+    function applyRootNumberPatch(key, rawValue) {
+      var next = toInteger(rawValue, 0);
+      var patch = {};
+      patch[key] = next;
+      sendPatch(patch);
+    }
+
+    function applySlotPatch(group, index, value) {
+      var meta = normalizeMeta(state.meta || state.attrs[SHINOBI_META_KEY]);
+      var slots = meta.slots[group].slice();
+      slots[index] = value == null ? '' : String(value);
+      var patchMeta = normalizeMeta(meta);
+      patchMeta.slots[group] = slots;
+      var patch = {};
+      patch[SHINOBI_META_KEY] = patchMeta;
+      sendPatch(patch);
+    }
+
+    function applyToolPatch(kind, index, value) {
+      var meta = normalizeMeta(state.meta || state.attrs[SHINOBI_META_KEY]);
+      var tools = normalizeToolSlots(meta.slots.tool);
+      var nextEntry = normalizeToolEntry(value, kind === 'fixed' ? SLOT_CONFIG.tool.fixed[index] : null);
+      if (kind === 'fixed') {
+        if (index < 0 || index >= tools.fixed.length) return;
+        tools.fixed[index] = nextEntry;
+      } else if (kind === 'custom') {
+        if (index < 0 || index >= tools.custom.length) return;
+        tools.custom[index] = nextEntry;
+      } else {
+        return;
+      }
+      var patchMeta = normalizeMeta(meta);
+      patchMeta.slots.tool = tools;
+      var patch = {};
+      patch[SHINOBI_META_KEY] = patchMeta;
+      sendPatch(patch);
+    }
+
+    function SkillTable(meta) {
+      this.meta = normalizeMeta(meta);
+      this.specialtyCols = CATEGORIES.filter(function (category) {
+        return this.meta.specialtySwitches[category] === 1;
+      }, this).map(function (category) {
+        return CATEGORIES.indexOf(category);
+      });
+      this.disabledCols = new Set(CATEGORIES.filter(function (category) {
+        return this.meta.damageSwitches[category] === 1;
+      }, this).map(function (category) {
+        return CATEGORIES.indexOf(category);
+      }));
+      this.mastered = new Set(ALL_SKILLS.filter(function (skill) {
+        return this.meta.skillSwitches[skill] === 1;
+      }, this));
+      this.wrapTopBottom = !!this.meta.connectivity.topBottom;
+      this.wrapLeftRight = !!this.meta.connectivity.leftRight;
+      this.manualGaps = Object.keys(this.meta.manualGaps).filter(function (key) {
+        return this.meta.manualGaps[key] === 1;
+      }, this).map(function (key) {
+        return Number(key);
+      });
+      this._refresh();
+    }
+
+    SkillTable.prototype._refresh = function () {
+      this.gaps = this._computeGaps();
+      this.activeSkills = new Set(Array.from(this.mastered).filter(function (skill) {
+        var info = SKILL_TO_POS[skill];
+        return !!info && !this.disabledCols.has(info.col);
+      }, this));
+      this.distances = this._computeDistances();
+    };
+
+    SkillTable.prototype._computeGaps = function () {
+      var totalPairs = GAP_PAIRS.length + (this.wrapLeftRight ? 1 : 0);
+      var gaps = [];
+      var i;
+      for (i = 0; i < totalPairs; i += 1) gaps.push(true);
+      if (this.manualGaps.length > 0 && this.specialtyCols.length === 0) {
+        this.manualGaps.forEach(function (idx) {
+          if (idx >= 0 && idx < totalPairs) {
+            gaps[idx] = false;
+          }
+        });
+        return gaps;
+      }
+      var specialties = new Set(this.specialtyCols);
+      specialties.forEach(function (col) {
+        if (col > 0) gaps[col - 1] = false;
+        if (col < CATEGORIES.length - 1) gaps[col] = false;
+        if (this.wrapLeftRight && (col === 0 || col === CATEGORIES.length - 1)) {
+          gaps[totalPairs - 1] = false;
+        }
+      }, this);
+      return gaps;
+    };
+
+    SkillTable.prototype._neighbors = function (row, col) {
+      var neighbors = [];
+      if (row > 0) {
+        neighbors.push({ row: row - 1, col: col, cost: 1 });
+      } else if (this.wrapTopBottom) {
+        neighbors.push({ row: ROW_COUNT - 1, col: col, cost: 1 });
+      }
+      if (row < ROW_COUNT - 1) {
+        neighbors.push({ row: row + 1, col: col, cost: 1 });
+      } else if (this.wrapTopBottom) {
+        neighbors.push({ row: 0, col: col, cost: 1 });
+      }
+      if (col > 0) {
+        neighbors.push({ row: row, col: col - 1, cost: this.gaps[col - 1] ? 2 : 1 });
+      } else if (this.wrapLeftRight) {
+        neighbors.push({ row: row, col: CATEGORIES.length - 1, cost: this.gaps[this.gaps.length - 1] ? 2 : 1 });
+      }
+      if (col < CATEGORIES.length - 1) {
+        neighbors.push({ row: row, col: col + 1, cost: this.gaps[col] ? 2 : 1 });
+      } else if (this.wrapLeftRight) {
+        neighbors.push({ row: row, col: 0, cost: this.gaps[this.gaps.length - 1] ? 2 : 1 });
+      }
+      return neighbors;
+    };
+
+    SkillTable.prototype._computeDistances = function () {
+      var dist = {};
+      var queue = [];
+      this.activeSkills.forEach(function (skill) {
+        var pos = SKILL_TO_POS[skill];
+        if (!pos) return;
+        var key = pos.row + '_' + pos.col;
+        dist[key] = 0;
+        queue.push({ row: pos.row, col: pos.col, cost: 0 });
+      });
+
+      var visited = {};
+      while (queue.length > 0) {
+        queue.sort(function (a, b) { return a.cost - b.cost; });
+        var current = queue.shift();
+        var currentKey = current.row + '_' + current.col;
+        if (visited[currentKey]) continue;
+        visited[currentKey] = true;
+        this._neighbors(current.row, current.col).forEach(function (neighbor) {
+          var nextKey = neighbor.row + '_' + neighbor.col;
+          var nextCost = current.cost + neighbor.cost;
+          if (dist[nextKey] === undefined || nextCost < dist[nextKey]) {
+            dist[nextKey] = nextCost;
+            queue.push({ row: neighbor.row, col: neighbor.col, cost: nextCost });
+          }
+        });
+      }
+
+      var result = {};
+      CATEGORIES.forEach(function (category, col) {
+        SKILL_MATRIX[category].forEach(function (skill, row) {
+          var key = row + '_' + col;
+          result[skill] = dist[key] !== undefined ? dist[key] : 7;
+        });
+      });
+      return result;
+    };
+
+    SkillTable.prototype.distanceToMastered = function (skill) {
+      return this.distances[skill] !== undefined ? this.distances[skill] : 7;
+    };
+
+    SkillTable.prototype.targetValue = function (skill) {
+      var base = 5 + this.distanceToMastered(skill);
+      return base > 12 ? 12 : base;
+    };
+
+    SkillTable.prototype.averageTarget = function (category) {
+      var skills = SKILL_MATRIX[category] || [];
+      if (!skills.length) return '0.00';
+      var total = 0;
+      skills.forEach(function (skill) {
+        total += this.targetValue(skill);
+      }, this);
+      return (total / skills.length).toFixed(2);
+    };
+
+    function normalizeRollModifier(modifier) {
+      var text = String(modifier == null ? '' : modifier).trim();
+      if (!text) return '';
+      var numeric = Number(text);
+      if (!Number.isFinite(numeric) || numeric === 0) return '';
+      return numeric > 0 ? ('+' + String(numeric)) : String(numeric);
+    }
+
+    function buildShinobiRollExpression(skill, targetValue, modifier) {
+      var parts = ['.sbg'];
+      var normalizedModifier = normalizeRollModifier(modifier);
+      if (normalizedModifier) parts.push(normalizedModifier);
+      parts.push(skill);
+      parts.push(String(targetValue));
+      return parts.join(' ');
+    }
+
+    function getVisibleCount(sectionKey, slots) {
+      var ui = state.sectionUi[sectionKey];
+      if (!ui) return 0;
+      if (ui.collapsed) return 0;
+      return sectionKey === 'tool' ? getToolEntries(slots).length : slots.length;
+    }
+
+    function countFilledSlots(slots) {
+      return (Array.isArray(slots) ? slots : []).filter(function (slot) {
+        return String(slot == null ? '' : slot).trim() !== '';
+      }).length;
+    }
+
+    function getToolEntries(toolSlots) {
+      var normalized = normalizeToolSlots(toolSlots);
+      var entries = [];
+      normalized.fixed.forEach(function (entry, index) {
+        entries.push({
+          kind: 'fixed',
+          index: index,
+          type: entry.type,
+          count: entry.count
+        });
+      });
+      normalized.custom.forEach(function (entry, index) {
+        entries.push({
+          kind: 'custom',
+          index: index,
+          type: entry.type,
+          count: entry.count
+        });
+      });
+      return entries;
+    }
+
+    function hasToolEntryContent(entry) {
+      if (!entry) return false;
+      return String(entry.type == null ? '' : entry.type).trim() !== '' || normalizeToolCount(entry.count) > 0;
+    }
+
+    function countFilledToolSlots(toolSlots) {
+      return getToolEntries(toolSlots).filter(function (entry) {
+        return hasToolEntryContent(entry);
+      }).length;
+    }
+
+    function getToolSlotTitle(entry) {
+      if (!entry) return '编辑忍具';
+      return entry.kind === 'fixed' ? ('编辑' + entry.type) : ('编辑自定义忍具 ' + (entry.index + 1));
+    }
+
+    function getToolSlotDisplayText(entry) {
+      if (!entry) return '';
+      if (entry.kind === 'fixed') return entry.type;
+      return entry.type || '点击填写';
+    }
+
+    function getToolSlotCountText(entry) {
+      return '数量 × ' + String(normalizeToolCount(entry && entry.count));
+    }
+
+    function isToolInlineEditing(kind, index) {
+      return state.toolInlineEditor.open && state.toolInlineEditor.kind === kind && state.toolInlineEditor.index === index;
+    }
+
+    function openToolInlineEditor(kind, index, entry) {
+      state.toolInlineEditor.open = true;
+      state.toolInlineEditor.kind = kind;
+      state.toolInlineEditor.index = index;
+      state.toolInlineEditor.type = String(entry && entry.type != null ? entry.type : '');
+      state.toolInlineEditor.count = String(normalizeToolCount(entry && entry.count));
+      render();
+    }
+
+    function closeToolInlineEditor(shouldRender) {
+      state.toolInlineEditor.open = false;
+      state.toolInlineEditor.kind = '';
+      state.toolInlineEditor.index = -1;
+      state.toolInlineEditor.type = '';
+      state.toolInlineEditor.count = '0';
+      if (shouldRender !== false) {
+        render();
+      }
+    }
+
+    function confirmToolInlineEditor() {
+      if (!state.toolInlineEditor.open || !state.toolInlineEditor.kind || state.toolInlineEditor.index < 0) return;
+      applyToolPatch(state.toolInlineEditor.kind, state.toolInlineEditor.index, {
+        type: state.toolInlineEditor.type,
+        count: state.toolInlineEditor.count
+      });
+      closeToolInlineEditor();
+    }
+
+    function rememberSectionScrollPositions(root) {
+      if (!root || !root.querySelectorAll) return;
+      root.querySelectorAll('.section-card__body--scroll[data-section-body]').forEach(function (body) {
+        var sectionKey = body.dataset.sectionBody;
+        if (!sectionKey) return;
+        state.sectionScrollTop[sectionKey] = body.scrollTop;
+      });
+    }
+
+    function rememberMatrixScrollPosition(root) {
+      if (!root || !root.querySelector) return;
+      var matrixScroll = root.querySelector('.matrix-scroll');
+      if (!matrixScroll) return;
+      state.matrixScrollLeft = matrixScroll.scrollLeft;
+    }
+
+    function restoreSectionScrollPositions(root) {
+      if (!root || !root.querySelectorAll) return;
+      root.querySelectorAll('.section-card__body--scroll[data-section-body]').forEach(function (scrollBody) {
+        var sectionKey = scrollBody.dataset.sectionBody;
+        if (!sectionKey) return;
+        scrollBody.scrollTop = state.sectionScrollTop[sectionKey] || 0;
+      });
+    }
+
+    function restoreMatrixScrollPosition(root) {
+      if (!root || !root.querySelector) return;
+      var matrixScroll = root.querySelector('.matrix-scroll');
+      if (!matrixScroll) return;
+      matrixScroll.scrollLeft = state.matrixScrollLeft || 0;
+    }
+
+    function shouldUseScrollBody(sectionKey, ui) {
+      return !!ui;
+    }
+
+    function syncResponsiveLayout(shouldRender) {
+      var width = Math.min(
+        window.innerWidth || Number.MAX_SAFE_INTEGER,
+        document.documentElement && document.documentElement.clientWidth ? document.documentElement.clientWidth : Number.MAX_SAFE_INTEGER
+      );
+      if (!Number.isFinite(width) || width === Number.MAX_SAFE_INTEGER) {
+        width = window.innerWidth || 0;
+      }
+      var next = width > 0 && width <= 1080;
+      if (state.narrowLayout === next) return;
+      state.narrowLayout = next;
+      if (shouldRender !== false && state.attrs) {
+        render();
+      }
+    }
+
+    function beginMatrixDragScroll(event) {
+      if (!state.narrowLayout || !event || event.button !== 0) return;
+      var target = event.target;
+      if (!target || !target.closest) return;
+      if (target.closest('input, textarea, select, option')) return;
+      var scroller = target.closest('.matrix-scroll');
+      if (!scroller) return;
+      state.dragScroll.active = true;
+      state.dragScroll.moved = false;
+      state.dragScroll.suppressClick = false;
+      state.dragScroll.startX = event.clientX;
+      state.dragScroll.startScrollLeft = scroller.scrollLeft;
+      state.dragScroll.scroller = scroller;
+      scroller.classList.add('is-dragging');
+    }
+
+    function updateMatrixDragScroll(event) {
+      if (!state.dragScroll.active || !state.dragScroll.scroller) return;
+      var deltaX = event.clientX - state.dragScroll.startX;
+      if (!state.dragScroll.moved && Math.abs(deltaX) > 6) {
+        state.dragScroll.moved = true;
+        state.dragScroll.suppressClick = true;
+      }
+      if (!state.dragScroll.moved) return;
+      state.dragScroll.scroller.scrollLeft = state.dragScroll.startScrollLeft - deltaX;
+      event.preventDefault();
+    }
+
+    function endMatrixDragScroll() {
+      if (state.dragScroll.scroller) {
+        state.dragScroll.scroller.classList.remove('is-dragging');
+      }
+      state.dragScroll.active = false;
+      state.dragScroll.moved = false;
+      state.dragScroll.scroller = null;
+    }
+
+    function openRollDialog(skill, targetValue) {
+      state.rollDialog.open = true;
+      state.rollDialog.skill = skill;
+      state.rollDialog.targetValue = targetValue;
+      state.rollDialog.modifier = '';
+      render();
+    }
+
+    function closeRollDialog() {
+      state.rollDialog.open = false;
+      render();
+    }
+
+    function confirmRollDialog() {
+      if (!state.rollDialog.skill) return;
+      var expression = buildShinobiRollExpression(
+        state.rollDialog.skill,
+        state.rollDialog.targetValue,
+        state.rollDialog.modifier
+      );
+      sealchat.roll(expression, getDisplayLabel(state.rollDialog.skill, state.meta.locale) + '检定', {});
+      closeRollDialog();
+    }
+
+    function syncRollExpressionPreview() {
+      var preview = document.getElementById('rollExpressionPreview');
+      if (!preview) return;
+      preview.textContent = buildShinobiRollExpression(
+        state.rollDialog.skill,
+        state.rollDialog.targetValue,
+        state.rollDialog.modifier
+      );
+    }
+
+    function openEditorDialog(kind, title, value, extra) {
+      state.editorDialog.open = true;
+      state.editorDialog.kind = kind;
+      state.editorDialog.title = title;
+      state.editorDialog.key = extra && extra.key ? extra.key : '';
+      state.editorDialog.group = extra && extra.group ? extra.group : '';
+      state.editorDialog.index = extra && typeof extra.index === 'number' ? extra.index : -1;
+      state.editorDialog.value = value == null ? '' : String(value);
+      render();
+    }
+
+    function closeEditorDialog() {
+      state.editorDialog.open = false;
+      render();
+    }
+
+    function confirmEditorDialog() {
+      if (!state.editorDialog.open) return;
+      if (state.editorDialog.kind === 'number' && state.editorDialog.key) {
+        applyRootNumberPatch(state.editorDialog.key, state.editorDialog.value);
+      } else if (state.editorDialog.kind === 'slot' && state.editorDialog.group && state.editorDialog.index >= 0) {
+        applySlotPatch(state.editorDialog.group, state.editorDialog.index, state.editorDialog.value);
+      }
+      closeEditorDialog();
+    }
+
+    function render() {
+      var root = document.getElementById('app');
+      if (!root) return;
+      rememberSectionScrollPositions(root);
+      rememberMatrixScrollPosition(root);
+      syncResponsiveLayout(false);
+      var attrs = state.attrs || {};
+      var meta = normalizeMeta(state.meta || attrs[SHINOBI_META_KEY]);
+      state.meta = meta;
+
+      var table = new SkillTable(meta);
+      var extraHp = toInteger(attrs['额外生命值'], 0);
+      var hpMax = 6 + extraHp;
+      var localeLabel = meta.locale === 'zh-Hant' ? '繁' : '简';
+      var compactLabel = meta.compactMode ? '简洁' : '彩色';
+      var manualGapIndices = getManualGapIndices(meta);
+      var specialtyCategories = getSpecialtyCategories(meta);
+      var damagedCategories = getDamageCategories(meta);
+      var hpCurrent = clamp(hpMax - damagedCategories.length, 0, hpMax);
+      var localizedDamageText = getLocalizedDamageText(meta);
+      var gapButtonCount = meta.connectivity.leftRight ? GAP_PAIRS.length + 1 : GAP_PAIRS.length;
+      var avatarHtml = state.avatarUrl
+        ? '<img class="summary__avatar" src="' + escapeHtml(state.avatarUrl) + '" alt="" />'
+        : '';
+
+      var html = '';
+      html += '<div class="sheet' + (meta.compactMode ? ' is-compact' : '') + (state.narrowLayout ? ' is-narrow-layout' : '') + '">';
+      html += '  <section class="summary">';
+      html += '    <div class="summary__top">';
+      html += '      <div class="summary__identity">' + avatarHtml;
+      html += '        <div class="summary__name">' + escapeHtml(state.name || '未命名角色') + '</div>';
+      html += '      </div>';
+      html += '      <div class="summary__chips">';
+      html += '        <button class="chip chip--toggle' + (meta.locale === 'zh-Hant' ? ' is-active' : '') + '" data-action="toggle-locale">界面：' + escapeHtml(localeLabel) + '</button>';
+      html += '        <button class="chip chip--toggle' + (meta.compactMode ? ' is-active' : '') + '" data-action="toggle-compact-mode">分野：' + escapeHtml(compactLabel) + '</button>';
+      html += '      </div>';
+      html += '    </div>';
+      html += '    <div class="summary__bottom">';
+      html += '      <div class="hp-panel">';
+      html += '        <span class="field-label">生命值</span>';
+      html += '        <span class="hp-panel__value">' + escapeHtml(String(hpCurrent)) + ' / ' + escapeHtml(String(hpMax)) + '</span>';
+      html += '        <div class="hp-panel__meta">';
+      html += '          <span class="chip">自动</span>';
+      html += '          <button class="mini-btn" data-action="edit-number" data-key="额外生命值">额外+' + escapeHtml(String(extraHp)) + '</button>';
+      html += '        </div>';
+      html += '      </div>';
+      html += '      <div class="summary__chips">';
+      html += '        <span class="chip chip--danger">损伤分野：' + escapeHtml(localizedDamageText) + '</span>';
+      html += '        <span class="chip chip--danger">损伤列数：' + escapeHtml(String(damagedCategories.length)) + '</span>';
+      html += '        <span class="chip">上下连通：' + (meta.connectivity.topBottom ? '开' : '关') + '</span>';
+      html += '        <span class="chip">左右连通：' + (meta.connectivity.leftRight ? '开' : '关') + '</span>';
+      html += '      </div>';
+      html += '    </div>';
+      html += '  </section>';
+
+      html += '  <section class="matrix-tools">';
+      html += '    <div class="matrix-tools__group">';
+      html += '      <strong>连通</strong>';
+      html += '      <button class="mini-btn' + (meta.connectivity.topBottom ? ' is-active' : '') + '" data-action="toggle-connectivity" data-key="topBottom">上下</button>';
+      html += '      <button class="mini-btn' + (meta.connectivity.leftRight ? ' is-active' : '') + '" data-action="toggle-connectivity" data-key="leftRight">左右</button>';
+      html += '    </div>';
+      html += '    <div class="matrix-tools__group">';
+      html += '      <strong>手动空隙</strong>';
+      for (var gapIdx = 0; gapIdx < gapButtonCount; gapIdx += 1) {
+        html += '      <button class="mini-btn gap-btn' + (manualGapIndices.indexOf(gapIdx) >= 0 ? ' is-active' : '') + '" data-action="toggle-gap" data-gap="' + gapIdx + '">' + escapeHtml(String(gapIdx + 1)) + '</button>';
+      }
+      html += '      <span class="gap-summary' + (specialtyCategories.length > 0 ? ' is-muted' : '') + '">' + escapeHtml(getGapSummaryText(meta)) + '</span>';
+      html += '      <span class="gap-edge-track">';
+      for (var edgeIdx = 0; edgeIdx < gapButtonCount; edgeIdx += 1) {
+        var isOpen = table.gaps[edgeIdx] === false;
+        html += '    <span class="gap-edge' + (isOpen ? ' is-open' : '') + '" title="' + escapeHtml(isOpen ? '连通边' : '空隙边') + '">' + escapeHtml(getGapEdgeLabel(edgeIdx, !!meta.connectivity.leftRight)) + '</span>';
+      }
+      html += '      </span>';
+      html += '    </div>';
+      html += '    <div class="matrix-tools__group">';
+      html += '      <button class="matrix-help-btn' + (state.helpUi.matrixHintOpen ? ' is-active' : '') + '" data-action="toggle-matrix-hint" title="操作说明">?</button>';
+      if (state.helpUi.matrixHintOpen) {
+        html += '      <span class="matrix-help-text">点击特技左侧切换修得状态，点击特技名或数值触发掷骰。</span>';
+      }
+      html += '    </div>';
+      html += '  </section>';
+
+      html += '  <div class="matrix-scroll">';
+      html += '  <section class="matrix-shell">';
+      CATEGORIES.forEach(function (category) {
+        var damaged = meta.damageSwitches[category] === 1;
+        html += '    <div class="matrix-col' + (damaged ? ' is-damaged is-damaged-strong' : '') + '">';
+        html += '      <div class="matrix-col__header">';
+        html += '        <div class="matrix-col__title">';
+        html += '          <span>' + escapeHtml(getDisplayLabel(category, meta.locale)) + '</span>';
+        html += damaged ? '          <span class="matrix-col__seal-icon" aria-hidden="true"></span>' : '          <span>&nbsp;</span>';
+        html += '        </div>';
+        html += '        <div class="matrix-col__toggles">';
+        html += '          <button class="matrix-col__toggle matrix-col__toggle--specialty' + (meta.specialtySwitches[category] ? ' is-active' : '') + '" data-action="toggle-specialty" data-category="' + escapeHtml(category) + '">得意</button>';
+        html += '          <button class="matrix-col__toggle' + (meta.damageSwitches[category] ? ' is-active' : '') + '" data-action="toggle-damage" data-category="' + escapeHtml(category) + '">损伤</button>';
+        html += '        </div>';
+        html += '      </div>';
+        if (damaged) {
+          html += '      <div class="matrix-col__damage-bar"></div>';
+        }
+        html += '      <div class="matrix-grid">';
+        SKILL_MATRIX[category].forEach(function (skill) {
+          var isOn = meta.skillSwitches[skill] === 1;
+          var target = table.targetValue(skill);
+          var rowClass = 'matrix-row';
+          if (isOn && !damaged) rowClass += ' is-active';
+          if (isOn && !damaged) rowClass += ' category-' + CATEGORIES.indexOf(category);
+          if (damaged) rowClass += ' is-damaged';
+          if (damaged) rowClass += ' is-damaged-strong';
+          html += '        <div class="' + rowClass + '">';
+          html += '          <button class="matrix-row__toggle' + (isOn ? ' is-on' : '') + '" data-action="toggle-skill" data-skill="' + escapeHtml(skill) + '">' + (isOn ? '●' : '') + '</button>';
+          html += '          <button class="matrix-row__name" title="' + escapeHtml(getDisplayLabel(skill, meta.locale)) + '" data-action="open-roll" data-skill="' + escapeHtml(skill) + '" data-target-value="' + escapeHtml(String(target)) + '">' + escapeHtml(getDisplayLabel(skill, meta.locale)) + (damaged ? '<span class="damage-corner"></span>' : '') + '</button>';
+          html += '          <button class="matrix-row__value" data-action="open-roll" data-skill="' + escapeHtml(skill) + '" data-target-value="' + escapeHtml(String(target)) + '">' + escapeHtml(String(target)) + (damaged ? '<span class="damage-corner"></span>' : '') + '</button>';
+          html += '        </div>';
+        });
+        html += '      </div>';
+        html += '      <div class="matrix-col__footer">';
+        html += '        <span>难度</span>';
+        html += '        <strong>' + escapeHtml(table.averageTarget(category)) + '</strong>';
+        html += '      </div>';
+        html += '    </div>';
+      });
+      html += '  </section>';
+      html += '  </div>';
+
+      html += '  <section class="section-list">';
+      Object.keys(SLOT_CONFIG).forEach(function (key) {
+        var cfg = SLOT_CONFIG[key];
+        var ui = state.sectionUi[key];
+        var slots = meta.slots[key];
+        var visibleCount = getVisibleCount(key, slots);
+        var filledCount = key === 'tool' ? countFilledToolSlots(slots) : countFilledSlots(slots);
+        html += '    <div class="section-card">';
+        html += '      <div class="section-card__header">';
+        html += '        <div class="section-card__title">' + escapeHtml(cfg.label) + '（' + escapeHtml(String(filledCount)) + '）</div>';
+        html += '        <div class="section-card__actions">';
+        html += '          <button class="mini-btn" data-action="toggle-section" data-section="' + escapeHtml(key) + '">' + (ui.collapsed ? '显示' : '隐藏') + '</button>';
+        html += '        </div>';
+        html += '      </div>';
+        if (visibleCount > 0) {
+          html += '      <div class="section-card__body' + (shouldUseScrollBody(key, ui) ? ' section-card__body--scroll" data-section-body="' + escapeHtml(key) : '') + '">';
+          if (key === 'tool') {
+            getToolEntries(slots).slice(0, visibleCount).forEach(function (entry) {
+              var editingTool = isToolInlineEditing(entry.kind, entry.index);
+              html += '        <div class="slot-btn tool-slot' + (!hasToolEntryContent(entry) ? ' is-empty' : '') + (editingTool ? ' is-editing' : '') + '" data-tool-kind="' + escapeHtml(entry.kind) + '" data-index="' + entry.index + '" title="' + escapeHtml(getToolSlotTitle(entry)) + '">';
+              html += '          <div class="tool-slot__main">';
+              html += '            <span class="slot-btn__index">' + escapeHtml(entry.kind === 'fixed' ? '固定忍具' : ('自定义 ' + String(entry.index + 1))) + '</span>';
+              if (editingTool && entry.kind === 'custom') {
+                html += '            <input id="toolInlineNameInput" class="tool-slot__inline-input" type="text" value="' + escapeHtml(state.toolInlineEditor.type) + '" data-tool-inline-field="type">';
+              } else {
+                html += '            <span class="slot-btn__text">' + escapeHtml(getToolSlotDisplayText(entry)) + '</span>';
+              }
+              html += '            <span class="tool-slot__meta">';
+              html += '              <span class="tool-slot__kind">' + escapeHtml(entry.kind === 'fixed' ? '固定槽' : '自定义槽') + '</span>';
+              html += '              <span class="tool-slot__kind">' + escapeHtml(editingTool ? '编辑中' : '双击编辑') + '</span>';
+              html += '            </span>';
+              html += '          </div>';
+              html += '          <div class="tool-slot__count-wrap">';
+              html += '            <span class="tool-slot__count-label">数量</span>';
+              if (editingTool) {
+                html += '            <input id="toolInlineCountInput" class="tool-slot__inline-input tool-slot__inline-input--count" type="number" min="0" value="' + escapeHtml(state.toolInlineEditor.count) + '" data-tool-inline-field="count">';
+              } else {
+                html += '            <span class="tool-slot__count">' + escapeHtml(String(normalizeToolCount(entry.count))) + '</span>';
+              }
+              html += '          </div>';
+              html += '        </div>';
+            });
+          } else {
+            slots.slice(0, visibleCount).forEach(function (slotText, index) {
+              html += '        <button class="slot-btn' + (!slotText ? ' is-empty' : '') + '" data-action="edit-slot" data-group="' + escapeHtml(key) + '" data-index="' + index + '" title="' + escapeHtml(slotText || ('编辑' + cfg.label)) + '">';
+              html += '          <span class="slot-btn__index">' + escapeHtml(cfg.label) + ' ' + escapeHtml(String(index + 1)) + '</span>';
+              html += '          <span class="slot-btn__text">' + escapeHtml(slotText || '点击填写') + '</span>';
+              html += '        </button>';
+            });
+          }
+          html += '      </div>';
+        }
+        html += '    </div>';
+      });
+      html += '  </section>';
+
+      if (state.rollDialog.open) {
+        html += '  <div class="overlay" data-action="close-roll">';
+        html += '    <div class="dialog" data-dialog-panel="1">';
+        html += '      <div class="dialog__header">';
+        html += '        <div class="dialog__title">' + escapeHtml(getDisplayLabel(state.rollDialog.skill, meta.locale)) + ' 检定</div>';
+        html += '        <button class="dialog-btn" data-action="close-roll">关闭</button>';
+        html += '      </div>';
+        html += '      <div class="dialog__body">';
+        html += '        <div class="field-label">目标值</div>';
+        html += '        <div class="formula-preview">' + escapeHtml(String(state.rollDialog.targetValue)) + '</div>';
+        html += '        <div class="field-label">快捷加值</div>';
+        html += '        <div class="modifier-grid">';
+        ['+1', '-1', '+2', '-2', '+3', '-3'].forEach(function (mod) {
+          html += '          <button class="modifier-btn' + (state.rollDialog.modifier === mod ? ' is-active' : '') + '" data-action="set-roll-modifier" data-modifier="' + mod + '">' + mod + '</button>';
+        });
+        html += '        </div>';
+        html += '        <div class="field-label">自定义加值</div>';
+        html += '        <input id="rollModifierInput" class="field-input" type="number" step="1" value="' + escapeHtml(state.rollDialog.modifier) + '" placeholder="例如 +4 / -2">';
+        html += '        <button class="mini-btn" data-action="set-roll-modifier" data-modifier="">无修正</button>';
+        html += '        <div class="field-label">最终发送</div>';
+        html += '        <div id="rollExpressionPreview" class="formula-preview">' + escapeHtml(buildShinobiRollExpression(state.rollDialog.skill, state.rollDialog.targetValue, state.rollDialog.modifier)) + '</div>';
+        html += '        <div class="field-label">点击发送会进行掷骰</div>';
+      html += '      </div>';
+        html += '      <div class="dialog__footer">';
+        html += '        <button class="dialog-btn" data-action="close-roll">取消</button>';
+        html += '        <button class="dialog-btn dialog-btn--primary" data-action="confirm-roll">发送</button>';
+        html += '      </div>';
+        html += '    </div>';
+        html += '  </div>';
+      }
+
+      if (state.editorDialog.open) {
+        html += '  <div class="overlay" data-action="close-editor">';
+        html += '    <div class="dialog" data-dialog-panel="1">';
+        html += '      <div class="dialog__header">';
+        html += '        <div class="dialog__title">' + escapeHtml(state.editorDialog.title) + '</div>';
+        html += '        <button class="dialog-btn" data-action="close-editor">关闭</button>';
+        html += '      </div>';
+        html += '      <div class="dialog__body">';
+        html += '        <div class="field-label">' + (state.editorDialog.kind === 'number' ? '请输入数字' : '请输入内容') + '</div>';
+        if (state.editorDialog.kind === 'number') {
+          html += '      <input id="editorInput" class="field-input" type="number" value="' + escapeHtml(state.editorDialog.value) + '">';
+        } else {
+          html += '      <textarea id="editorInput" class="field-textarea">' + escapeHtml(state.editorDialog.value) + '</textarea>';
+        }
+        html += '      </div>';
+        html += '      <div class="dialog__footer">';
+        html += '        <button class="dialog-btn" data-action="close-editor">取消</button>';
+        html += '        <button class="dialog-btn dialog-btn--primary" data-action="confirm-editor">保存</button>';
+        html += '      </div>';
+        html += '    </div>';
+        html += '  </div>';
+      }
+
+      html += '</div>';
+      root.innerHTML = html;
+      restoreSectionScrollPositions(root);
+      restoreMatrixScrollPosition(root);
+    }
+
+    document.addEventListener('input', function (event) {
+      var target = event.target;
+      if (target && target.id === 'editorInput') {
+        state.editorDialog.value = target.value;
+      } else if (target && target.id === 'rollModifierInput') {
+        state.rollDialog.modifier = target.value;
+        syncRollExpressionPreview();
+      } else if (target && target.id === 'toolInlineNameInput') {
+        state.toolInlineEditor.type = target.value;
+      } else if (target && target.id === 'toolInlineCountInput') {
+        state.toolInlineEditor.count = target.value;
+      }
+    });
+
+    document.addEventListener('mousedown', beginMatrixDragScroll);
+    document.addEventListener('mousemove', updateMatrixDragScroll);
+    document.addEventListener('mouseup', endMatrixDragScroll);
+
+    document.addEventListener('click', function (event) {
+      if (state.dragScroll.suppressClick) {
+        state.dragScroll.suppressClick = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      var target = event.target;
+      while (target && target !== document.body) {
+        if (target.dataset && target.dataset.dialogPanel === '1') {
+          return;
+        }
+        if (target.dataset && target.dataset.action) {
+          var action = target.dataset.action;
+          if (action === 'toggle-specialty') {
+            (function (category) {
+              applyMetaMutation(function (meta) {
+                meta.specialtySwitches[category] = meta.specialtySwitches[category] ? 0 : 1;
+              });
+            })(target.dataset.category);
+            return;
+          }
+          if (action === 'toggle-damage') {
+            (function (category) {
+              applyMetaMutation(function (meta) {
+                meta.damageSwitches[category] = meta.damageSwitches[category] ? 0 : 1;
+              });
+            })(target.dataset.category);
+            return;
+          }
+          if (action === 'toggle-connectivity') {
+            (function (key) {
+              applyMetaMutation(function (meta) {
+                meta.connectivity[key] = meta.connectivity[key] ? 0 : 1;
+                if (key === 'leftRight' && !meta.connectivity[key]) {
+                  meta.manualGaps[5] = 0;
+                }
+              });
+            })(target.dataset.key);
+            return;
+          }
+          if (action === 'toggle-gap') {
+            (function (gapKey) {
+              applyMetaMutation(function (meta) {
+                var numericGap = toInteger(gapKey, -1);
+                var maxGap = meta.connectivity.leftRight ? GAP_PAIRS.length : GAP_PAIRS.length - 1;
+                if (numericGap < 0 || numericGap > maxGap) return;
+                meta.manualGaps[String(numericGap)] = meta.manualGaps[String(numericGap)] ? 0 : 1;
+              });
+            })(target.dataset.gap);
+            return;
+          }
+          if (action === 'toggle-skill') {
+            (function (skill) {
+              applyMetaMutation(function (meta) {
+                meta.skillSwitches[skill] = meta.skillSwitches[skill] ? 0 : 1;
+              });
+            })(target.dataset.skill);
+            return;
+          }
+          if (action === 'open-roll') {
+            openRollDialog(target.dataset.skill, toInteger(target.dataset.targetValue, 12));
+            return;
+          }
+          if (action === 'set-roll-modifier') {
+            state.rollDialog.modifier = target.dataset.modifier || '';
+            render();
+            return;
+          }
+          if (action === 'confirm-roll') {
+            confirmRollDialog();
+            return;
+          }
+          if (action === 'close-roll') {
+            closeRollDialog();
+            return;
+          }
+          if (action === 'edit-number') {
+            var key = target.dataset.key;
+            openEditorDialog('number', key, state.attrs[key] == null ? '' : state.attrs[key], { key: key });
+            return;
+          }
+          if (action === 'edit-slot') {
+            var group = target.dataset.group;
+            var index = toInteger(target.dataset.index, -1);
+            if (group && index >= 0) {
+              openEditorDialog('slot', SLOT_CONFIG[group].label + ' ' + (index + 1), state.meta.slots[group][index], { group: group, index: index });
+            }
+            return;
+          }
+          if (action === 'confirm-editor') {
+            confirmEditorDialog();
+            return;
+          }
+          if (action === 'close-editor') {
+            closeEditorDialog();
+            return;
+          }
+          if (action === 'toggle-section') {
+            var section = target.dataset.section;
+            state.sectionUi[section].collapsed = !state.sectionUi[section].collapsed;
+            render();
+            return;
+          }
+          if (action === 'toggle-locale') {
+            applyMetaMutation(function (meta) {
+              meta.locale = meta.locale === 'zh-Hant' ? 'zh-Hans' : 'zh-Hant';
+            });
+            return;
+          }
+              if (action === 'toggle-compact-mode') {
+                applyMetaMutation(function (meta) {
+                  meta.compactMode = meta.compactMode ? 0 : 1;
+                });
+                return;
+              }
+              if (action === 'toggle-matrix-hint') {
+                state.helpUi.matrixHintOpen = !state.helpUi.matrixHintOpen;
+                render();
+                return;
+              }
+            }
+            target = target.parentElement;
+          }
+    });
+
+    document.addEventListener('dblclick', function (event) {
+      var target = event.target;
+      if (!target || !target.closest) return;
+      var toolSlot = target.closest('[data-tool-kind]');
+      if (!toolSlot) return;
+      var toolKind = toolSlot.dataset.toolKind;
+      var toolIndex = toInteger(toolSlot.dataset.index, -1);
+      var toolSlots = normalizeToolSlots(state.meta && state.meta.slots ? state.meta.slots.tool : null);
+      var toolEntry = null;
+      if (toolKind === 'fixed' && toolIndex >= 0 && toolIndex < toolSlots.fixed.length) {
+        toolEntry = toolSlots.fixed[toolIndex];
+      } else if (toolKind === 'custom' && toolIndex >= 0 && toolIndex < toolSlots.custom.length) {
+        toolEntry = toolSlots.custom[toolIndex];
+      }
+      if (!toolEntry) return;
+      openToolInlineEditor(toolKind, toolIndex, toolEntry);
+    });
+
+    document.addEventListener('touchend', function (event) {
+      var target = event.target;
+      if (!target || !target.closest) return;
+      if (target.closest('input, textarea, select, option')) return;
+      var toolSlot = target.closest('[data-tool-kind]');
+      if (!toolSlot) return;
+      var toolKind = toolSlot.dataset.toolKind;
+      var toolIndex = toInteger(toolSlot.dataset.index, -1);
+      var now = Date.now();
+      var isSameSlot = state.touchToolEdit.kind === toolKind && state.touchToolEdit.index === toolIndex;
+      if (isSameSlot && now - state.touchToolEdit.time <= 360) {
+        state.touchToolEdit.time = 0;
+        state.touchToolEdit.kind = '';
+        state.touchToolEdit.index = -1;
+        var toolSlots = normalizeToolSlots(state.meta && state.meta.slots ? state.meta.slots.tool : null);
+        var toolEntry = null;
+        if (toolKind === 'fixed' && toolIndex >= 0 && toolIndex < toolSlots.fixed.length) {
+          toolEntry = toolSlots.fixed[toolIndex];
+        } else if (toolKind === 'custom' && toolIndex >= 0 && toolIndex < toolSlots.custom.length) {
+          toolEntry = toolSlots.custom[toolIndex];
+        }
+        if (!toolEntry) return;
+        openToolInlineEditor(toolKind, toolIndex, toolEntry);
+        return;
+      }
+      state.touchToolEdit.time = now;
+      state.touchToolEdit.kind = toolKind;
+      state.touchToolEdit.index = toolIndex;
+    });
+
+    document.addEventListener('scroll', function (event) {
+      var body = event.target;
+      if (!body || !body.dataset) return;
+      if (body.classList && body.classList.contains('matrix-scroll')) {
+        state.matrixScrollLeft = body.scrollLeft;
+        return;
+      }
+      var sectionKey = body.dataset.sectionBody;
+      if (!sectionKey) return;
+      state.sectionScrollTop[sectionKey] = body.scrollTop;
+    }, true);
+
+    document.addEventListener('focusout', function (event) {
+      var target = event.target;
+      if (!target || (target.id !== 'toolInlineNameInput' && target.id !== 'toolInlineCountInput')) return;
+      window.setTimeout(function () {
+        var active = document.activeElement;
+        if (active && (active.id === 'toolInlineNameInput' || active.id === 'toolInlineCountInput')) return;
+        confirmToolInlineEditor();
+      }, 0);
+    });
+
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
+        if (state.rollDialog.open) {
+          closeRollDialog();
+          return;
+        }
+        if (state.toolInlineEditor.open) {
+          closeToolInlineEditor();
+          return;
+        }
+        if (state.editorDialog.open) {
+          closeEditorDialog();
+          return;
+        }
+      }
+      if (event.key === 'Enter' && state.toolInlineEditor.open) {
+        event.preventDefault();
+        confirmToolInlineEditor();
+        return;
+      }
+      if (event.key === 'Enter' && !event.shiftKey && state.editorDialog.open && state.editorDialog.kind !== 'slot') {
+        event.preventDefault();
+        confirmEditorDialog();
+      }
+    });
+
+    window.addEventListener('blur', endMatrixDragScroll);
+    window.addEventListener('resize', syncResponsiveLayout);
+
+    sealchat.onUpdate(function (data) {
+      var attrs = data && data.attrs && typeof data.attrs === 'object' ? data.attrs : {};
+      if (state.pendingPatch && attrsContainsPatch(attrs, state.pendingPatch)) {
+        state.pendingPatch = null;
+        state.pendingPatchHash = '';
+      }
+      state.name = data && data.name ? data.name : '';
+      state.avatarUrl = data && data.avatarUrl ? data.avatarUrl : '';
+      state.attrs = attrs;
+      state.meta = normalizeMeta(attrs[SHINOBI_META_KEY]);
+      state.lastIncomingHash = stableStringify(attrs);
+      render();
+      var derivedPatch = buildDerivedPatch(attrs);
+      if (Object.keys(derivedPatch).length > 0) {
+        sendPatch(derivedPatch);
+      }
+    });
+  </script>
+</body>
+</html>
