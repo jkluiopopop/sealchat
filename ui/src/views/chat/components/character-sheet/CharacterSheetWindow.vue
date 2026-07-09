@@ -206,8 +206,12 @@ const canSyncToSelectedTemplate = computed(() => {
 const isMobile = ref(false);
 const isDragging = ref(false);
 const isResizing = ref(false);
+const dragPointerId = ref<number | null>(null);
+const resizePointerId = ref<number | null>(null);
 const dragStart = ref({ x: 0, y: 0, posX: 0, posY: 0 });
 const resizeStart = ref({ x: 0, y: 0, w: 0, h: 0 });
+let dragEventTarget: HTMLElement | null = null;
+let resizeEventTarget: HTMLElement | null = null;
 
 const windowData = computed(() => sheetStore.windows[props.windowId]);
 
@@ -268,12 +272,70 @@ const handleMobileBack = () => {
   sheetStore.closeSheet(props.windowId);
 };
 
+const applyPointerInteractionStyle = (cursor: string) => {
+  if (typeof document === 'undefined') return;
+  document.body.style.cursor = cursor;
+  document.body.style.userSelect = 'none';
+};
+
+const clearPointerInteractionStyle = () => {
+  if (typeof document === 'undefined') return;
+  if (isDragging.value || isResizing.value) return;
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+};
+
+const matchesPointerId = (event: Event | undefined, pointerId: number | null) => {
+  if (!event || pointerId === null || !('pointerId' in event)) return true;
+  return event.pointerId === pointerId;
+};
+
+const handleWindowBlur = () => {
+  stopDrag();
+  stopResize();
+};
+
+const bindDragListeners = (target: HTMLElement) => {
+  target.addEventListener('pointermove', onDrag as EventListener);
+  target.addEventListener('pointerup', stopDrag as EventListener);
+  target.addEventListener('pointercancel', stopDrag as EventListener);
+  target.addEventListener('lostpointercapture', stopDrag as EventListener);
+};
+
+const unbindDragListeners = (target: HTMLElement) => {
+  target.removeEventListener('pointermove', onDrag as EventListener);
+  target.removeEventListener('pointerup', stopDrag as EventListener);
+  target.removeEventListener('pointercancel', stopDrag as EventListener);
+  target.removeEventListener('lostpointercapture', stopDrag as EventListener);
+};
+
+const bindResizeListeners = (target: HTMLElement) => {
+  target.addEventListener('pointermove', onResize as EventListener);
+  target.addEventListener('pointerup', stopResize as EventListener);
+  target.addEventListener('pointercancel', stopResize as EventListener);
+  target.addEventListener('lostpointercapture', stopResize as EventListener);
+};
+
+const unbindResizeListeners = (target: HTMLElement) => {
+  target.removeEventListener('pointermove', onResize as EventListener);
+  target.removeEventListener('pointerup', stopResize as EventListener);
+  target.removeEventListener('pointercancel', stopResize as EventListener);
+  target.removeEventListener('lostpointercapture', stopResize as EventListener);
+};
+
 const startDrag = (e: PointerEvent) => {
   if (isMobile.value) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
   const win = windowData.value;
+  const target = e.currentTarget as HTMLElement | null;
   if (!win) return;
+  if (!target) return;
+
+  e.preventDefault();
 
   isDragging.value = true;
+  dragPointerId.value = e.pointerId;
+  dragEventTarget = target;
   dragStart.value = {
     x: e.clientX,
     y: e.clientY,
@@ -281,12 +343,19 @@ const startDrag = (e: PointerEvent) => {
     posY: win.positionY,
   };
 
-  document.addEventListener('pointermove', onDrag);
-  document.addEventListener('pointerup', stopDrag);
+  target?.setPointerCapture?.(e.pointerId);
+  bindDragListeners(target);
+  applyPointerInteractionStyle('move');
 };
 
 const onDrag = (e: PointerEvent) => {
   if (!isDragging.value) return;
+  if (dragPointerId.value !== e.pointerId) return;
+  if (e.buttons === 0) {
+    stopDrag(e);
+    return;
+  }
+  e.preventDefault();
   const dx = e.clientX - dragStart.value.x;
   const dy = e.clientY - dragStart.value.y;
   sheetStore.updatePosition(
@@ -296,18 +365,39 @@ const onDrag = (e: PointerEvent) => {
   );
 };
 
-const stopDrag = () => {
+const stopDrag = (e?: Event) => {
+  if (!isDragging.value) return;
+  if (!matchesPointerId(e, dragPointerId.value)) return;
   isDragging.value = false;
-  document.removeEventListener('pointermove', onDrag);
-  document.removeEventListener('pointerup', stopDrag);
+  const target = dragEventTarget;
+  const pointerId = dragPointerId.value;
+  dragEventTarget = null;
+  dragPointerId.value = null;
+  if (target) {
+    if (pointerId !== null) {
+      try {
+        target.releasePointerCapture?.(pointerId);
+      } catch (_) {
+        // ignore capture failure
+      }
+    }
+    unbindDragListeners(target);
+  }
+  clearPointerInteractionStyle();
 };
 
 const startResize = (e: PointerEvent) => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
   e.stopPropagation();
+  e.preventDefault();
   const win = windowData.value;
+  const target = e.currentTarget as HTMLElement | null;
   if (!win) return;
+  if (!target) return;
 
   isResizing.value = true;
+  resizePointerId.value = e.pointerId;
+  resizeEventTarget = target;
   resizeStart.value = {
     x: e.clientX,
     y: e.clientY,
@@ -315,12 +405,19 @@ const startResize = (e: PointerEvent) => {
     h: win.height,
   };
 
-  document.addEventListener('pointermove', onResize);
-  document.addEventListener('pointerup', stopResize);
+  target?.setPointerCapture?.(e.pointerId);
+  bindResizeListeners(target);
+  applyPointerInteractionStyle('nwse-resize');
 };
 
 const onResize = (e: PointerEvent) => {
   if (!isResizing.value) return;
+  if (resizePointerId.value !== e.pointerId) return;
+  if (e.buttons === 0) {
+    stopResize(e);
+    return;
+  }
+  e.preventDefault();
   const dw = e.clientX - resizeStart.value.x;
   const dh = e.clientY - resizeStart.value.y;
   sheetStore.updateSize(
@@ -330,10 +427,25 @@ const onResize = (e: PointerEvent) => {
   );
 };
 
-const stopResize = () => {
+const stopResize = (e?: Event) => {
+  if (!isResizing.value) return;
+  if (!matchesPointerId(e, resizePointerId.value)) return;
   isResizing.value = false;
-  document.removeEventListener('pointermove', onResize);
-  document.removeEventListener('pointerup', stopResize);
+  const target = resizeEventTarget;
+  const pointerId = resizePointerId.value;
+  resizeEventTarget = null;
+  resizePointerId.value = null;
+  if (target) {
+    if (pointerId !== null) {
+      try {
+        target.releasePointerCapture?.(pointerId);
+      } catch (_) {
+        // ignore capture failure
+      }
+    }
+    unbindResizeListeners(target);
+  }
+  clearPointerInteractionStyle();
 };
 
 const syncJsonText = () => {
@@ -488,6 +600,7 @@ watch(
 onMounted(() => {
   checkMobile();
   window.addEventListener('resize', checkMobile);
+  window.addEventListener('blur', handleWindowBlur);
   void templateStore.ensureTemplatesLoaded({ worldId: chatStore.currentWorldId || undefined });
   syncJsonText();
   syncTemplateText();
@@ -503,6 +616,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', checkMobile);
+  window.removeEventListener('blur', handleWindowBlur);
   stopDrag();
   stopResize();
 });
