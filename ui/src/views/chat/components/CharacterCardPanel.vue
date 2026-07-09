@@ -212,6 +212,7 @@ const openOnlineCharacterCardPreview = (item: OnlineCharacterCardItem) => {
   }, {
     templateText: item.card.templateText || undefined,
     readOnly: true,
+    worldId: currentWorldId.value || undefined,
   });
   if (isMobile.value) {
     handleClose();
@@ -509,6 +510,7 @@ const templateName = ref('');
 const templateSheetTypePreset = ref('coc7');
 const templateSheetTypeCustom = ref('');
 const templateContent = ref('');
+const templateDefaultBadgeTemplate = ref('');
 const templateGlobalDefault = ref(false);
 const templateSheetDefault = ref(false);
 const templateSaving = ref(false);
@@ -642,6 +644,7 @@ const openTemplateCreateModal = () => {
   templateName.value = '';
   setTemplateSheetType('coc7');
   templateContent.value = sheetStore.getDefaultTemplate('coc7');
+  templateDefaultBadgeTemplate.value = '';
   templateGlobalDefault.value = false;
   templateSheetDefault.value = false;
   templateModalVisible.value = true;
@@ -654,6 +657,7 @@ const openTemplateEditModal = (item: CharacterCardTemplate) => {
   templateName.value = item.name;
   setTemplateSheetType(item.sheetType || '');
   templateContent.value = item.content;
+  templateDefaultBadgeTemplate.value = item.defaultBadgeTemplate || '';
   templateGlobalDefault.value = !!item.isGlobalDefault;
   templateSheetDefault.value = !!item.isSheetDefault;
   templateModalVisible.value = true;
@@ -664,6 +668,7 @@ const handleSaveTemplate = async () => {
   const name = templateName.value.trim();
   const sheetType = resolveTemplateSheetType();
   const content = templateContent.value.trim();
+  const defaultBadgeTemplate = templateDefaultBadgeTemplate.value;
   if (!name) {
     message.warning('请输入模板名称');
     return;
@@ -679,6 +684,7 @@ const handleSaveTemplate = async () => {
         name,
         sheetType,
         content,
+        defaultBadgeTemplate,
         isGlobalDefault: templateGlobalDefault.value,
         isSheetDefault: templateSheetDefault.value,
       });
@@ -688,6 +694,7 @@ const handleSaveTemplate = async () => {
         name,
         sheetType,
         content,
+        defaultBadgeTemplate,
         isGlobalDefault: templateGlobalDefault.value,
         isSheetDefault: templateSheetDefault.value,
       });
@@ -719,6 +726,7 @@ const handleCopyTemplate = async (item: CharacterCardTemplate) => {
       name: `${item.name}-副本`,
       sheetType: item.sheetType,
       content: item.content,
+      defaultBadgeTemplate: item.defaultBadgeTemplate,
     });
     message.success('模板已复制');
   } catch (e: any) {
@@ -1080,6 +1088,8 @@ const openCharacterSheetWindow = async (
       type: card.sheetType,
       attrs: card.attrs || {},
       avatarUrl: avatarUrl || undefined,
+    }, {
+      worldId: currentWorldId.value || undefined,
     });
     upsertChannelSheetSwitchState(channelId, {
       cardId: card.id,
@@ -1132,6 +1142,7 @@ const openCharacterSheetWindow = async (
       templateMode: binding?.mode,
       templateId: binding?.templateId || undefined,
       templateText: binding?.mode === 'detached' ? binding.templateSnapshot : undefined,
+      worldId: currentWorldId.value || undefined,
     });
     upsertChannelSheetSwitchState(channelId, {
       cardId: card.id,
@@ -1153,6 +1164,8 @@ const openCharacterSheetWindow = async (
       type: card.sheetType,
       attrs: card.attrs || {},
       avatarUrl: avatarUrl || undefined,
+    }, {
+      worldId: currentWorldId.value || undefined,
     });
     upsertChannelSheetSwitchState(channelId, {
       cardId: card.id,
@@ -1725,6 +1738,13 @@ const openEditPanel = async (card: CharacterCard) => {
           type="textarea"
           :autosize="{ minRows: 8, maxRows: 16 }"
           placeholder="输入 HTML 模板"
+          :disabled="characterApiDisabled"
+        />
+      </n-form-item>
+      <n-form-item label="默认角色徽章模板">
+        <n-input
+          v-model:value="templateDefaultBadgeTemplate"
+          placeholder="留空则不修改当前世界本地徽章模板"
           :disabled="characterApiDisabled"
         />
       </n-form-item>

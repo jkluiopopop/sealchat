@@ -6,12 +6,13 @@ import (
 
 type CharacterCardTemplateModel struct {
 	StringPKBaseModel
-	UserID          string `json:"userId" gorm:"size:100;index:idx_character_card_template_user_sheet,priority:1"`
-	Name            string `json:"name" gorm:"size:100"`
-	SheetType       string `json:"sheetType" gorm:"size:32;index:idx_character_card_template_user_sheet,priority:2"`
-	Content         string `json:"content" gorm:"type:text"`
-	IsGlobalDefault bool   `json:"isGlobalDefault" gorm:"index"`
-	IsSheetDefault  bool   `json:"isSheetDefault" gorm:"index:idx_character_card_template_sheet_default,priority:1"`
+	UserID               string `json:"userId" gorm:"size:100;index:idx_character_card_template_user_sheet,priority:1"`
+	Name                 string `json:"name" gorm:"size:100"`
+	SheetType            string `json:"sheetType" gorm:"size:32;index:idx_character_card_template_user_sheet,priority:2"`
+	Content              string `json:"content" gorm:"type:text"`
+	DefaultBadgeTemplate string `json:"defaultBadgeTemplate" gorm:"size:512"`
+	IsGlobalDefault      bool   `json:"isGlobalDefault" gorm:"index"`
+	IsSheetDefault       bool   `json:"isSheetDefault" gorm:"index:idx_character_card_template_sheet_default,priority:1"`
 }
 
 func (*CharacterCardTemplateModel) TableName() string {

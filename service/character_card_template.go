@@ -16,19 +16,21 @@ const (
 )
 
 type CharacterCardTemplateInput struct {
-	Name            string
-	SheetType       string
-	Content         string
-	IsGlobalDefault bool
-	IsSheetDefault  bool
+	Name                 string
+	SheetType            string
+	Content              string
+	DefaultBadgeTemplate string
+	IsGlobalDefault      bool
+	IsSheetDefault       bool
 }
 
 type CharacterCardTemplateUpdateInput struct {
-	Name            *string
-	SheetType       *string
-	Content         *string
-	IsGlobalDefault *bool
-	IsSheetDefault  *bool
+	Name                 *string
+	SheetType            *string
+	Content              *string
+	DefaultBadgeTemplate *string
+	IsGlobalDefault      *bool
+	IsSheetDefault       *bool
 }
 
 type CharacterCardTemplateBindingInput struct {
@@ -58,6 +60,11 @@ func normalizeCharacterCardTemplateInput(input *CharacterCardTemplateInput) erro
 	input.Name = strings.TrimSpace(input.Name)
 	input.SheetType = strings.TrimSpace(input.SheetType)
 	input.Content = strings.TrimSpace(input.Content)
+	normalizedBadgeTemplate, err := normalizeWorldBadgeTemplate(input.DefaultBadgeTemplate)
+	if err != nil {
+		return err
+	}
+	input.DefaultBadgeTemplate = normalizedBadgeTemplate
 	if input.Name == "" {
 		return errors.New("模板名称不能为空")
 	}
@@ -100,6 +107,13 @@ func normalizeCharacterCardTemplateUpdateInput(input *CharacterCardTemplateUpdat
 			return errors.New("模板内容不能为空")
 		}
 		input.Content = &content
+	}
+	if input.DefaultBadgeTemplate != nil {
+		normalizedBadgeTemplate, err := normalizeWorldBadgeTemplate(*input.DefaultBadgeTemplate)
+		if err != nil {
+			return err
+		}
+		input.DefaultBadgeTemplate = &normalizedBadgeTemplate
 	}
 	return nil
 }
@@ -191,12 +205,13 @@ func CharacterCardTemplateCreate(userID string, input *CharacterCardTemplateInpu
 		return nil, err
 	}
 	item := &model.CharacterCardTemplateModel{
-		UserID:          userID,
-		Name:            input.Name,
-		SheetType:       input.SheetType,
-		Content:         input.Content,
-		IsGlobalDefault: input.IsGlobalDefault,
-		IsSheetDefault:  input.IsSheetDefault,
+		UserID:               userID,
+		Name:                 input.Name,
+		SheetType:            input.SheetType,
+		Content:              input.Content,
+		DefaultBadgeTemplate: input.DefaultBadgeTemplate,
+		IsGlobalDefault:      input.IsGlobalDefault,
+		IsSheetDefault:       input.IsSheetDefault,
 	}
 	err := model.GetDB().Transaction(func(tx *gorm.DB) error {
 		if input.IsGlobalDefault {
@@ -246,6 +261,9 @@ func CharacterCardTemplateUpdate(userID string, templateID string, input *Charac
 	}
 	if input.Content != nil {
 		values["content"] = *input.Content
+	}
+	if input.DefaultBadgeTemplate != nil {
+		values["default_badge_template"] = *input.DefaultBadgeTemplate
 	}
 	if input.IsGlobalDefault != nil {
 		values["is_global_default"] = *input.IsGlobalDefault

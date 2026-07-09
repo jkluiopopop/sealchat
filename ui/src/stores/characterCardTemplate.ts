@@ -11,6 +11,7 @@ export interface CharacterCardTemplate {
   name: string;
   sheetType: string;
   content: string;
+  defaultBadgeTemplate: string;
   isGlobalDefault: boolean;
   isSheetDefault: boolean;
   access?: 'owner' | 'world_shared';
@@ -41,6 +42,7 @@ interface TemplatePayload {
   name: string;
   sheetType?: string;
   content: string;
+  defaultBadgeTemplate?: string;
   isGlobalDefault?: boolean;
   isSheetDefault?: boolean;
 }

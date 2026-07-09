@@ -488,7 +488,7 @@ const handleManagedTemplateChange = async (templateId: string) => {
   if (windowData.value?.readOnly) return;
   if (!templateId) return;
   try {
-    await sheetStore.applyManagedTemplate(props.windowId, templateId);
+    await sheetStore.applyManagedTemplate(props.windowId, templateId, { syncWorldLocalBadgeTemplate: true });
     const win = windowData.value;
     if (win) {
       templateText.value = win.template;
@@ -601,7 +601,7 @@ onMounted(() => {
   checkMobile();
   window.addEventListener('resize', checkMobile);
   window.addEventListener('blur', handleWindowBlur);
-  void templateStore.ensureTemplatesLoaded({ worldId: chatStore.currentWorldId || undefined });
+  void templateStore.ensureTemplatesLoaded({ worldId: windowData.value?.worldId || chatStore.currentWorldId || undefined });
   syncJsonText();
   syncTemplateText();
   const win = windowData.value;

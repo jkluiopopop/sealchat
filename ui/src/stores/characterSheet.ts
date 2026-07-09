@@ -2,6 +2,8 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { useCharacterCardStore } from './characterCard';
 import { useCharacterCardTemplateStore, type CharacterCardTemplateMode } from './characterCardTemplate';
+import { useChatStore } from './chat';
+import { useDisplayStore } from './display';
 import type { CharacterCard, CharacterCardData } from './characterCard';
 
 export interface CharacterSheetWindow {
@@ -9,6 +11,7 @@ export interface CharacterSheetWindow {
   cardId: string;
   cardName: string;
   channelId: string;
+  worldId?: string;
   readOnly?: boolean;
   sheetType?: string;
   attrs: Record<string, any>;
@@ -69,6 +72,7 @@ interface PersistedWindowState {
   cardId: string;
   cardName: string;
   channelId: string;
+  worldId?: string;
   readOnly?: boolean;
   sheetType?: string;
   attrs: Record<string, any>;
@@ -4678,10 +4682,47 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
   const hasRestored = ref(false);
   const cardStore = useCharacterCardStore();
   const templateStore = useCharacterCardTemplateStore();
+  const chatStore = useChatStore();
+  const displayStore = useDisplayStore();
+
+  interface ApplyManagedTemplateOptions {
+    syncWorldLocalBadgeTemplate?: boolean;
+  }
 
   const resolveSheetTypeByCardId = (cardId?: string) => {
     if (!cardId) return '';
     return cardStore.getCardById(cardId)?.sheetType || '';
+  };
+
+  const resolveWorldBadgeTemplate = (worldId: string) => {
+    if (!worldId) return '';
+    const world = (chatStore as any).worldMap?.[worldId];
+    const fromMap = typeof world?.characterCardBadgeTemplate === 'string' ? world.characterCardBadgeTemplate.trim() : '';
+    if (fromMap) return fromMap;
+    const fromDetail = (chatStore as any).worldDetailMap?.[worldId]?.world?.characterCardBadgeTemplate;
+    if (typeof fromDetail === 'string' && fromDetail.trim()) {
+      return fromDetail.trim();
+    }
+    return '';
+  };
+
+  const syncWorldLocalBadgeTemplate = (
+    worldId: string,
+    defaultBadgeTemplate: string | undefined,
+    enabled: boolean,
+  ) => {
+    if (!enabled || !worldId) return;
+    if (resolveWorldBadgeTemplate(worldId)) return;
+    const normalized = String(defaultBadgeTemplate || '').trim();
+    if (!normalized) return;
+    const current = displayStore.settings.characterCardBadgeTemplateByWorld?.[worldId];
+    if ((current || '').trim() === normalized) return;
+    displayStore.updateSettings({
+      characterCardBadgeTemplateByWorld: {
+        ...displayStore.settings.characterCardBadgeTemplateByWorld,
+        [worldId]: normalized,
+      },
+    });
   };
 
   const activeWindows = computed(() =>
@@ -4762,6 +4803,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
         cardId: win.cardId,
         cardName: win.cardName,
         channelId: win.channelId,
+        worldId: win.worldId,
         readOnly: !!win.readOnly,
         sheetType: win.sheetType,
         attrs: win.attrs,
@@ -4820,6 +4862,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
         cardId: state.cardId,
         cardName: state.cardName || '人物卡',
         channelId: state.channelId || '',
+        worldId: state.worldId || undefined,
         readOnly: !!state.readOnly,
         sheetType: resolvedSheetType || undefined,
         attrs: state.attrs || {},
@@ -4855,7 +4898,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     if (!win || !win.channelId || !win.cardId) return;
     if (win.readOnly) return;
     try {
-      await templateStore.ensureTemplatesLoaded();
+      await templateStore.ensureTemplatesLoaded({ worldId: win.worldId || undefined });
       await templateStore.ensureBindingsLoaded(win.channelId);
       const fallback = normalizeTemplate(
         win.cardId,
@@ -4881,11 +4924,11 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     }
   };
 
-  const applyManagedTemplate = async (windowId: string, templateId: string) => {
+  const applyManagedTemplate = async (windowId: string, templateId: string, options?: ApplyManagedTemplateOptions) => {
     const win = windows.value[windowId];
     if (!win || !win.channelId || !win.cardId || !templateId) return null;
     if (win.readOnly) return null;
-    await templateStore.ensureTemplatesLoaded();
+    await templateStore.ensureTemplatesLoaded({ worldId: win.worldId || undefined });
     const template = templateStore.getTemplateById(templateId);
     if (!template) {
       throw new Error('模板不存在');
@@ -4901,6 +4944,11 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
     win.template = normalized;
     win.templateMode = 'managed';
     win.templateId = templateId;
+    syncWorldLocalBadgeTemplate(
+      win.worldId || '',
+      template.defaultBadgeTemplate,
+      !!options?.syncWorldLocalBadgeTemplate,
+    );
     saveTemplate(win.cardId, normalized);
     schedulePersistWindows();
     return binding;
@@ -5059,6 +5107,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       templateId?: string;
       templateText?: string;
       readOnly?: boolean;
+      worldId?: string;
     }
   ): string => {
     restoreWindows();
@@ -5071,6 +5120,9 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       if (existing) {
         normalizeSyncState(existing);
         existing.cardName = card.name || existing.cardName;
+        if (templateMeta?.worldId !== undefined) {
+          existing.worldId = templateMeta.worldId || undefined;
+        }
         if (resolvedSheetType && !existing.sheetType) {
           existing.sheetType = resolvedSheetType;
         }
@@ -5157,6 +5209,7 @@ export const useCharacterSheetStore = defineStore('characterSheet', () => {
       cardId: card.id,
       cardName: card.name,
       channelId,
+      worldId: templateMeta?.worldId,
       readOnly: !!templateMeta?.readOnly,
       sheetType: resolvedSheetType || undefined,
       attrs: cardData?.attrs || card.attrs || {},
