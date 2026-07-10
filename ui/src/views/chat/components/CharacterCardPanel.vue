@@ -786,8 +786,12 @@ const createModalVisible = ref(false);
 const newCardName = ref('');
 const newCardSheetTypePreset = ref('coc7');
 const newCardSheetTypeCustom = ref('');
+const newCardTemplateId = ref('');
+const newCardAvatarFile = ref<File | null>(null);
 const newCardAttrs = ref<Record<string, any>>({});
 const creating = ref(false);
+
+const DETACHED_TEMPLATE_VALUE = '__detached__';
 
 const sheetTypeOptions = [
   { label: 'COC7', value: 'coc7' },
@@ -802,14 +806,50 @@ const resolveSheetType = (preset: string, custom: string) => {
   return preset;
 };
 
-const openCreateModal = () => {
+const newCardSheetType = computed(() => resolveSheetType(
+  newCardSheetTypePreset.value,
+  newCardSheetTypeCustom.value,
+));
+
+const newCardTemplateOptions = computed(() => [
+  { label: '自定义（默认样式）', value: DETACHED_TEMPLATE_VALUE },
+  ...templateStore.getTemplatesBySheetType(newCardSheetType.value).map(item => ({
+    label: item.access === 'world_shared'
+      ? `${item.name}${item.sharedByNickname ? ` [世界共享:${item.sharedByNickname}]` : ' [世界共享]'}`
+      : `${item.name}${item.sheetType ? ` [${item.sheetType}]` : ''}`,
+    value: item.id,
+  })),
+]);
+
+const selectDefaultNewCardTemplate = () => {
+  const sheetDefault = templateStore.getSheetDefaultTemplate(newCardSheetType.value);
+  if (sheetDefault?.id) {
+    newCardTemplateId.value = sheetDefault.id;
+    return;
+  }
+  const globalDefault = templateStore.getGlobalDefaultTemplate();
+  const availableIds = new Set(newCardTemplateOptions.value.map(item => item.value));
+  newCardTemplateId.value = globalDefault?.id && availableIds.has(globalDefault.id)
+    ? globalDefault.id
+    : DETACHED_TEMPLATE_VALUE;
+};
+
+const openCreateModal = async () => {
   if (!ensureCharacterApiEnabled()) return;
+  await templateStore.ensureTemplatesLoaded({ worldId: currentWorldId.value || undefined });
   newCardName.value = '';
   newCardSheetTypePreset.value = 'coc7';
   newCardSheetTypeCustom.value = '';
+  selectDefaultNewCardTemplate();
+  newCardAvatarFile.value = null;
   newCardAttrs.value = {};
   createModalVisible.value = true;
 };
+
+watch(newCardSheetType, () => {
+  if (!createModalVisible.value) return;
+  selectDefaultNewCardTemplate();
+});
 
 const handleCreateCard = async () => {
   if (!ensureCharacterApiEnabled()) return;
@@ -824,11 +864,71 @@ const handleCreateCard = async () => {
   }
   creating.value = true;
   try {
-    await cardStore.createCard(resolvedChannelId.value, newCardName.value.trim(), sheetType, newCardAttrs.value);
-    message.success('创建成功');
+    const created = await cardStore.createCard(
+      resolvedChannelId.value,
+      newCardName.value.trim(),
+      sheetType,
+      newCardAttrs.value,
+    );
+    if (!created?.id) {
+      throw new Error('人物卡创建失败');
+    }
+    const setupTasks: Array<{ label: string; task: Promise<unknown> }> = [];
+    if (newCardTemplateId.value && newCardTemplateId.value !== DETACHED_TEMPLATE_VALUE) {
+      setupTasks.push({
+        label: '模板应用',
+        task: templateStore.bindCardToTemplate({
+          channelId: resolvedChannelId.value,
+          externalCardId: created.id,
+          cardName: created.name || newCardName.value.trim(),
+          sheetType: created.sheetType || sheetType,
+          templateId: newCardTemplateId.value,
+        }),
+      });
+    } else {
+      setupTasks.push({
+        label: '模板应用',
+        task: templateStore.bindCardToDetachedTemplate({
+          channelId: resolvedChannelId.value,
+          externalCardId: created.id,
+          cardName: created.name || newCardName.value.trim(),
+          sheetType: created.sheetType || sheetType,
+          templateSnapshot: sheetStore.getDefaultTemplate(sheetType),
+        }),
+      });
+    }
+    if (newCardAvatarFile.value) {
+      const avatarFile = newCardAvatarFile.value;
+      setupTasks.push({
+        label: '头像上传',
+        task: (async () => {
+          const uploadResult = await uploadImageAttachment(avatarFile, {
+            channelId: resolvedChannelId.value,
+            skipCompression: true,
+          });
+          return avatarStore.upsertBinding({
+            channelId: resolvedChannelId.value,
+            externalCardId: created.id,
+            cardName: created.name || newCardName.value.trim(),
+            sheetType: created.sheetType || sheetType,
+            avatarAttachmentId: uploadResult.attachmentId,
+          });
+        })(),
+      });
+    }
+    const setupResults = await Promise.allSettled(setupTasks.map(item => item.task));
+    const failedLabels = setupResults
+      .map((result, index) => result.status === 'rejected' ? setupTasks[index].label : '')
+      .filter(Boolean);
     createModalVisible.value = false;
+    newCardAvatarFile.value = null;
+    if (failedLabels.length > 0) {
+      message.warning(`人物卡已创建，但${failedLabels.join('、')}失败`);
+    } else {
+      message.success('创建成功');
+    }
   } catch (e: any) {
-    message.error(e?.response?.data?.error || '创建失败');
+    message.error(e?.response?.data?.error || e?.message || '创建失败');
   } finally {
     creating.value = false;
   }
@@ -995,10 +1095,18 @@ const avatarUploadInputRef = ref<HTMLInputElement | null>(null);
 const avatarEditingCard = ref<CharacterCard | null>(null);
 const avatarEditorVisible = ref(false);
 const avatarEditorFile = ref<File | null>(null);
+const avatarEditorTarget = ref<'existing-card' | 'new-card' | ''>('');
 const avatarUploading = ref(false);
 
 const handleAvatarUploadTrigger = (card: CharacterCard) => {
   avatarEditingCard.value = card;
+  avatarEditorTarget.value = 'existing-card';
+  avatarUploadInputRef.value?.click();
+};
+
+const handleNewCardAvatarTrigger = () => {
+  avatarEditingCard.value = null;
+  avatarEditorTarget.value = 'new-card';
   avatarUploadInputRef.value?.click();
 };
 
@@ -1024,9 +1132,16 @@ const handleAvatarEditorCancel = () => {
   avatarEditorVisible.value = false;
   avatarEditorFile.value = null;
   avatarEditingCard.value = null;
+  avatarEditorTarget.value = '';
 };
 
 const handleAvatarEditorSave = async (file: File) => {
+  if (avatarEditorTarget.value === 'new-card') {
+    newCardAvatarFile.value = file;
+    message.success('头像已选择');
+    handleAvatarEditorCancel();
+    return;
+  }
   const card = avatarEditingCard.value;
   const channelId = resolvedChannelId.value;
   if (!card || !channelId) {
@@ -1634,6 +1749,32 @@ const openEditPanel = async (card: CharacterCard) => {
           :disabled="characterApiDisabled"
         />
       </n-form-item>
+      <n-form-item label="人物卡模板">
+        <n-select
+          v-model:value="newCardTemplateId"
+          :options="newCardTemplateOptions"
+          placeholder="选择人物卡模板"
+          :disabled="characterApiDisabled"
+        />
+      </n-form-item>
+      <n-form-item label="人物卡头像">
+        <div class="new-card-avatar-picker">
+          <n-button secondary :disabled="characterApiDisabled || creating" @click="handleNewCardAvatarTrigger">
+            <template #icon><n-icon :component="Upload" /></template>
+            {{ newCardAvatarFile ? '重新选择' : '选择头像' }}
+          </n-button>
+          <span v-if="newCardAvatarFile" class="new-card-avatar-picker__status">已裁剪头像</span>
+          <n-button
+            v-if="newCardAvatarFile"
+            text
+            type="error"
+            :disabled="creating"
+            @click="newCardAvatarFile = null"
+          >
+            移除
+          </n-button>
+        </div>
+      </n-form-item>
     </n-form>
   </n-modal>
 
@@ -1838,6 +1979,19 @@ const openEditPanel = async (card: CharacterCard) => {
 
 .card-avatar-file-input {
   display: none;
+}
+
+.new-card-avatar-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.new-card-avatar-picker__status {
+  color: var(--n-text-color-3);
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .character-card-header__actions {
