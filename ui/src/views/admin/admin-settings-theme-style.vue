@@ -416,10 +416,10 @@ const handleDeleteTheme = (themeId: string) => {
   }
 }
 
-const handleSetDefault = (themeId: string) => {
+const handleToggleDefault = (themeId: string) => {
   model.value = {
     ...model.value,
-    defaultPlatformThemeId: themeId,
+    defaultPlatformThemeId: model.value.defaultPlatformThemeId === themeId ? '' : themeId,
   }
 }
 
@@ -531,10 +531,9 @@ defineExpose<AdminThemeStyleExpose>({
                     <n-button
                       size="small"
                       secondary
-                      :disabled="model.defaultPlatformThemeId === theme.id"
-                      @click="handleSetDefault(theme.id)"
+                      @click="handleToggleDefault(theme.id)"
                     >
-                      设为默认
+                      {{ model.defaultPlatformThemeId === theme.id ? '取消默认' : '设为默认' }}
                     </n-button>
                     <n-button size="small" secondary @click="exportPlatformTheme(theme)">导出</n-button>
                     <n-popconfirm @positive-click="handleDeleteTheme(theme.id)">
