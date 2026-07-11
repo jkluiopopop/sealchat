@@ -13290,9 +13290,10 @@ chatEvent.on('message-created', (e?: Event) => {
             || incoming.member?.avatar
             || incoming.user?.avatar
             || undefined;
+          const notificationTitle = `${isMentioned ? '[有人@我]' : ''}${chat.curChannel?.name || 'SealChat'}`;
           
           pushStore.showNotification(
-            chat.curChannel?.name || 'SealChat',
+            notificationTitle,
             `${senderName}: ${preview || '发送了一条消息'}`,
             chat.curChannel?.id || '',
             avatarUrl,

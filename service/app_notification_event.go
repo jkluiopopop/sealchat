@@ -30,6 +30,7 @@ type AppNotificationMessageSource struct {
 	SenderAvatarURL     string
 	IsWhisper           bool
 	WhisperRecipientIDs []string
+	MentionDisplayNames map[string]string
 	CreatedAt           time.Time
 }
 
@@ -70,7 +71,7 @@ func BuildAppNotificationEvent(source AppNotificationMessageSource, recipientID 
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
 	}
-	plain := collapseAppNotificationWhitespace(NormalizeMessageContentToPlainText(source.Content))
+	plain := collapseAppNotificationWhitespace(renderAppNotificationMessageContent(source.Content, source.MentionDisplayNames))
 	if plain == "" {
 		plain = "发送了一条消息"
 	}
@@ -79,20 +80,27 @@ func BuildAppNotificationEvent(source AppNotificationMessageSource, recipientID 
 		senderName = "新消息"
 	}
 	body := truncateAppNotificationRunes(senderName+"："+plain, appNotificationBodyRuneLimit)
-	title := truncateAppNotificationRunes(strings.TrimSpace(source.ChannelName), appNotificationTitleRuneLimit)
-	if title == "" {
-		title = "SealChat"
-	}
 	eventType := "message.created"
 	notificationChannel := "message"
 	mentions := CollectMentionTargetIDsFromContent(source.Content)
+	mentionedCurrentUser := false
 	if _, ok := mentions[strings.TrimSpace(recipientID)]; ok {
+		mentionedCurrentUser = true
 		eventType = "message.mentioned"
 		notificationChannel = "mention"
 	} else if _, ok := mentions["all"]; ok {
+		mentionedCurrentUser = true
 		eventType = "message.mentioned"
 		notificationChannel = "mention"
 	}
+	title := strings.TrimSpace(source.ChannelName)
+	if title == "" {
+		title = "SealChat"
+	}
+	if mentionedCurrentUser {
+		title = "[有人@我]" + title
+	}
+	title = truncateAppNotificationRunes(title, appNotificationTitleRuneLimit)
 
 	base := strings.TrimRight(strings.TrimSpace(webURL), "/")
 	openPath := base + "/#/" + url.PathEscape(source.WorldID) + "/" + url.PathEscape(source.ChannelID) + "?msg=" + url.QueryEscape(source.MessageID)
@@ -196,7 +204,8 @@ func EnqueueAppNotificationForMessage(messageID, webURL string) error {
 		MessageID: message.ID, Content: message.Content,
 		SenderUserID: message.UserID, SenderName: senderName, SenderAvatarURL: senderAvatar,
 		IsWhisper: message.IsWhisper, WhisperRecipientIDs: uniqueAppNotificationStrings(whisperRecipients),
-		CreatedAt: message.CreatedAt,
+		MentionDisplayNames: resolveAppNotificationMentionDisplayNames(channel.ID, message.Content, message.ICMode),
+		CreatedAt:           message.CreatedAt,
 	}
 	canReadByUser := map[string]bool{}
 	for _, device := range devices {
@@ -223,6 +232,110 @@ func EnqueueAppNotificationForMessage(messageID, webURL string) error {
 		DefaultAppNotificationHub.Enqueue(device.ID, BuildAppNotificationEvent(source, device.UserID, sequence, instanceID, webURL))
 	}
 	return nil
+}
+
+func resolveAppNotificationMentionDisplayNames(channelID, content, icMode string) map[string]string {
+	names := make(map[string]string)
+	for userID := range CollectMentionTargetIDsFromContent(content) {
+		if userID == "all" {
+			names[userID] = "全体成员"
+			continue
+		}
+		if name := model.ResolveChannelMappedIdentityDisplayName(channelID, userID, icMode); name != "" {
+			names[userID] = name
+			continue
+		}
+		if member, _ := model.MemberGetByUserIDAndChannelIDBase(userID, channelID, "", false); member != nil && strings.TrimSpace(member.Nickname) != "" {
+			names[userID] = strings.TrimSpace(member.Nickname)
+			continue
+		}
+		if user := model.UserGet(userID); user != nil {
+			if name := strings.TrimSpace(user.Nickname); name != "" {
+				names[userID] = name
+				continue
+			}
+			if name := strings.TrimSpace(user.Username); name != "" {
+				names[userID] = name
+			}
+		}
+	}
+	return names
+}
+
+func renderAppNotificationMessageContent(content string, mentionDisplayNames map[string]string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return ""
+	}
+	if LooksLikeTipTapJSON(trimmed) {
+		var node appNotificationTipTapMentionNode
+		if json.Unmarshal([]byte(trimmed), &node) == nil {
+			return renderAppNotificationTipTapNode(&node, mentionDisplayNames)
+		}
+	}
+	content = appNotificationAtTagIDPattern.ReplaceAllStringFunc(content, func(match string) string {
+		id := appNotificationAtTagID(match)
+		return "@" + appNotificationMentionDisplayName(id, mentionDisplayNames, "")
+	})
+	content = htmlImageTagPattern.ReplaceAllString(content, "[图片]")
+	return cqImageTokenPattern.ReplaceAllString(NormalizeMessageContentToPlainText(content), "[图片]")
+}
+
+func renderAppNotificationTipTapNode(node *appNotificationTipTapMentionNode, mentionDisplayNames map[string]string) string {
+	if node == nil {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(node.Type)) {
+	case "text":
+		return node.Text
+	case "mention", "satorimention":
+		id, _ := node.Attrs["id"].(string)
+		fallback := ""
+		for _, key := range []string{"label", "name", "text"} {
+			if value, ok := node.Attrs[key].(string); ok && strings.TrimSpace(value) != "" {
+				fallback = value
+				break
+			}
+		}
+		if fallback == "" {
+			fallback = node.Text
+		}
+		return "@" + appNotificationMentionDisplayName(id, mentionDisplayNames, fallback)
+	case "image":
+		return "[图片]"
+	}
+	var result strings.Builder
+	for index := range node.Content {
+		result.WriteString(renderAppNotificationTipTapNode(&node.Content[index], mentionDisplayNames))
+	}
+	return result.String()
+}
+
+func appNotificationAtTagID(content string) string {
+	match := appNotificationAtTagIDPattern.FindStringSubmatch(content)
+	for _, index := range []int{1, 2} {
+		if index < len(match) && strings.TrimSpace(match[index]) != "" {
+			return strings.TrimSpace(match[index])
+		}
+	}
+	return ""
+}
+
+func appNotificationMentionDisplayName(id string, names map[string]string, fallback string) string {
+	id = strings.TrimSpace(id)
+	if name := strings.TrimSpace(names[id]); name != "" {
+		return name
+	}
+	if id == "all" {
+		return "全体成员"
+	}
+	if name := strings.TrimSpace(fallback); name != "" {
+		return strings.TrimPrefix(name, "@")
+	}
+	if id != "" {
+		return id
+	}
+	return "用户"
 }
 
 func appNotificationWorldIDSet(raw string) map[string]struct{} {
