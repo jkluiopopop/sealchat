@@ -51,6 +51,9 @@ func AppNotificationStream(c *fiber.Ctx) error {
 	c.Context().SetBodyStreamWriter(func(writer *bufio.Writer) {
 		defer releaseStream()
 		defer cancelSubscription()
+		if !writeAppNotificationStreamReady(writer) {
+			return
+		}
 		lastEventID := cursor
 		if !writeAppNotificationEvents(writer, initial, &lastEventID) {
 			return
@@ -74,6 +77,13 @@ func AppNotificationStream(c *fiber.Ctx) error {
 		}
 	})
 	return nil
+}
+
+func writeAppNotificationStreamReady(writer *bufio.Writer) bool {
+	if _, err := fmt.Fprint(writer, ": connected\nretry: 5000\n\n"); err != nil {
+		return false
+	}
+	return writer.Flush() == nil
 }
 
 func AppNotificationAcks(c *fiber.Ctx) error {
