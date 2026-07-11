@@ -45,6 +45,108 @@ const props = defineProps<{
   windowId: string;
 }>();
 
+const MOBILE_PAN_STYLE_MARKER = 'data-sealchat-mobile-pan="1"';
+const MOBILE_PAN_STYLE = `<style ${MOBILE_PAN_STYLE_MARKER}>
+@media (max-width: 767px) {
+  html,
+  body {
+    overflow-x: auto !important;
+    touch-action: none !important;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+</style>`;
+
+const MOBILE_PAN_HOOK_MARKER = 'data-sealchat-mobile-pan-hook="1"';
+const MOBILE_PAN_HOOK_SCRIPT = `<script ${MOBILE_PAN_HOOK_MARKER}>
+(function () {
+  if (!window.matchMedia || !window.matchMedia('(max-width: 767px)').matches) return;
+  var startX = 0;
+  var startY = 0;
+  var startLeft = 0;
+  var startTop = 0;
+  var horizontalScroller = null;
+  var verticalScroller = null;
+  var tracking = false;
+  var moved = false;
+  var lastTapTarget = null;
+  var lastTapTime = 0;
+
+  function findScroller(target, axis) {
+    var node = target instanceof Element ? target : null;
+    while (node && node !== document.documentElement) {
+      if (axis === 'x' && node.scrollWidth > node.clientWidth + 1) return node;
+      if (axis === 'y' && node.scrollHeight > node.clientHeight + 1) return node;
+      node = node.parentElement;
+    }
+    var root = document.scrollingElement || document.documentElement || document.body;
+    if (axis === 'x' && root.scrollWidth > root.clientWidth + 1) return root;
+    if (axis === 'y' && root.scrollHeight > root.clientHeight + 1) return root;
+    return null;
+  }
+
+  function isEditable(target) {
+    return target instanceof Element && !!target.closest('input, textarea, select, [contenteditable="true"]');
+  }
+
+  document.addEventListener('touchstart', function (event) {
+    if (event.touches.length !== 1 || isEditable(event.target)) return;
+    var touch = event.touches[0];
+    horizontalScroller = findScroller(event.target, 'x');
+    verticalScroller = findScroller(event.target, 'y');
+    tracking = true;
+    moved = false;
+    startX = touch.clientX;
+    startY = touch.clientY;
+    startLeft = horizontalScroller ? horizontalScroller.scrollLeft : 0;
+    startTop = verticalScroller ? verticalScroller.scrollTop : 0;
+  }, { passive: true });
+
+  document.addEventListener('touchmove', function (event) {
+    if (!tracking || event.touches.length !== 1) return;
+    var touch = event.touches[0];
+    var dx = touch.clientX - startX;
+    var dy = touch.clientY - startY;
+    if (!moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+    moved = true;
+    event.preventDefault();
+    if (horizontalScroller) horizontalScroller.scrollLeft = startLeft - dx;
+    if (verticalScroller) verticalScroller.scrollTop = startTop - dy;
+  }, { passive: false });
+
+  function stopPan() {
+    tracking = false;
+    moved = false;
+    horizontalScroller = null;
+    verticalScroller = null;
+  }
+
+  document.addEventListener('touchend', function (event) {
+    var target = event.target;
+    var now = Date.now();
+    if (!moved && target instanceof Element && !isEditable(target) && !target.closest('[data-tool-kind]')) {
+      if (target === lastTapTarget && now - lastTapTime <= 360) {
+        lastTapTarget = null;
+        lastTapTime = 0;
+        target.dispatchEvent(new MouseEvent('dblclick', {
+          bubbles: true,
+          cancelable: true,
+          view: window
+        }));
+      } else {
+        lastTapTarget = target;
+        lastTapTime = now;
+      }
+    } else if (moved) {
+      lastTapTarget = null;
+      lastTapTime = 0;
+    }
+    stopPan();
+  }, { passive: true });
+  document.addEventListener('touchcancel', stopPan, { passive: true });
+})();
+<\/script>`;
+
 const emit = defineEmits<{
   iframeEvent: [event: SealChatEvent];
 }>();
@@ -184,6 +286,20 @@ const hasTemplateFonts = computed(() => parseCharacterSheetFontManifest(props.ht
 
 const finalSrcDoc = computed(() => {
   let html = props.html || '';
+  if (!html.includes(MOBILE_PAN_STYLE_MARKER)) {
+    if (/<\/head>/i.test(html)) {
+      html = html.replace(/<\/head>/i, `${MOBILE_PAN_STYLE}</head>`);
+    } else {
+      html = `${MOBILE_PAN_STYLE}\n${html}`;
+    }
+  }
+  if (!html.includes(MOBILE_PAN_HOOK_MARKER)) {
+    if (/<\/body>/i.test(html)) {
+      html = html.replace(/<\/body>/i, `${MOBILE_PAN_HOOK_SCRIPT}</body>`);
+    } else {
+      html = `${html}\n${MOBILE_PAN_HOOK_SCRIPT}`;
+    }
+  }
   if (!html.includes(EDIT_HOOK_MARKER)) {
     if (/<\/body>/i.test(html)) {
       html = html.replace(/<\/body>/i, `${EDIT_HOOK_SCRIPT}</body>`);
