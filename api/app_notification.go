@@ -33,6 +33,7 @@ func bindAppNotificationRoutes(app *fiber.App, webURL string) {
 	base := joinWebPath(webURL, "api/app-notify/v1")
 	app.Get(base+"/authorize", SignCheckMiddleware, AppNotificationAuthorizeGet)
 	app.Post(base+"/authorize", SignCheckMiddleware, AppNotificationAuthorizePost)
+	app.Post(base+"/authorize/automatic", SignCheckMiddleware, AppNotificationAuthorizeAutomatic)
 	app.Post(base+"/token", AppNotificationToken)
 	device := app.Group(base, AppNotificationDeviceMiddleware)
 	device.Get("/device", AppNotificationDeviceGet)
@@ -76,13 +77,43 @@ func AppNotificationDiscovery(c *fiber.Ctx) error {
 		"instance":       fiber.Map{"instance_id": instanceID, "name": name, "base_url": origin + normalizeWebRoot(webURL)},
 		"app_notification": fiber.Map{
 			"enabled": true, "api_version": "1", "api_base": base,
-			"authorization_endpoint": base + "/authorize", "token_endpoint": base + "/token",
+			"authorization_endpoint": base + "/authorize", "automatic_authorization_endpoint": base + "/authorize/automatic",
+			"token_endpoint":  base + "/token",
 			"stream_endpoint": base + "/stream", "ack_endpoint": base + "/acks",
 			"device_endpoint": base + "/device", "context_endpoint": base + "/device/context",
 			"heartbeat_seconds": appNotificationHeartbeat, "event_retention_seconds": 3600,
-			"features": fiber.Map{"sse": true, "event_replay": true, "opened_ack": true, "world_scoped": true, "world_whitelist": true},
+			"features": fiber.Map{"sse": true, "event_replay": true, "opened_ack": true, "world_scoped": true, "world_whitelist": true, "automatic_authorization": true},
 		},
 	})
+}
+
+type appNotificationDeviceDescriptor struct {
+	InstallationID string `json:"installation_id"`
+	Name           string `json:"name"`
+	Platform       string `json:"platform"`
+	AppVersion     string `json:"app_version"`
+	AppBuild       int    `json:"app_build"`
+	OSVersion      string `json:"os_version"`
+	Locale         string `json:"locale"`
+}
+
+type appNotificationAutomaticAuthorizationRequest struct {
+	Device appNotificationDeviceDescriptor `json:"device"`
+}
+
+func AppNotificationAuthorizeAutomatic(c *fiber.Ctx) error {
+	user, ok := c.Locals("user").(*model.UserModel)
+	if !ok || user == nil || user.ID == "" {
+		return sendAppNotificationError(c, http.StatusUnauthorized, "login_required", "请先登录")
+	}
+	var body appNotificationAutomaticAuthorizationRequest
+	if err := c.BodyParser(&body); err != nil {
+		return sendAppNotificationError(c, http.StatusBadRequest, "invalid_request", "请求格式错误")
+	}
+	if strings.TrimSpace(body.Device.InstallationID) == "" || body.Device.Platform != "android" {
+		return sendAppNotificationError(c, http.StatusBadRequest, "invalid_request", "设备参数无效")
+	}
+	return issueAppNotificationDeviceToken(c, user.ID, body.Device)
 }
 
 func AppNotificationAuthorizeGet(c *fiber.Ctx) error {
@@ -134,20 +165,12 @@ func AppNotificationAuthorizePost(c *fiber.Ctx) error {
 }
 
 type appNotificationTokenRequest struct {
-	GrantType    string `json:"grant_type"`
-	ClientID     string `json:"client_id"`
-	Code         string `json:"code"`
-	RedirectURI  string `json:"redirect_uri"`
-	CodeVerifier string `json:"code_verifier"`
-	Device       struct {
-		InstallationID string `json:"installation_id"`
-		Name           string `json:"name"`
-		Platform       string `json:"platform"`
-		AppVersion     string `json:"app_version"`
-		AppBuild       int    `json:"app_build"`
-		OSVersion      string `json:"os_version"`
-		Locale         string `json:"locale"`
-	} `json:"device"`
+	GrantType    string                          `json:"grant_type"`
+	ClientID     string                          `json:"client_id"`
+	Code         string                          `json:"code"`
+	RedirectURI  string                          `json:"redirect_uri"`
+	CodeVerifier string                          `json:"code_verifier"`
+	Device       appNotificationDeviceDescriptor `json:"device"`
 }
 
 func AppNotificationToken(c *fiber.Ctx) error {
@@ -165,9 +188,13 @@ func AppNotificationToken(c *fiber.Ctx) error {
 	if err := validateAppNotificationPKCE(body.CodeVerifier, grant.CodeChallenge); err != nil {
 		return sendAppNotificationError(c, http.StatusBadRequest, "invalid_grant", "PKCE 校验失败")
 	}
-	device, token, err := model.UpsertAppNotificationDevice(grant.UserID, model.AppNotificationDeviceInput{
-		InstallationID: body.Device.InstallationID, Name: body.Device.Name, Platform: body.Device.Platform,
-		AppVersion: body.Device.AppVersion, AppBuild: body.Device.AppBuild, OSVersion: body.Device.OSVersion, Locale: body.Device.Locale,
+	return issueAppNotificationDeviceToken(c, grant.UserID, body.Device)
+}
+
+func issueAppNotificationDeviceToken(c *fiber.Ctx, userID string, descriptor appNotificationDeviceDescriptor) error {
+	device, token, err := model.UpsertAppNotificationDevice(userID, model.AppNotificationDeviceInput{
+		InstallationID: descriptor.InstallationID, Name: descriptor.Name, Platform: descriptor.Platform,
+		AppVersion: descriptor.AppVersion, AppBuild: descriptor.AppBuild, OSVersion: descriptor.OSVersion, Locale: descriptor.Locale,
 	})
 	if err != nil {
 		return sendAppNotificationError(c, http.StatusInternalServerError, "internal_error", "创建设备失败")
