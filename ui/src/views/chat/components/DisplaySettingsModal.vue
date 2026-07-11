@@ -78,6 +78,33 @@ const paletteModeOptions: Array<{ label: string; value: DisplaySettings['palette
   { label: '日间模式', value: 'day' },
   { label: '夜间模式', value: 'night' },
 ]
+const systemThemeOptions = computed(() => [
+  { label: '系统基础配色', value: 'base:' },
+  ...display.platformThemes.map(theme => ({ label: `平台 · ${theme.name}`, value: `platform:${theme.id}` })),
+  ...display.settings.customThemes.map(theme => ({ label: `个人 · ${theme.name}`, value: `personal:${theme.id}` })),
+])
+const parseSystemThemeBinding = (value: string): DisplaySettings['systemDayTheme'] => {
+  const [source, themeId = ''] = value.split(':', 2)
+  if ((source === 'platform' || source === 'personal') && themeId) {
+    return { source, themeId }
+  }
+  return { source: 'base', themeId: null }
+}
+const formatSystemThemeBinding = (binding: DisplaySettings['systemDayTheme']) => (
+  binding.source === 'base' || !binding.themeId ? 'base:' : `${binding.source}:${binding.themeId}`
+)
+const systemDayThemeValue = computed({
+  get: () => formatSystemThemeBinding(draft.systemDayTheme),
+  set: value => { draft.systemDayTheme = parseSystemThemeBinding(value) },
+})
+const systemNightThemeValue = computed({
+  get: () => formatSystemThemeBinding(draft.systemNightTheme),
+  set: value => { draft.systemNightTheme = parseSystemThemeBinding(value) },
+})
+const setManualPalette = (palette: DisplaySettings['palette']) => {
+  draft.followSystemTheme = false
+  draft.palette = palette
+}
 const avatarVisibilityScopeOptions: Array<{ label: string; value: AvatarVisibilityScope }> = [
   { label: '全部', value: 'all' },
   { label: '场内', value: 'ic' },
@@ -511,10 +538,37 @@ const handleThemeSelectionModeUpdate = (mode: ThemeSelectionMode) => {
             :type="draft.palette === option.value ? 'primary' : 'default'"
             :secondary="draft.palette !== option.value"
             :aria-pressed="draft.palette === option.value"
-            @click="draft.palette = option.value"
+            @click="setManualPalette(option.value)"
           >
             <span class="setting-mode-button__label">{{ option.label }}</span>
           </n-button>
+        </div>
+        <div class="theme-management-row">
+          <div class="theme-management-summary">
+            <span class="active-theme-name">跟随系统主题</span>
+            <span class="theme-management-meta">系统外观变化时自动切换日间或夜间配色</span>
+          </div>
+          <n-switch v-model:value="draft.followSystemTheme" />
+        </div>
+        <div v-if="draft.followSystemTheme" class="theme-management-row">
+          <div class="theme-management-summary">
+            <span class="active-theme-name">日间主题</span>
+          </div>
+          <n-select
+            v-model:value="systemDayThemeValue"
+            :options="systemThemeOptions"
+            style="width: 280px"
+          />
+        </div>
+        <div v-if="draft.followSystemTheme" class="theme-management-row">
+          <div class="theme-management-summary">
+            <span class="active-theme-name">夜间主题</span>
+          </div>
+          <n-select
+            v-model:value="systemNightThemeValue"
+            :options="systemThemeOptions"
+            style="width: 280px"
+          />
         </div>
       </section>
 
