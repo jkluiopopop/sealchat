@@ -5,7 +5,7 @@ import { useDisplayStore } from '@/stores/display';
 import { useUserStore } from '@/stores/user';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { Plus } from '@vicons/tabler';
-import { Menu, SettingsSharp, Notifications, NotificationsOff, VolumeHighOutline, VolumeMediumOutline, VolumeMuteOutline, EarthOutline, BookOutline, MegaphoneOutline } from '@vicons/ionicons5';
+import { Menu, SettingsSharp, Notifications, NotificationsOff, VolumeHighOutline, VolumeMediumOutline, VolumeMuteOutline, EarthOutline, BookOutline, MegaphoneOutline, PhonePortraitOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted, computed, withDefaults, defineProps, defineEmits } from 'vue';
 import Notif from '../notif.vue'
@@ -462,6 +462,10 @@ const channelNameWrapEnabled = computed({
 
 const toggleSubChannelDisplay = () => {
   showAllSubChannels.value = !showAllSubChannels.value;
+};
+
+const openAppNotificationSettings = () => {
+  chatEvent.emit('open-app-notification-settings');
 };
 
 const toggleChannelNameWrap = () => {
@@ -939,6 +943,18 @@ const handleAckWorldAnnouncement = async () => {
               </template>
               <span v-if="pushStore.supported">开启后，切换标签页或最小化时可收到新消息通知</span>
               <span v-else>您的浏览器不支持通知功能</span>
+            </n-tooltip>
+
+            <n-tooltip placement="top" trigger="hover">
+              <template #trigger>
+                <n-button size="tiny" block tertiary class="sidebar-toggle-active" @click="openAppNotificationSettings">
+                  <template #icon>
+                    <n-icon :component="PhonePortraitOutline" />
+                  </template>
+                  APP 推送设置
+                </n-button>
+              </template>
+              <span>配置移动端消息推送</span>
             </n-tooltip>
 
             <n-tooltip placement="top" trigger="hover">
