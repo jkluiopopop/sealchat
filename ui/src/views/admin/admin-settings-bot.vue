@@ -4,12 +4,13 @@ import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { urlBase } from '@/stores/_config';
 import { useChatStore, chatEvent } from '@/stores/chat';
 import { useUtilsStore } from '@/stores/utils';
-import type { BotOneBotConfig } from '@/types';
+import type { BotOneBotConfig, ServerConfig } from '@/types';
 import { copyTextWithFallback } from '@/utils/clipboard';
 import AdminBotActiveReferencePopover from './components/AdminBotActiveReferencePopover.vue';
 import { copyBotTokenWithPreviewFallback } from './utils/botTokenClipboard';
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader';
-import { Refresh, Search, Trash } from '@vicons/tabler';
+import { InfoCircle, Refresh, Search, Trash } from '@vicons/tabler';
+import { cloneDeep } from 'lodash-es';
 import type { DataTableColumns } from 'naive-ui';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
@@ -119,6 +120,9 @@ const showSystemBots = ref(false);
 const keyword = ref('');
 const loading = ref(false);
 const cleanupLoading = ref(false);
+const botIncomingParenAsOoc = ref(true);
+const botIncomingParenAsOocLoading = ref(false);
+const botIncomingParenAsOocSaving = ref(false);
 const rows = ref<BotListItem[]>([]);
 const total = ref(0);
 const checkedRowKeys = ref<string[]>([]);
@@ -311,6 +315,44 @@ const formatToken = (token?: string) => {
 const syncBotListSideEffects = () => {
   chat.invalidateBotListCache();
   chatEvent.emit('bot-list-updated');
+};
+
+const syncBotIncomingParenAsOocFromConfig = (config?: ServerConfig | null) => {
+  botIncomingParenAsOoc.value = config?.botIncomingParenAsOoc ?? true;
+};
+
+const loadBotIncomingParenAsOocConfig = async () => {
+  botIncomingParenAsOocLoading.value = true;
+  try {
+    if (utils.config) {
+      syncBotIncomingParenAsOocFromConfig(utils.config);
+      return;
+    }
+    const resp = await utils.configGet();
+    syncBotIncomingParenAsOocFromConfig(resp.data as ServerConfig);
+  } catch (error: any) {
+    message.error(`BOT 入站设置加载失败: ${error?.response?.data?.message || error?.message || '未知错误'}`);
+  } finally {
+    botIncomingParenAsOocLoading.value = false;
+  }
+};
+
+const saveBotIncomingParenAsOoc = async () => {
+  botIncomingParenAsOocSaving.value = true;
+  try {
+    if (!utils.config) {
+      await utils.configGet();
+    }
+    const payload = cloneDeep((utils.config || {}) as ServerConfig);
+    payload.botIncomingParenAsOoc = botIncomingParenAsOoc.value;
+    await utils.configSet(payload);
+    syncBotIncomingParenAsOocFromConfig(payload);
+    message.success('BOT 入站括号转场外设置已保存');
+  } catch (error: any) {
+    message.error(`BOT 入站设置保存失败: ${error?.response?.data?.message || error?.message || '未知错误'}`);
+  } finally {
+    botIncomingParenAsOocSaving.value = false;
+  }
 };
 
 const openCreateModal = () => {
@@ -728,7 +770,10 @@ watch(pageSize, () => {
 });
 
 onMounted(async () => {
-  await refresh();
+  await Promise.allSettled([
+    loadBotIncomingParenAsOocConfig(),
+    refresh(),
+  ]);
 });
 
 onUnmounted(() => {
@@ -760,6 +805,26 @@ onUnmounted(() => {
             <span>显示系统 BOT</span>
             <n-switch v-model:value="showSystemBots" />
           </label>
+          <div class="bot-management__inline-setting">
+            <n-tooltip trigger="hover" placement="top">
+              <template #trigger>
+                <label class="bot-management__switch bot-management__switch--hint">
+                  <span>括号转场外</span>
+                  <n-icon :component="InfoCircle" size="14" />
+                </label>
+              </template>
+              外接 BOT 入站消息忽略前导空白后，若以 "(" 或 "（" 开头，则自动按场外消息发送。
+            </n-tooltip>
+            <n-switch v-model:value="botIncomingParenAsOoc" :loading="botIncomingParenAsOocLoading" />
+            <n-button
+              size="small"
+              :loading="botIncomingParenAsOocSaving"
+              :disabled="botIncomingParenAsOocLoading"
+              @click="saveBotIncomingParenAsOoc"
+            >
+              保存
+            </n-button>
+          </div>
           <n-button :loading="loading" @click="refresh">
             <template #icon>
               <n-icon :component="Refresh" />
@@ -1039,6 +1104,17 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.bot-management__inline-setting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bot-management__switch--hint {
+  cursor: help;
 }
 
 .bot-management__toolbar {

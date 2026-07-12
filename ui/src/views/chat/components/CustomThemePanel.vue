@@ -5,6 +5,7 @@ import { useMessage } from 'naive-ui'
 import { useDisplayStore, type CustomTheme, type CustomThemeColors, type ThemeSelectionMode } from '@/stores/display'
 import { presetThemes, dayBaseTheme, nightBaseTheme } from '@/config/presetThemes'
 import { themeColorFields } from '@/services/theme/themeColorFields'
+import { resolveEffectiveDisplayPalette } from '@/services/theme/systemPalette'
 import ThemeLivePreviewFloating from './ThemeLivePreviewFloating.vue'
 
 interface Props {
@@ -372,7 +373,7 @@ const readCurrentThemeColorsFromCss = (): CustomThemeColors => {
 }
 
 const getPaletteBaseColors = (): CustomThemeColors => {
-  return display.settings.palette === 'night'
+  return resolveEffectiveDisplayPalette(display.settings.palette) === 'night'
     ? { ...nightBaseTheme.colors }
     : { ...dayBaseTheme.colors }
 }

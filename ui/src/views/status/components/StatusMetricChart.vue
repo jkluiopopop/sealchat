@@ -25,9 +25,9 @@ let resizeTimers: number[] = [];
 
 const isDark = computed(() => {
   if (display.settings.customThemeEnabled && display.settings.activeCustomThemeId) {
-    return display.settings.palette === 'night';
+    return display.palette === 'night';
   }
-  return display.settings.palette === 'night';
+  return display.palette === 'night';
 });
 
 const chart = useECharts(chartRef, isDark, echarts);

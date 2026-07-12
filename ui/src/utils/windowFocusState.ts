@@ -5,6 +5,23 @@ export interface WindowFocusState {
   isVisible: boolean;
 }
 
+type NavigatorWithUserAgentData = Navigator & {
+  userAgentData?: { mobile?: boolean };
+};
+
+export const isMobileBrowserRuntime = (): boolean => {
+  if (typeof navigator === 'undefined') return false;
+  const uaDataMobile = (navigator as NavigatorWithUserAgentData).userAgentData?.mobile;
+  if (typeof uaDataMobile === 'boolean') return uaDataMobile;
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+};
+
+export const shouldSuppressExternalNotification = (): boolean => {
+  if (!isMobileBrowserRuntime()) return true;
+  if (typeof document === 'undefined') return true;
+  return document.visibilityState !== 'hidden';
+};
+
 const readDocumentFocusState = (doc: Document): WindowFocusState => ({
   hasFocus: typeof doc.hasFocus === 'function' ? doc.hasFocus() : true,
   isVisible: doc.visibilityState !== 'hidden',

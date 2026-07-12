@@ -56,6 +56,11 @@ export const useUserStore = defineStore({
   },
 
   actions: {
+    setAccessToken(accessToken: string) {
+      this._accessToken = persistAccessToken(accessToken);
+      return this._accessToken;
+    },
+
     shouldAutoInitChatAfterSessionCheck() {
       if (typeof window === 'undefined') return true;
       const hash = window.location.hash || '';
@@ -93,7 +98,7 @@ export const useUserStore = defineStore({
 
       // 将 accessToken 存入 localStorage 中
       // Cookies.set('accessToken', accessToken, { expires: 7 })
-      this._accessToken = persistAccessToken(accessToken);
+      this.setAccessToken(accessToken);
 
       return resp;
     },
@@ -196,7 +201,7 @@ export const useUserStore = defineStore({
         const accessToken = data.token;
 
         // 将 accessToken 存入 localStorage 中
-        this._accessToken = persistAccessToken(accessToken)
+        this.setAccessToken(accessToken)
         // Cookies.set('accessToken', accessToken, { expires: 7 })
 
         return ''
@@ -269,7 +274,7 @@ export const useUserStore = defineStore({
       const resp = await api.post('api/v1/email-auth/signup', payload);
       const data = resp.data as { token: string; user: any };
       if (data.token) {
-        this._accessToken = persistAccessToken(data.token);
+        this.setAccessToken(data.token);
       }
       return resp;
     },

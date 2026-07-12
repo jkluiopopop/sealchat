@@ -11,6 +11,7 @@ import { resolveAttachmentUrl } from '@/composables/useAttachmentResolver';
 import { useLoginGlass } from '@/composables/useLoginGlass';
 import { useCapWidget } from '@/composables/useCapWidget';
 import { normalizePageDescription } from '@/utils/pageDescription';
+import { detectQuickLoginRequesterEnvironment, useQuickLoginStore } from '@/stores/quickLogin';
 
 declare global {
   interface Window {
@@ -55,8 +56,19 @@ const {
 } = useCapWidget(CAPTCHA_SCENE);
 
 const userStore = useUserStore();
+const quickLoginStore = useQuickLoginStore();
 const utils = useUtilsStore();
 const config = ref<ServerConfig | null>(null);
+const quickLoginVisible = ref(false);
+const quickLoginChecking = ref(false);
+const quickLoginSubmitting = ref(false);
+const quickLoginPolling = ref(false);
+const quickLoginWaitingVisible = ref(false);
+const quickLoginRequestId = ref('');
+const quickLoginRequesterToken = ref('');
+const quickLoginExpiresAt = ref(0);
+const quickLoginHint = ref(quickLoginStore.hint);
+let quickLoginPollTimer: ReturnType<typeof setTimeout> | null = null;
 
 const signInTitle = computed(() => {
   const title = (config.value?.pageTitle ?? utils.config?.pageTitle)?.trim();
@@ -124,6 +136,53 @@ const captchaImageUrl = computed(() => {
 const rules: FormRules = {
   account: [{ required: true, message: '请输入用户名/昵称/邮箱' }],
   password: [{ required: true, message: '请输入密码' }],
+};
+
+const clearQuickLoginPollTimer = () => {
+  if (quickLoginPollTimer !== null) {
+    clearTimeout(quickLoginPollTimer);
+    quickLoginPollTimer = null;
+  }
+};
+
+const resetQuickLoginRequestState = (closeModal = true) => {
+  clearQuickLoginPollTimer();
+  quickLoginSubmitting.value = false;
+  quickLoginPolling.value = false;
+  quickLoginRequestId.value = '';
+  quickLoginRequesterToken.value = '';
+  quickLoginExpiresAt.value = 0;
+  if (closeModal) {
+    quickLoginWaitingVisible.value = false;
+  }
+};
+
+const handleQuickLoginWaitModalUpdate = (show: boolean) => {
+  if (show) {
+    quickLoginWaitingVisible.value = true;
+    return;
+  }
+  resetQuickLoginRequestState(true);
+};
+
+const ensureQuickLoginPrerequisites = async () => {
+  const account = model.value.account.trim();
+  if (!account) {
+    message.error('请输入用户名/昵称/邮箱');
+    return false;
+  }
+  return true;
+};
+
+const finishQuickLogin = async (token: string) => {
+  if (!token) {
+    throw new Error('缺少登录令牌');
+  }
+  resetQuickLoginRequestState(true);
+  userStore.setAccessToken(token);
+  await userStore.checkUserSession({ force: true });
+  message.success('快捷登录成功，即将返回首页');
+  await router.replace({ name: 'home' });
 };
 
 const ensureTurnstileScript = async () => {
@@ -285,6 +344,127 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () => model.value.account,
+  (value, previous) => {
+    if (value === previous || quickLoginWaitingVisible.value) {
+      return;
+    }
+    quickLoginVisible.value = false;
+    quickLoginHint.value = quickLoginStore.hint;
+  },
+);
+
+const scheduleQuickLoginPoll = () => {
+  clearQuickLoginPollTimer();
+  if (!quickLoginRequestId.value || !quickLoginRequesterToken.value || !quickLoginWaitingVisible.value) {
+    return;
+  }
+  quickLoginPollTimer = window.setTimeout(async () => {
+    if (!quickLoginRequestId.value || !quickLoginRequesterToken.value || !quickLoginWaitingVisible.value) {
+      return;
+    }
+    if (quickLoginExpiresAt.value && Date.now() >= quickLoginExpiresAt.value) {
+      resetQuickLoginRequestState(true);
+      message.warning('快捷登录已超时，请改用密码登录');
+      return;
+    }
+
+    let shouldContinue = false;
+    quickLoginPolling.value = true;
+    try {
+      const resp = await quickLoginStore.poll({
+        requestId: quickLoginRequestId.value,
+        requesterToken: quickLoginRequesterToken.value,
+      });
+      switch (resp.status) {
+        case 'pending':
+        case 'approved':
+          shouldContinue = true;
+          break;
+        case 'consumed':
+          if (resp.token) {
+            await finishQuickLogin(resp.token);
+            return;
+          }
+          resetQuickLoginRequestState(true);
+          message.error('快捷登录返回异常，请改用密码登录');
+          return;
+        case 'denied':
+          resetQuickLoginRequestState(true);
+          message.warning('快捷登录未通过，请改用密码登录');
+          return;
+        default:
+          resetQuickLoginRequestState(true);
+          message.warning('快捷登录已失效，请改用密码登录');
+          return;
+      }
+    } catch (err) {
+      resetQuickLoginRequestState(true);
+      message.error((err as any)?.response?.data?.message || '快捷登录已失效，请改用密码登录');
+      return;
+    } finally {
+      quickLoginPolling.value = false;
+      if (shouldContinue) {
+        scheduleQuickLoginPoll();
+      }
+    }
+  }, 1500);
+};
+
+const handleQuickLoginClick = async () => {
+  if (quickLoginSubmitting.value || quickLoginPolling.value) {
+    return;
+  }
+  if (!(await ensureQuickLoginPrerequisites())) {
+    return;
+  }
+
+  quickLoginSubmitting.value = true;
+  try {
+    const env = detectQuickLoginRequesterEnvironment();
+    const resp = await quickLoginStore.request({
+      account: model.value.account.trim(),
+      requesterBrowser: env.browser,
+      requesterDevice: env.device,
+    });
+    quickLoginRequestId.value = resp.requestId;
+    quickLoginRequesterToken.value = resp.requesterToken;
+    quickLoginExpiresAt.value = Number(resp.expiresAt || 0);
+    quickLoginWaitingVisible.value = true;
+    scheduleQuickLoginPoll();
+  } catch (err) {
+    message.error((err as any)?.response?.data?.message || '快捷登录暂不可用，请改用密码登录');
+  } finally {
+    quickLoginSubmitting.value = false;
+  }
+};
+
+const handleAccountBlur = async () => {
+  const account = model.value.account.trim();
+  if (!account) {
+    quickLoginVisible.value = false;
+    quickLoginHint.value = quickLoginStore.hint;
+    return;
+  }
+  quickLoginChecking.value = true;
+  try {
+    const resp = await quickLoginStore.check(account);
+    if (model.value.account.trim() !== account) {
+      return;
+    }
+    quickLoginVisible.value = resp.showQuickLoginButton === true;
+    quickLoginHint.value = resp.hint || quickLoginStore.hint;
+  } catch {
+    if (model.value.account.trim() === account) {
+      quickLoginVisible.value = false;
+      quickLoginHint.value = quickLoginStore.hint;
+    }
+  } finally {
+    quickLoginChecking.value = false;
+  }
+};
+
 const handleValidateButtonClick = async (e: MouseEvent) => {
   e.preventDefault();
   formRef.value?.validate(async (errors) => {
@@ -363,6 +543,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  clearQuickLoginPollTimer();
   destroyTurnstile();
   destroyCapWidget();
 });
@@ -386,7 +567,7 @@ onBeforeUnmount(() => {
 
       <n-form ref="formRef" :model="model" :rules="rules" class="w-full px-8 max-w-md">
       <n-form-item path="account" label="用户名/昵称/邮箱">
-        <n-input v-model:value="model.account" placeholder="用户名/昵称/邮箱" @keydown.enter.prevent />
+        <n-input v-model:value="model.account" placeholder="用户名/昵称/邮箱" @keydown.enter.prevent @blur="handleAccountBlur" />
       </n-form-item>
 
         <n-form-item path="password" label="密码">
@@ -438,15 +619,62 @@ onBeforeUnmount(() => {
                 <n-button v-if="emailAuthEnabled" type="text" @click="router.push({ name: 'password-recovery' })">忘记密码</n-button>
               </div>
 
-              <n-button :disabled="model.account === ''" round type="primary" @click="handleValidateButtonClick">
-                登录
-              </n-button>
+              <div class="sign-in-actions">
+                <n-tooltip v-if="quickLoginVisible" trigger="hover">
+                  <template #trigger>
+                    <n-button
+                      round
+                      secondary
+                      :loading="quickLoginSubmitting"
+                      :disabled="quickLoginChecking || model.account.trim() === ''"
+                      @click="handleQuickLoginClick"
+                    >
+                      快捷登录
+                    </n-button>
+                  </template>
+                  {{ quickLoginHint }}
+                </n-tooltip>
+
+                <n-button :disabled="model.account === ''" round type="primary" @click="handleValidateButtonClick">
+                  登录
+                </n-button>
+              </div>
             </div>
           </n-col>
         </n-row>
       </n-form>
 
     </div>
+
+    <n-modal
+      :show="quickLoginWaitingVisible"
+      preset="card"
+      title="等待快捷登录确认"
+      style="width: min(440px, 92vw)"
+      @update:show="handleQuickLoginWaitModalUpdate"
+    >
+      <n-space vertical size="large">
+        <n-alert type="info" :show-icon="false">
+          已向其他在线端发送确认请求，请在任一在线端确认登录。
+        </n-alert>
+
+        <n-descriptions label-placement="left" :column="1" bordered size="small">
+          <n-descriptions-item label="账号输入">
+            {{ model.account.trim() || '-' }}
+          </n-descriptions-item>
+          <n-descriptions-item label="请求有效期至">
+            {{ quickLoginExpiresAt ? new Date(quickLoginExpiresAt).toLocaleString() : '-' }}
+          </n-descriptions-item>
+          <n-descriptions-item label="当前状态">
+            {{ quickLoginPolling ? '等待确认中' : '请求已发出' }}
+          </n-descriptions-item>
+        </n-descriptions>
+
+        <n-button block @click="handleQuickLoginWaitModalUpdate(false)">
+          关闭
+        </n-button>
+      </n-space>
+    </n-modal>
   </div>
 </template>
   
@@ -510,5 +738,13 @@ onBeforeUnmount(() => {
   font-size: 0.875rem;
   line-height: 1.4;
   opacity: 0.68;
+}
+
+.sign-in-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 </style>

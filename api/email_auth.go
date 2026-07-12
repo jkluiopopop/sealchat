@@ -35,17 +35,7 @@ func isValidEmail(email string) bool {
 }
 
 func getClientIP(c *fiber.Ctx) string {
-	ip := c.Get("X-Real-IP")
-	if ip == "" {
-		ip = c.Get("X-Forwarded-For")
-		if ip != "" {
-			ip = strings.Split(ip, ",")[0]
-		}
-	}
-	if ip == "" {
-		ip = c.IP()
-	}
-	return strings.TrimSpace(ip)
+	return strings.TrimSpace(c.IP())
 }
 
 func EmailAuthSignupCodeSend(c *fiber.Ctx) error {

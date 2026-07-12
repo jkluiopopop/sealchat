@@ -10,11 +10,12 @@ import (
 )
 
 type characterCardTemplatePayload struct {
-	Name            string `json:"name"`
-	SheetType       string `json:"sheetType"`
-	Content         string `json:"content"`
-	IsGlobalDefault *bool  `json:"isGlobalDefault"`
-	IsSheetDefault  *bool  `json:"isSheetDefault"`
+	Name                 string  `json:"name"`
+	SheetType            string  `json:"sheetType"`
+	Content              string  `json:"content"`
+	DefaultBadgeTemplate *string `json:"defaultBadgeTemplate"`
+	IsGlobalDefault      *bool   `json:"isGlobalDefault"`
+	IsSheetDefault       *bool   `json:"isSheetDefault"`
 }
 
 type characterCardTemplateSetDefaultPayload struct {
@@ -54,7 +55,7 @@ func CharacterCardTemplateList(c *fiber.Ctx) error {
 	worldID := strings.TrimSpace(c.Query("worldId"))
 	var (
 		items any
-		err error
+		err   error
 	)
 	if worldID != "" {
 		items, err = service.CharacterCardTemplateListWithWorld(user.ID, worldID, sheetType)
@@ -74,14 +75,19 @@ func CharacterCardTemplateCreate(c *fiber.Ctx) error {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "请求参数解析失败"})
 	}
 	user := getCurUser(c)
+	defaultBadgeTemplate := ""
+	if payload.DefaultBadgeTemplate != nil {
+		defaultBadgeTemplate = *payload.DefaultBadgeTemplate
+	}
 	isGlobalDefault := payload.IsGlobalDefault != nil && *payload.IsGlobalDefault
 	isSheetDefault := payload.IsSheetDefault != nil && *payload.IsSheetDefault
 	item, err := service.CharacterCardTemplateCreate(user.ID, &service.CharacterCardTemplateInput{
-		Name:            payload.Name,
-		SheetType:       payload.SheetType,
-		Content:         payload.Content,
-		IsGlobalDefault: isGlobalDefault,
-		IsSheetDefault:  isSheetDefault,
+		Name:                 payload.Name,
+		SheetType:            payload.SheetType,
+		Content:              payload.Content,
+		DefaultBadgeTemplate: defaultBadgeTemplate,
+		IsGlobalDefault:      isGlobalDefault,
+		IsSheetDefault:       isSheetDefault,
 	})
 	if err != nil {
 		status, msg := mapCharacterCardTemplateError(err)
@@ -108,6 +114,9 @@ func CharacterCardTemplateUpdate(c *fiber.Ctx) error {
 	}
 	if payload.Content != "" {
 		input.Content = &payload.Content
+	}
+	if payload.DefaultBadgeTemplate != nil {
+		input.DefaultBadgeTemplate = payload.DefaultBadgeTemplate
 	}
 	if payload.IsGlobalDefault != nil {
 		input.IsGlobalDefault = payload.IsGlobalDefault

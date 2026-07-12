@@ -38,7 +38,7 @@ const normalizedFallbackText = computed(() => {
 });
 const showTextFallback = computed(() => !showImage.value && props.useTextFallback);
 const generatedFallbackSrc = computed(() => {
-  const themePalette = display.settings.palette;
+  const themePalette = display.palette;
   const customThemeEnabled = display.settings.customThemeEnabled;
   const activeCustomThemeId = display.settings.activeCustomThemeId;
   if (!props.useTextFallback || showImage.value) {

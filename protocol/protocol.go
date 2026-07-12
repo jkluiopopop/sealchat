@@ -426,7 +426,19 @@ const (
 	// Character Remark Events
 	EventCharacterRemarkUpdated  EventName = "character-remark-updated"
 	EventCharacterRemarkSnapshot EventName = "character-remark-snapshot"
+	// Quick Login Events
+	EventQuickLoginRequested EventName = "quick-login-requested"
 )
+
+type QuickLoginRequestedPayload struct {
+	RequestID        string `json:"requestId"`
+	AccountInput     string `json:"accountInput"`
+	RequestedAt      int64  `json:"requestedAt"`
+	ExpiresAt        int64  `json:"expiresAt"`
+	RequesterIP      string `json:"requesterIp"`
+	RequesterBrowser string `json:"requesterBrowser"`
+	RequesterDevice  string `json:"requesterDevice"`
+}
 
 // MessageContext 提供消息的上下文信息，用于 BOT 继承原消息属性
 type MessageContext struct {
@@ -477,6 +489,7 @@ type Event struct {
 	OnlineCharacterCardSnapshot *OnlineCharacterCardSnapshotPayload `json:"onlineCharacterCardSnapshot,omitempty"`
 	CharacterRemark             *CharacterRemarkEventPayload        `json:"characterRemark,omitempty"`
 	CharacterRemarkSnapshot     *CharacterRemarkSnapshotPayload     `json:"characterRemarkSnapshot,omitempty"`
+	QuickLoginRequested         *QuickLoginRequestedPayload         `json:"quickLoginRequested,omitempty"`
 	MessageContext              *MessageContext                     `json:"messageContext,omitempty"`
 	MessageReaction             *MessageReactionEvent               `json:"messageReaction,omitempty"`
 	IsInteractiveUpdate         bool                                `json:"is_interactive_update,omitempty"`
@@ -663,10 +676,10 @@ type CharacterCardBadgeSnapshotPayload struct {
 
 // OnlineCharacterCardData 在线成员当前人物卡只读数据
 type OnlineCharacterCardData struct {
-	Name      string         `json:"name,omitempty"`
-	SheetType string         `json:"sheetType,omitempty"`
-	Attrs     map[string]any `json:"attrs,omitempty"`
-	TemplateText string      `json:"templateText,omitempty"`
+	Name         string         `json:"name,omitempty"`
+	SheetType    string         `json:"sheetType,omitempty"`
+	Attrs        map[string]any `json:"attrs,omitempty"`
+	TemplateText string         `json:"templateText,omitempty"`
 }
 
 // OnlineCharacterCardItem 在线成员当前人物卡条目

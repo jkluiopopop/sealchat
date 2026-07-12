@@ -5,7 +5,7 @@ import { useDisplayStore } from '@/stores/display';
 import { useUserStore } from '@/stores/user';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { Plus } from '@vicons/tabler';
-import { Menu, SettingsSharp, Notifications, NotificationsOff, VolumeHighOutline, VolumeMediumOutline, VolumeMuteOutline, EarthOutline, BookOutline, MegaphoneOutline } from '@vicons/ionicons5';
+import { Menu, SettingsSharp, Notifications, NotificationsOff, VolumeHighOutline, VolumeMediumOutline, VolumeMuteOutline, EarthOutline, BookOutline, MegaphoneOutline, PhonePortraitOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { ref, type Component, h, defineAsyncComponent, watch, onMounted, onUnmounted, computed, withDefaults, defineProps, defineEmits } from 'vue';
 import Notif from '../notif.vue'
@@ -464,6 +464,10 @@ const toggleSubChannelDisplay = () => {
   showAllSubChannels.value = !showAllSubChannels.value;
 };
 
+const openAppNotificationSettings = () => {
+  chatEvent.emit('open-app-notification-settings');
+};
+
 const toggleChannelNameWrap = () => {
   channelNameWrapEnabled.value = !channelNameWrapEnabled.value;
 };
@@ -920,6 +924,21 @@ const handleAckWorldAnnouncement = async () => {
           </div>
 
           <div class="sidebar-footer-actions">
+            <n-tooltip placement="top" trigger="hover">
+              <template #trigger>
+                <n-button
+                  size="tiny"
+                  block
+                  tertiary
+                  :class="{ 'sidebar-toggle-active': showAllSubChannels }"
+                  @click="toggleSubChannelDisplay"
+                >
+                  {{ showAllSubChannels ? '显示全部子频道' : '只看当前主频道' }}
+                </n-button>
+              </template>
+              <span>打开：全部子频道显现；关闭：只显示所在主频道的子频道</span>
+            </n-tooltip>
+
             <!-- 推送通知开关 -->
             <n-tooltip placement="top" trigger="hover">
               <template #trigger>
@@ -943,6 +962,18 @@ const handleAckWorldAnnouncement = async () => {
 
             <n-tooltip placement="top" trigger="hover">
               <template #trigger>
+                <n-button size="tiny" block tertiary class="sidebar-toggle-active" @click="openAppNotificationSettings">
+                  <template #icon>
+                    <n-icon :component="PhonePortraitOutline" />
+                  </template>
+                  APP 推送设置
+                </n-button>
+              </template>
+              <span>配置移动端消息推送</span>
+            </n-tooltip>
+
+            <n-tooltip placement="top" trigger="hover">
+              <template #trigger>
                 <n-button
                   size="tiny"
                   block
@@ -959,20 +990,6 @@ const handleAckWorldAnnouncement = async () => {
               <span>{{ messageSoundTooltip }}</span>
             </n-tooltip>
 
-            <n-tooltip placement="top" trigger="hover">
-              <template #trigger>
-                <n-button
-                  size="tiny"
-                  block
-                  tertiary
-                  :class="{ 'sidebar-toggle-active': showAllSubChannels }"
-                  @click="toggleSubChannelDisplay"
-                >
-                  {{ showAllSubChannels ? '显示全部子频道' : '只看当前主频道' }}
-                </n-button>
-              </template>
-              <span>打开：全部子频道显现；关闭：只显示所在主频道的子频道</span>
-            </n-tooltip>
             <div class="sidebar-footer-row">
               <n-button size="tiny" quaternary @click="handleChannelSortEntry">
                 频道排序

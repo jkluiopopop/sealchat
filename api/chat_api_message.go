@@ -1847,10 +1847,18 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 	var privateOtherUser string
 	botMsgContext := resolveBotMessageContext(ctx, channelId)
+	botContextICMode := ""
+	if botMsgContext != nil {
+		botContextICMode = strings.TrimSpace(strings.ToLower(botMsgContext.ICMode))
+	}
 
-	icMode := strings.TrimSpace(strings.ToLower(data.ICMode))
-	if icMode == "" && botMsgContext != nil {
-		icMode = strings.TrimSpace(strings.ToLower(botMsgContext.ICMode))
+	requestedICMode := strings.TrimSpace(strings.ToLower(data.ICMode))
+	if isExternalBotIncomingUser(ctx.User) {
+		requestedICMode = resolveExternalBotIncomingICMode(requestedICMode, data.Content)
+	}
+	icMode := requestedICMode
+	if icMode == "" && botContextICMode != "" {
+		icMode = botContextICMode
 	}
 	if icMode == "" {
 		icMode = "ic"
@@ -1879,6 +1887,10 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	}
 
 	content := data.Content
+	messageContextICMode := icMode
+	if ctx.User.IsBot && requestedICMode == "ooc" && botContextICMode != "" && shouldTreatExternalBotMessageAsOOC(content) {
+		messageContextICMode = botContextICMode
+	}
 
 	// BOT 消息的 Satori 内容规范化
 	if ctx.User.IsBot {
@@ -2095,8 +2107,11 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		senderID := strings.TrimSpace(botMsgContext.SenderUserID)
 		if senderID != "" {
 			whisperRecipientIDs = resolveWhisperRecipients(whisperTo, append(whisperRecipientIDs, senderID), ctx.User.ID)
-			if whisperTo == "" && len(whisperRecipientIDs) > 0 {
-				whisperTo = whisperRecipientIDs[0]
+			if len(whisperRecipientIDs) > 0 && (whisperTo == "" || whisperTo == ctx.User.ID) {
+				whisperTo = senderID
+				if whisperTo == "" || whisperTo == ctx.User.ID {
+					whisperTo = whisperRecipientIDs[0]
+				}
 			}
 		}
 	}
@@ -2344,7 +2359,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		var msgContext *protocol.MessageContext
 		if effectiveBotFeatureEnabled || appConfig.BuiltInSealBotEnable {
 			msgContext = &protocol.MessageContext{
-				ICMode:       icMode,
+				ICMode:       messageContextICMode,
 				IsWhisper:    whisperUser != nil,
 				IsHiddenDice: isHiddenDice,
 				SenderUserID: ctx.User.ID,
@@ -2381,6 +2396,7 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 		}
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
+		notifyAppMessageCreated(m.ID)
 		if renderResult != nil {
 			if err := model.MessageDiceRollReplace(m.ID, renderResult.Rolls); err != nil {
 				return nil, err
@@ -4197,6 +4213,7 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 		}
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
+		notifyAppMessageCreated(m.ID)
 		go func(channelID string, message model.MessageModel) {
 			if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
 				log.Printf("digest-push: 记录 BOT 消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
@@ -4270,6 +4287,7 @@ func sendHiddenDicePrivateCopy(ctx *ChatContext, sourceChannel *protocol.Channel
 		User:    userData,
 	})
 	_ = model.WebhookEventLogAppendForMessage(ch.ID, "message-created", m.ID)
+	notifyAppMessageCreated(m.ID)
 	go func(channelID string, message model.MessageModel) {
 		if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
 			log.Printf("digest-push: 记录私聊副本摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
@@ -4307,8 +4325,10 @@ func forwardBotWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, 
 	}
 
 	msgICMode := strings.TrimSpace(strings.ToLower(msg.ICMode))
-	if botCtx := resolveBotMessageContext(ctx, targetChannelID); botCtx != nil && botCtx.ICMode != "" {
-		msgICMode = strings.TrimSpace(strings.ToLower(botCtx.ICMode))
+	if msgICMode == "" {
+		if botCtx := resolveBotMessageContext(ctx, targetChannelID); botCtx != nil && botCtx.ICMode != "" {
+			msgICMode = strings.TrimSpace(strings.ToLower(botCtx.ICMode))
+		}
 	}
 	if msgICMode == "" {
 		msgICMode = "ic"
@@ -4431,6 +4451,7 @@ func forwardBotWhisperCopy(ctx *ChatContext, sourceChannel *model.ChannelModel, 
 		})
 	}
 	_ = model.WebhookEventLogAppendForMessage(targetChannelID, "message-created", m.ID)
+	notifyAppMessageCreated(m.ID)
 	go func(channelID string, message model.MessageModel) {
 		if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
 			log.Printf("digest-push: 记录转发消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)

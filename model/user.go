@@ -163,6 +163,25 @@ var (
 	ErrEmailAlreadyUsed   = errors.New("该邮箱已被使用")
 )
 
+type SigninAccountStatus string
+type SigninAccountMatchType string
+
+const (
+	SigninAccountStatusMatched           SigninAccountStatus    = "matched"
+	SigninAccountStatusNotFound          SigninAccountStatus    = "not_found"
+	SigninAccountStatusNicknameAmbiguous SigninAccountStatus    = "nickname_ambiguous"
+	SigninAccountMatchUsername           SigninAccountMatchType = "username"
+	SigninAccountMatchEmail              SigninAccountMatchType = "email"
+	SigninAccountMatchNickname           SigninAccountMatchType = "nickname"
+)
+
+type SigninAccountResolution struct {
+	Status    SigninAccountStatus
+	MatchType SigninAccountMatchType
+	Account   string
+	User      *UserModel
+}
+
 func isUniqueConstraintError(err error) bool {
 	if err == nil {
 		return false
@@ -209,44 +228,81 @@ func UserAuthenticate(username, password string) (*UserModel, error) {
 	return &user, nil
 }
 
-// 登录认证（用户名/昵称/邮箱）
-func UserAuthenticateByAccount(account, password string) (*UserModel, error) {
+func ResolveUserBySigninAccount(account string) (*SigninAccountResolution, error) {
+	normalized := strings.TrimSpace(account)
+	if normalized == "" {
+		return &SigninAccountResolution{
+			Status:  SigninAccountStatusNotFound,
+			Account: normalized,
+		}, nil
+	}
+
 	var user UserModel
-	if err := db.Where("username = ? AND deleted_at IS NULL", account).First(&user).Error; err == nil {
-		if err := verifyUserPassword(&user, password); err != nil {
-			return nil, err
-		}
-		return &user, nil
+	if err := db.Where("username = ? AND deleted_at IS NULL", normalized).First(&user).Error; err == nil {
+		return &SigninAccountResolution{
+			Status:    SigninAccountStatusMatched,
+			MatchType: SigninAccountMatchUsername,
+			Account:   normalized,
+			User:      &user,
+		}, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 
-	if strings.Contains(account, "@") {
-		email := strings.ToLower(account)
+	if strings.Contains(normalized, "@") {
+		email := strings.ToLower(normalized)
 		if err := db.Where("email = ? AND deleted_at IS NULL", email).First(&user).Error; err == nil {
-			if err := verifyUserPassword(&user, password); err != nil {
-				return nil, err
-			}
-			return &user, nil
+			return &SigninAccountResolution{
+				Status:    SigninAccountStatusMatched,
+				MatchType: SigninAccountMatchEmail,
+				Account:   email,
+				User:      &user,
+			}, nil
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
 	}
 
 	var users []UserModel
-	if err := db.Where("nickname = ? AND deleted_at IS NULL", account).Find(&users).Error; err != nil {
+	if err := db.Where("nickname = ? AND deleted_at IS NULL", normalized).Find(&users).Error; err != nil {
 		return nil, err
 	}
 	if len(users) == 0 {
-		return nil, ErrInvalidCredentials
+		return &SigninAccountResolution{
+			Status:  SigninAccountStatusNotFound,
+			Account: normalized,
+		}, nil
 	}
 	if len(users) > 1 {
-		return nil, ErrNicknameNotUnique
+		return &SigninAccountResolution{
+			Status:  SigninAccountStatusNicknameAmbiguous,
+			Account: normalized,
+		}, nil
 	}
-	if err := verifyUserPassword(&users[0], password); err != nil {
+	return &SigninAccountResolution{
+		Status:    SigninAccountStatusMatched,
+		MatchType: SigninAccountMatchNickname,
+		Account:   normalized,
+		User:      &users[0],
+	}, nil
+}
+
+// 登录认证（用户名/昵称/邮箱）
+func UserAuthenticateByAccount(account, password string) (*UserModel, error) {
+	result, err := ResolveUserBySigninAccount(account)
+	if err != nil {
 		return nil, err
 	}
-	return &users[0], nil
+	if result == nil || result.Status == SigninAccountStatusNotFound || result.User == nil {
+		return nil, ErrInvalidCredentials
+	}
+	if result.Status == SigninAccountStatusNicknameAmbiguous {
+		return nil, ErrNicknameNotUnique
+	}
+	if err := verifyUserPassword(result.User, password); err != nil {
+		return nil, err
+	}
+	return result.User, nil
 }
 
 func AcessTokenDeleteAllByUserID(userID string) error {

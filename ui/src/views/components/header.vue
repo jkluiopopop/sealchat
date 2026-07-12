@@ -1,7 +1,8 @@
 <script setup lang="tsx">
 import { chatEvent, useChatStore } from '@/stores/chat';
 import { useUserStore } from '@/stores/user';
-import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, Palette, Photo } from '@vicons/tabler';
+import { api } from '@/stores/_config';
+import { LayoutSidebarLeftCollapse, LayoutSidebarLeftExpand, Plus, Users, Link, Refresh, Palette, Photo, Send } from '@vicons/tabler';
 import { AppsOutline, MusicalNotesOutline, SearchOutline, UnlinkOutline, BrowsersOutline, NotificationsOutline } from '@vicons/ionicons5';
 import { NIcon, useDialog, useMessage } from 'naive-ui';
 import { computed, ref, shallowRef, type Component, h, defineAsyncComponent, onBeforeUnmount, onMounted, watch, withDefaults } from 'vue';
@@ -44,6 +45,29 @@ const adminShow = ref(false)
 const inputStatsShow = ref(false)
 const inputStatsLoading = ref(false)
 const inputStatsComponent = shallowRef<Component | null>(null)
+const appNotificationSettingsShow = ref(false)
+const appNotificationSettingsLoading = ref(false)
+const appNotificationSettingsSaving = ref(false)
+const serverChanTesting = ref(false)
+const barkTesting = ref(false)
+const meowTesting = ref(false)
+const manualAuthorizationCodeLoading = ref(false)
+const manualAuthorizationCode = ref('')
+const manualAuthorizationCodeExpiresAt = ref('')
+const appNotificationSettings = ref({
+  world_whitelist_enabled: false,
+  world_whitelist_ids: [] as string[],
+  server_chan_enabled: false,
+  server_chan_send_key: '',
+  server_chan_configured: false,
+  bark_enabled: false,
+  bark_device_key: '',
+  bark_server_url: '',
+  bark_configured: false,
+  meow_enabled: false,
+  meow_nickname: '',
+  meow_configured: false,
+})
 const chat = useChatStore();
 const user = useUserStore();
 const router = useRouter();
@@ -165,6 +189,10 @@ const options = computed(() => [
     label: t('headerMenu.display'),
     key: 'display',
   },
+  {
+    label: t('headerMenu.appNotification'),
+    key: 'appNotification',
+  },
   user.checkPerm('mod_admin') ? {
     label: t('headerMenu.admin'),
     key: 'admin',
@@ -234,6 +262,167 @@ const toggleInputStats = async () => {
   await ensureInputStatsLoaded()
 }
 
+const loadAppNotificationSettings = async () => {
+  appNotificationSettingsLoading.value = true
+  try {
+    const response = await api.get('/api/v1/app-notification/settings')
+    const data = response.data || {}
+    appNotificationSettings.value = {
+      world_whitelist_enabled: data.world_whitelist_enabled === true,
+      world_whitelist_ids: Array.isArray(data.world_whitelist_ids)
+        ? data.world_whitelist_ids.map((id: unknown) => String(id || '').trim()).filter(Boolean)
+        : [],
+      server_chan_enabled: data.server_chan_enabled === true,
+      server_chan_send_key: '',
+      server_chan_configured: data.server_chan_configured === true,
+      bark_enabled: data.bark_enabled === true,
+      bark_device_key: '',
+      bark_server_url: typeof data.bark_server_url === 'string' ? data.bark_server_url : '',
+      bark_configured: data.bark_configured === true,
+      meow_enabled: data.meow_enabled === true,
+      meow_nickname: '',
+      meow_configured: data.meow_configured === true,
+    }
+  } catch (error) {
+    console.error('load app notification settings failed', error)
+    message.error(t('appNotificationSettings.loadFailed'))
+  } finally {
+    appNotificationSettingsLoading.value = false
+  }
+}
+
+const openAppNotificationSettings = () => {
+  notifShow.value = false
+  adminShow.value = false
+  userProfileShow.value = false
+  inputStatsShow.value = false
+  appNotificationSettingsShow.value = true
+  void loadAppNotificationSettings()
+}
+
+const generateManualAuthorizationCode = async () => {
+  manualAuthorizationCodeLoading.value = true
+  try {
+    const response = await api.post('/api/v1/app-notification/manual-code')
+    manualAuthorizationCode.value = String(response.data?.code || '')
+    manualAuthorizationCodeExpiresAt.value = String(response.data?.expires_at || '')
+  } catch (err: any) {
+    message.error(err?.response?.data?.message || '生成授权码失败')
+  } finally {
+    manualAuthorizationCodeLoading.value = false
+  }
+}
+
+const saveAppNotificationSettings = async () => {
+  if (appNotificationSettings.value.world_whitelist_enabled && !appNotificationSettings.value.world_whitelist_ids.length) {
+    message.warning(t('appNotificationSettings.selectWorld'))
+    return
+  }
+  if (appNotificationSettings.value.server_chan_enabled && !appNotificationSettings.value.world_whitelist_enabled) {
+    message.warning(t('appNotificationSettings.serverChanWhitelistRequired'))
+    return
+  }
+  if (appNotificationSettings.value.server_chan_enabled && !appNotificationSettings.value.server_chan_configured && !appNotificationSettings.value.server_chan_send_key.trim()) {
+    message.warning(t('appNotificationSettings.serverChanSendKeyRequired'))
+    return
+  }
+  if (appNotificationSettings.value.bark_enabled && !appNotificationSettings.value.world_whitelist_enabled) {
+    message.warning(t('appNotificationSettings.barkWhitelistRequired'))
+    return
+  }
+  if (appNotificationSettings.value.bark_enabled && !appNotificationSettings.value.bark_configured && !appNotificationSettings.value.bark_device_key.trim()) {
+    message.warning(t('appNotificationSettings.barkDeviceKeyRequired'))
+    return
+  }
+  if (appNotificationSettings.value.bark_enabled && !appNotificationSettings.value.bark_server_url.trim()) {
+    message.warning(t('appNotificationSettings.barkServerURLRequired'))
+    return
+  }
+  if (appNotificationSettings.value.meow_enabled && !appNotificationSettings.value.world_whitelist_enabled) {
+    message.warning(t('appNotificationSettings.meowWhitelistRequired'))
+    return
+  }
+  if (appNotificationSettings.value.meow_enabled && !appNotificationSettings.value.meow_configured && !appNotificationSettings.value.meow_nickname.trim()) {
+    message.warning(t('appNotificationSettings.meowNicknameRequired'))
+    return
+  }
+  appNotificationSettingsSaving.value = true
+  try {
+    const response = await api.put('/api/v1/app-notification/settings', appNotificationSettings.value)
+    const data = response.data || {}
+    appNotificationSettings.value = {
+      world_whitelist_enabled: data.world_whitelist_enabled === true,
+      world_whitelist_ids: Array.isArray(data.world_whitelist_ids)
+        ? data.world_whitelist_ids.map((id: unknown) => String(id || '').trim()).filter(Boolean)
+        : [],
+      server_chan_enabled: data.server_chan_enabled === true,
+      server_chan_send_key: '',
+      server_chan_configured: data.server_chan_configured === true,
+      bark_enabled: data.bark_enabled === true,
+      bark_device_key: '',
+      bark_server_url: typeof data.bark_server_url === 'string' ? data.bark_server_url : '',
+      bark_configured: data.bark_configured === true,
+      meow_enabled: data.meow_enabled === true,
+      meow_nickname: '',
+      meow_configured: data.meow_configured === true,
+    }
+    message.success(t('appNotificationSettings.saved'))
+    appNotificationSettingsShow.value = false
+  } catch (error) {
+    console.error('save app notification settings failed', error)
+    message.error(t('appNotificationSettings.saveFailed'))
+  } finally {
+    appNotificationSettingsSaving.value = false
+  }
+}
+
+watch(() => appNotificationSettings.value.world_whitelist_enabled, (enabled) => {
+  if (!enabled) {
+    appNotificationSettings.value.server_chan_enabled = false
+    appNotificationSettings.value.bark_enabled = false
+    appNotificationSettings.value.meow_enabled = false
+  }
+})
+
+const sendServerChanTest = async () => {
+  serverChanTesting.value = true
+  try {
+    const response = await api.post('/api/v1/app-notification/server-chan/test')
+    message.success(response.data?.message || t('appNotificationSettings.serverChanTestSent'))
+  } catch (error: any) {
+    console.error('send ServerChan test failed', error)
+    message.error(error?.response?.data?.message || t('appNotificationSettings.serverChanTestFailed'))
+  } finally {
+    serverChanTesting.value = false
+  }
+}
+
+const sendMeowTest = async () => {
+  meowTesting.value = true
+  try {
+    const response = await api.post('/api/v1/app-notification/meow/test')
+    message.success(response.data?.message || t('appNotificationSettings.meowTestSent'))
+  } catch (error: any) {
+    console.error('send MeoW test failed', error)
+    message.error(error?.response?.data?.message || t('appNotificationSettings.meowTestFailed'))
+  } finally {
+    meowTesting.value = false
+  }
+}
+
+const sendBarkTest = async () => {
+  barkTesting.value = true
+  try {
+    const response = await api.post('/api/v1/app-notification/bark/test')
+    message.success(response.data?.message || t('appNotificationSettings.barkTestSent'))
+  } catch (error: any) {
+    console.error('send Bark test failed', error)
+    message.error(error?.response?.data?.message || t('appNotificationSettings.barkTestFailed'))
+  } finally {
+    barkTesting.value = false
+  }
+}
+
 
 const handleSelect = async (key: string | number) => {
   switch (key) {
@@ -260,6 +449,10 @@ const handleSelect = async (key: string | number) => {
       adminShow.value = false;
       inputStatsShow.value = false;
       openDisplaySettings();
+      break;
+
+    case 'appNotification':
+      openAppNotificationSettings();
       break;
 
     case 'admin':
@@ -652,6 +845,7 @@ watch(adminShow, (visible, prevVisible) => emitOverlayState('admin-settings', vi
 watch(userProfileShow, (visible, prevVisible) => emitOverlayState('user-profile', visible, prevVisible));
 watch(notifShow, (visible, prevVisible) => emitOverlayState('notif-panel', visible, prevVisible));
 watch(inputStatsShow, (visible, prevVisible) => emitOverlayState('input-stats', visible, prevVisible));
+watch(appNotificationSettingsShow, (visible, prevVisible) => emitOverlayState('app-notification-settings', visible, prevVisible));
 watch(notifShow, async (visible) => {
   if (!visible || !isAdmin.value) {
     return;
@@ -675,9 +869,14 @@ const handleOpenUserProfile = (payload?: { openAISettings?: boolean }) => {
   userProfileShow.value = true;
 };
 
+const handleOpenAppNotificationSettings = () => {
+  openAppNotificationSettings();
+};
+
 onMounted(() => {
   chatEvent.on('action-ribbon-state', handleRibbonStateUpdate);
   chatEvent.on('open-user-profile', handleOpenUserProfile);
+  chatEvent.on('open-app-notification-settings', handleOpenAppNotificationSettings);
   chatEvent.emit('action-ribbon-state-request');
 });
 
@@ -685,6 +884,7 @@ onBeforeUnmount(() => {
   stopPresencePopoverRefreshLoop();
   chatEvent.off('action-ribbon-state', handleRibbonStateUpdate);
   chatEvent.off('open-user-profile', handleOpenUserProfile);
+  chatEvent.off('open-app-notification-settings', handleOpenAppNotificationSettings);
   if (notifTimer.value) {
     window.clearInterval(notifTimer.value);
     notifTimer.value = null;
@@ -956,11 +1156,277 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
     />
     <div v-else class="input-stats-loading">输入统计加载中...</div>
   </div>
+  <n-modal
+    v-model:show="appNotificationSettingsShow"
+    preset="card"
+    class="app-notification-modal"
+    :title="t('appNotificationSettings.title')"
+    :mask-closable="!appNotificationSettingsSaving"
+    :closable="!appNotificationSettingsSaving"
+    style="width: min(32rem, calc(100vw - 1.25rem));"
+  >
+    <n-spin :show="appNotificationSettingsLoading">
+      <n-space class="app-notification-settings" vertical :size="10">
+        <n-alert class="app-notification-hint" type="info" :bordered="false">
+          {{ t('appNotificationSettings.hint') }}
+        </n-alert>
+        <n-divider class="app-notification-divider">移动端设备绑定</n-divider>
+        <div class="manual-authorization-row">
+          <div>
+            <div class="manual-authorization-label">一次性授权码</div>
+            <div v-if="manualAuthorizationCode" class="manual-authorization-code">{{ manualAuthorizationCode }}</div>
+            <div v-if="manualAuthorizationCodeExpiresAt" class="manual-authorization-expiry">
+              5 分钟内有效，仅可使用一次
+            </div>
+          </div>
+          <n-button
+            size="small"
+            secondary
+            :loading="manualAuthorizationCodeLoading"
+            @click="generateManualAuthorizationCode"
+          >
+            {{ manualAuthorizationCode ? '重新生成' : '生成授权码' }}
+          </n-button>
+        </div>
+        <n-form-item class="app-notification-form-item" :show-feedback="false" :label="t('appNotificationSettings.whitelist')">
+          <n-switch v-model:value="appNotificationSettings.world_whitelist_enabled" size="small" />
+        </n-form-item>
+        <n-form-item
+          v-if="appNotificationSettings.world_whitelist_enabled"
+          class="app-notification-form-item"
+          :show-feedback="false"
+          :label="t('appNotificationSettings.worlds')"
+        >
+          <n-select
+            v-model:value="appNotificationSettings.world_whitelist_ids"
+            :options="chat.joinedWorldOptions"
+            multiple
+            filterable
+            clearable
+            size="small"
+            :placeholder="t('appNotificationSettings.worldsPlaceholder')"
+          />
+        </n-form-item>
+        <n-divider class="app-notification-divider">{{ t('appNotificationSettings.serverChanTitle') }}</n-divider>
+        <n-form-item class="app-notification-form-item" :show-feedback="false" :label="t('appNotificationSettings.serverChanEnabled')">
+          <n-switch
+            v-model:value="appNotificationSettings.server_chan_enabled"
+            :disabled="!appNotificationSettings.world_whitelist_enabled"
+            size="small"
+          />
+        </n-form-item>
+        <n-form-item
+          v-if="appNotificationSettings.server_chan_enabled"
+          class="app-notification-form-item"
+          :show-feedback="false"
+          :label="t('appNotificationSettings.serverChanSendKey')"
+        >
+          <div class="server-chan-input-row">
+            <n-input
+              v-model:value="appNotificationSettings.server_chan_send_key"
+              type="password"
+              show-password-on="click"
+              size="small"
+              :placeholder="appNotificationSettings.server_chan_configured
+                ? t('appNotificationSettings.serverChanConfiguredPlaceholder')
+                : t('appNotificationSettings.serverChanPlaceholder')"
+            />
+            <n-button
+              size="small"
+              secondary
+              :loading="serverChanTesting"
+              :disabled="!appNotificationSettings.server_chan_configured || appNotificationSettingsSaving"
+              @click="sendServerChanTest"
+            >
+              <template #icon><n-icon :component="Send" /></template>
+              {{ t('appNotificationSettings.serverChanTest') }}
+            </n-button>
+          </div>
+        </n-form-item>
+        <n-divider class="app-notification-divider">{{ t('appNotificationSettings.barkTitle') }}</n-divider>
+        <n-form-item class="app-notification-form-item" :show-feedback="false" :label="t('appNotificationSettings.barkEnabled')">
+          <n-switch
+            v-model:value="appNotificationSettings.bark_enabled"
+            :disabled="!appNotificationSettings.world_whitelist_enabled"
+            size="small"
+          />
+        </n-form-item>
+        <n-form-item
+          v-if="appNotificationSettings.bark_enabled"
+          class="app-notification-form-item"
+          :show-feedback="false"
+          :label="t('appNotificationSettings.barkServerURL')"
+        >
+          <n-input
+            v-model:value="appNotificationSettings.bark_server_url"
+            size="small"
+            :placeholder="t('appNotificationSettings.barkServerURLPlaceholder')"
+          />
+        </n-form-item>
+        <n-form-item
+          v-if="appNotificationSettings.bark_enabled"
+          class="app-notification-form-item"
+          :show-feedback="false"
+          :label="t('appNotificationSettings.barkDeviceKey')"
+        >
+          <div class="server-chan-input-row">
+            <n-input
+              v-model:value="appNotificationSettings.bark_device_key"
+              type="password"
+              show-password-on="click"
+              size="small"
+              :placeholder="appNotificationSettings.bark_configured
+                ? t('appNotificationSettings.barkConfiguredPlaceholder')
+                : t('appNotificationSettings.barkPlaceholder')"
+            />
+            <n-button
+              size="small"
+              secondary
+              :loading="barkTesting"
+              :disabled="!appNotificationSettings.bark_configured || !appNotificationSettings.bark_server_url.trim() || appNotificationSettingsSaving"
+              @click="sendBarkTest"
+            >
+              <template #icon><n-icon :component="Send" /></template>
+              {{ t('appNotificationSettings.barkTest') }}
+            </n-button>
+          </div>
+        </n-form-item>
+        <n-divider class="app-notification-divider">{{ t('appNotificationSettings.meowTitle') }}</n-divider>
+        <n-form-item class="app-notification-form-item" :show-feedback="false" :label="t('appNotificationSettings.meowEnabled')">
+          <n-switch
+            v-model:value="appNotificationSettings.meow_enabled"
+            :disabled="!appNotificationSettings.world_whitelist_enabled"
+            size="small"
+          />
+        </n-form-item>
+        <n-form-item
+          v-if="appNotificationSettings.meow_enabled"
+          class="app-notification-form-item"
+          :show-feedback="false"
+          :label="t('appNotificationSettings.meowNickname')"
+        >
+          <div class="server-chan-input-row">
+            <n-input
+              v-model:value="appNotificationSettings.meow_nickname"
+              type="password"
+              show-password-on="click"
+              size="small"
+              :placeholder="appNotificationSettings.meow_configured
+                ? t('appNotificationSettings.meowConfiguredPlaceholder')
+                : t('appNotificationSettings.meowPlaceholder')"
+            />
+            <n-button
+              size="small"
+              secondary
+              :loading="meowTesting"
+              :disabled="!appNotificationSettings.meow_configured || appNotificationSettingsSaving"
+              @click="sendMeowTest"
+            >
+              <template #icon><n-icon :component="Send" /></template>
+              {{ t('appNotificationSettings.meowTest') }}
+            </n-button>
+          </div>
+        </n-form-item>
+      </n-space>
+    </n-spin>
+    <template #footer>
+      <div class="flex justify-end gap-2">
+        <n-button size="small" :disabled="appNotificationSettingsSaving" @click="appNotificationSettingsShow = false">
+          {{ t('appNotificationSettings.cancel') }}
+        </n-button>
+        <n-button size="small" type="primary" :loading="appNotificationSettingsSaving" @click="saveAppNotificationSettings">
+          {{ t('appNotificationSettings.save') }}
+        </n-button>
+      </div>
+    </template>
+  </n-modal>
   <Notif v-show="notifShow" :items="timelineItems" :visible="notifShow" @close="notifShow = false" />
   <AudioDrawer />
 </template>
 
 <style scoped lang="scss">
+.app-notification-settings {
+  width: 100%;
+}
+
+.manual-authorization-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.manual-authorization-label,
+.manual-authorization-expiry {
+  color: var(--n-text-color-3);
+  font-size: 12px;
+}
+
+.manual-authorization-code {
+  margin-top: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.server-chan-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  width: 100%;
+}
+
+:deep(.app-notification-modal .n-card-header) {
+  padding: 14px 18px 10px;
+}
+
+:deep(.app-notification-modal .n-card__content) {
+  padding: 8px 18px 12px;
+  max-height: min(70vh, 34rem);
+  overflow-y: auto;
+}
+
+:deep(.app-notification-modal .n-card__footer) {
+  padding: 10px 18px 14px;
+}
+
+:deep(.app-notification-hint .n-alert-body) {
+  padding: 9px 12px;
+}
+
+:deep(.app-notification-hint .n-alert-body__content) {
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+:deep(.app-notification-form-item .n-form-item-label) {
+  min-height: 24px;
+  padding: 0 0 4px;
+  font-size: 13px;
+}
+
+:deep(.app-notification-divider) {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+:deep(.app-notification-settings .n-base-selection-tags) {
+  gap: 3px;
+  padding-block: 2px;
+}
+
+@media (max-width: 520px) {
+  :deep(.app-notification-modal .n-card-header) {
+    padding-inline: 14px;
+  }
+
+  :deep(.app-notification-modal .n-card__content),
+  :deep(.app-notification-modal .n-card__footer) {
+    padding-inline: 14px;
+  }
+}
+
 .sc-header {
   background-color: var(--sc-bg-header);
   color: var(--sc-text-primary);

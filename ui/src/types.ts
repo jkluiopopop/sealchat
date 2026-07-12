@@ -544,6 +544,7 @@ export interface ServerConfig {
   imageCompressQuality: number;
   keywordMaxLength?: number;
   builtInSealBotEnable: boolean;
+  botIncomingParenAsOoc?: boolean;
   logUpload?: LogUploadConfig;
   captcha?: CaptchaConfig;
   emailNotification?: {

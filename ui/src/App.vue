@@ -10,14 +10,15 @@ import dayjs from 'dayjs'
 import { useDisplayStore } from '@/stores/display'
 import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack } from '@/services/font/fontUtils'
 import GlobalLobbyAnnouncementHost from '@/components/announcement/GlobalLobbyAnnouncementHost.vue'
+import QuickLoginApprovalHost from '@/components/auth/QuickLoginApprovalHost.vue'
 
 const display = useDisplayStore()
 const globalFontFamily = computed(() => buildGlobalFontFamilyStack(display.settings.globalFontFamily))
 
-const naiveTheme = computed<GlobalTheme | null>(() => (display.settings.palette === 'night' ? darkTheme : null))
+const naiveTheme = computed<GlobalTheme | null>(() => (display.palette === 'night' ? darkTheme : null))
 
 const themeOverrides = computed<GlobalThemeOverrides>(() => {
-  const isNight = display.settings.palette === 'night'
+  const isNight = display.palette === 'night'
   return {
     common: {
       primaryColor: '#3388de',
@@ -81,6 +82,7 @@ onUnmounted(() => {
       <n-dialog-provider>
         <RouterView />
         <GlobalLobbyAnnouncementHost />
+        <QuickLoginApprovalHost />
       </n-dialog-provider>
     </n-message-provider>
   </n-config-provider>
