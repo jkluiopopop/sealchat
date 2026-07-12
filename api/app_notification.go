@@ -59,6 +59,7 @@ func bindAppNotificationRoutes(app *fiber.App, webURL string) {
 
 var enqueueAppNotificationForMessage = service.EnqueueAppNotificationForMessageWithMeow
 var sendServerChanTestNotification = service.SendServerChanTestNotification
+var sendBarkTestNotification = service.SendBarkTestNotification
 var sendMeowTestNotification = service.SendMeowTestNotification
 
 func notifyAppMessageCreated(messageID string) {
@@ -377,6 +378,9 @@ func AppNotificationSettingsPut(c *fiber.Ctx) error {
 		WorldWhitelistIDs     []string `json:"world_whitelist_ids"`
 		ServerChanEnabled     bool     `json:"server_chan_enabled"`
 		ServerChanSendKey     string   `json:"server_chan_send_key"`
+		BarkEnabled           bool     `json:"bark_enabled"`
+		BarkDeviceKey         string   `json:"bark_device_key"`
+		BarkServerURL         string   `json:"bark_server_url"`
 		MeowEnabled           bool     `json:"meow_enabled"`
 		MeowNickname          string   `json:"meow_nickname"`
 	}
@@ -390,11 +394,21 @@ func AppNotificationSettingsPut(c *fiber.Ctx) error {
 	if body.ServerChanEnabled && !body.WorldWhitelistEnabled {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "Server酱推送仅可在白名单模式下启用"})
 	}
+	if body.BarkEnabled && !body.WorldWhitelistEnabled {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "Bark推送仅可在白名单模式下启用"})
+	}
 	if body.MeowEnabled && !body.WorldWhitelistEnabled {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "MeoW推送仅可在白名单模式下启用"})
 	}
 	if len(strings.TrimSpace(body.ServerChanSendKey)) > 256 {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "Server酱 SendKey 长度超出限制"})
+	}
+	if len(strings.TrimSpace(body.BarkDeviceKey)) > 256 {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "Bark Device Key 长度超出限制"})
+	}
+	barkServerURL, err := normalizeBarkServerURL(body.BarkServerURL)
+	if body.BarkEnabled && err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "请输入有效的Bark服务器地址"})
 	}
 	if len(strings.TrimSpace(body.MeowNickname)) > 256 {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "MeoW昵称长度超出限制"})
@@ -408,7 +422,7 @@ func AppNotificationSettingsPut(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "白名单格式错误"})
 	}
-	preference, err := model.UpsertAppNotificationPreference(user.ID, body.WorldWhitelistEnabled, string(encoded), body.ServerChanEnabled, body.ServerChanSendKey, body.MeowEnabled, body.MeowNickname)
+	preference, err := model.UpsertAppNotificationPreference(user.ID, body.WorldWhitelistEnabled, string(encoded), body.ServerChanEnabled, body.ServerChanSendKey, body.BarkEnabled, body.BarkDeviceKey, barkServerURL, body.MeowEnabled, body.MeowNickname)
 	if err != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "保存推送设置失败"})
 	}
@@ -442,6 +456,37 @@ func AppNotificationServerChanTest(c *fiber.Ctx) error {
 	if err := sendServerChanTestNotification(sendKey, instanceName+"|推送测试", displayName+"：Server酱推送测试成功"); err != nil {
 		log.Printf("server-chan: 测试推送失败 user=%s err=%v", user.ID, err)
 		return c.Status(http.StatusBadGateway).JSON(fiber.Map{"message": "测试推送失败，请检查 SendKey"})
+	}
+	return c.JSON(fiber.Map{"message": "测试消息已发送"})
+}
+
+func AppNotificationBarkTest(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	preference, err := model.GetAppNotificationPreference(user.ID)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"message": "读取推送设置失败"})
+	}
+	if !preference.WorldWhitelistEnabled || !preference.BarkEnabled {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "请先保存并启用白名单与Bark推送"})
+	}
+	deviceKey := strings.TrimSpace(preference.BarkDeviceKey)
+	if deviceKey == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": "请先保存Bark Device Key"})
+	}
+	instanceName := "SealChat"
+	if appConfig != nil && strings.TrimSpace(appConfig.PageTitle) != "" {
+		instanceName = strings.TrimSpace(appConfig.PageTitle)
+	}
+	displayName := strings.TrimSpace(user.Nickname)
+	if displayName == "" {
+		displayName = strings.TrimSpace(user.Username)
+	}
+	if err := sendBarkTestNotification(preference.BarkServerURL, deviceKey, instanceName+"|推送测试", "推送测试", displayName+"：Bark推送测试成功", currentAppExternalWebURL(), currentAppFaviconURL()); err != nil {
+		log.Printf("bark: 测试推送失败 user=%s err=%v", user.ID, err)
+		return c.Status(http.StatusBadGateway).JSON(fiber.Map{"message": "测试推送失败，请检查Bark Device Key"})
 	}
 	return c.JSON(fiber.Map{"message": "测试消息已发送"})
 }
@@ -554,6 +599,18 @@ func currentAppPublicOrigin() string {
 	return normalizeOneBotDomainToURL(appConfig.Domain)
 }
 
+func currentAppExternalWebURL() string {
+	return appNotificationExternalURL(currentAppPublicOrigin(), currentAppWebURL())
+}
+
+func normalizeBarkServerURL(raw string) (string, error) {
+	parsed, err := url.ParseRequestURI(strings.TrimSpace(raw))
+	if err != nil || parsed == nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("invalid Bark server URL")
+	}
+	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
 func currentAppFaviconURL() string {
 	if appConfig == nil {
 		return ""
@@ -587,14 +644,19 @@ func nullableAppNotificationWorldID(worldID string) any {
 
 func appNotificationPreferenceResponse(preference *model.AppNotificationPreferenceModel) fiber.Map {
 	worldIDs := []string{}
+	barkServerURL := ""
 	if preference != nil {
 		worldIDs = normalizeAppNotificationWorldIDs(appNotificationWorldIDs(preference.WorldWhitelistJSON))
+		barkServerURL = preference.BarkServerURL
 	}
 	return fiber.Map{
 		"world_whitelist_enabled": preference != nil && preference.WorldWhitelistEnabled,
 		"world_whitelist_ids":     worldIDs,
 		"server_chan_enabled":     preference != nil && preference.ServerChanEnabled,
 		"server_chan_configured":  preference != nil && strings.TrimSpace(preference.ServerChanSendKey) != "",
+		"bark_enabled":            preference != nil && preference.BarkEnabled,
+		"bark_configured":         preference != nil && strings.TrimSpace(preference.BarkDeviceKey) != "",
+		"bark_server_url":         barkServerURL,
 		"meow_enabled":            preference != nil && preference.MeowEnabled,
 		"meow_configured":         preference != nil && strings.TrimSpace(preference.MeowNickname) != "",
 	}

@@ -49,6 +49,7 @@ const appNotificationSettingsShow = ref(false)
 const appNotificationSettingsLoading = ref(false)
 const appNotificationSettingsSaving = ref(false)
 const serverChanTesting = ref(false)
+const barkTesting = ref(false)
 const meowTesting = ref(false)
 const manualAuthorizationCodeLoading = ref(false)
 const manualAuthorizationCode = ref('')
@@ -59,6 +60,10 @@ const appNotificationSettings = ref({
   server_chan_enabled: false,
   server_chan_send_key: '',
   server_chan_configured: false,
+  bark_enabled: false,
+  bark_device_key: '',
+  bark_server_url: '',
+  bark_configured: false,
   meow_enabled: false,
   meow_nickname: '',
   meow_configured: false,
@@ -270,6 +275,10 @@ const loadAppNotificationSettings = async () => {
       server_chan_enabled: data.server_chan_enabled === true,
       server_chan_send_key: '',
       server_chan_configured: data.server_chan_configured === true,
+      bark_enabled: data.bark_enabled === true,
+      bark_device_key: '',
+      bark_server_url: typeof data.bark_server_url === 'string' ? data.bark_server_url : '',
+      bark_configured: data.bark_configured === true,
       meow_enabled: data.meow_enabled === true,
       meow_nickname: '',
       meow_configured: data.meow_configured === true,
@@ -317,6 +326,18 @@ const saveAppNotificationSettings = async () => {
     message.warning(t('appNotificationSettings.serverChanSendKeyRequired'))
     return
   }
+  if (appNotificationSettings.value.bark_enabled && !appNotificationSettings.value.world_whitelist_enabled) {
+    message.warning(t('appNotificationSettings.barkWhitelistRequired'))
+    return
+  }
+  if (appNotificationSettings.value.bark_enabled && !appNotificationSettings.value.bark_configured && !appNotificationSettings.value.bark_device_key.trim()) {
+    message.warning(t('appNotificationSettings.barkDeviceKeyRequired'))
+    return
+  }
+  if (appNotificationSettings.value.bark_enabled && !appNotificationSettings.value.bark_server_url.trim()) {
+    message.warning(t('appNotificationSettings.barkServerURLRequired'))
+    return
+  }
   if (appNotificationSettings.value.meow_enabled && !appNotificationSettings.value.world_whitelist_enabled) {
     message.warning(t('appNotificationSettings.meowWhitelistRequired'))
     return
@@ -337,6 +358,10 @@ const saveAppNotificationSettings = async () => {
       server_chan_enabled: data.server_chan_enabled === true,
       server_chan_send_key: '',
       server_chan_configured: data.server_chan_configured === true,
+      bark_enabled: data.bark_enabled === true,
+      bark_device_key: '',
+      bark_server_url: typeof data.bark_server_url === 'string' ? data.bark_server_url : '',
+      bark_configured: data.bark_configured === true,
       meow_enabled: data.meow_enabled === true,
       meow_nickname: '',
       meow_configured: data.meow_configured === true,
@@ -354,6 +379,7 @@ const saveAppNotificationSettings = async () => {
 watch(() => appNotificationSettings.value.world_whitelist_enabled, (enabled) => {
   if (!enabled) {
     appNotificationSettings.value.server_chan_enabled = false
+    appNotificationSettings.value.bark_enabled = false
     appNotificationSettings.value.meow_enabled = false
   }
 })
@@ -381,6 +407,19 @@ const sendMeowTest = async () => {
     message.error(error?.response?.data?.message || t('appNotificationSettings.meowTestFailed'))
   } finally {
     meowTesting.value = false
+  }
+}
+
+const sendBarkTest = async () => {
+  barkTesting.value = true
+  try {
+    const response = await api.post('/api/v1/app-notification/bark/test')
+    message.success(response.data?.message || t('appNotificationSettings.barkTestSent'))
+  } catch (error: any) {
+    console.error('send Bark test failed', error)
+    message.error(error?.response?.data?.message || t('appNotificationSettings.barkTestFailed'))
+  } finally {
+    barkTesting.value = false
   }
 }
 
@@ -1195,6 +1234,54 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
             >
               <template #icon><n-icon :component="Send" /></template>
               {{ t('appNotificationSettings.serverChanTest') }}
+            </n-button>
+          </div>
+        </n-form-item>
+        <n-divider class="app-notification-divider">{{ t('appNotificationSettings.barkTitle') }}</n-divider>
+        <n-form-item class="app-notification-form-item" :show-feedback="false" :label="t('appNotificationSettings.barkEnabled')">
+          <n-switch
+            v-model:value="appNotificationSettings.bark_enabled"
+            :disabled="!appNotificationSettings.world_whitelist_enabled"
+            size="small"
+          />
+        </n-form-item>
+        <n-form-item
+          v-if="appNotificationSettings.bark_enabled"
+          class="app-notification-form-item"
+          :show-feedback="false"
+          :label="t('appNotificationSettings.barkServerURL')"
+        >
+          <n-input
+            v-model:value="appNotificationSettings.bark_server_url"
+            size="small"
+            :placeholder="t('appNotificationSettings.barkServerURLPlaceholder')"
+          />
+        </n-form-item>
+        <n-form-item
+          v-if="appNotificationSettings.bark_enabled"
+          class="app-notification-form-item"
+          :show-feedback="false"
+          :label="t('appNotificationSettings.barkDeviceKey')"
+        >
+          <div class="server-chan-input-row">
+            <n-input
+              v-model:value="appNotificationSettings.bark_device_key"
+              type="password"
+              show-password-on="click"
+              size="small"
+              :placeholder="appNotificationSettings.bark_configured
+                ? t('appNotificationSettings.barkConfiguredPlaceholder')
+                : t('appNotificationSettings.barkPlaceholder')"
+            />
+            <n-button
+              size="small"
+              secondary
+              :loading="barkTesting"
+              :disabled="!appNotificationSettings.bark_configured || !appNotificationSettings.bark_server_url.trim() || appNotificationSettingsSaving"
+              @click="sendBarkTest"
+            >
+              <template #icon><n-icon :component="Send" /></template>
+              {{ t('appNotificationSettings.barkTest') }}
             </n-button>
           </div>
         </n-form-item>

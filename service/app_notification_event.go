@@ -207,12 +207,14 @@ func EnqueueAppNotificationForMessageWithMeow(messageID, webURL, publicOrigin, f
 	if senderName == "" {
 		senderName = strings.TrimSpace(message.SenderMemberName)
 	}
-	senderAvatar := ""
+	senderAvatar := strings.TrimSpace(message.SenderIdentityAvatarID)
 	if message.User != nil {
 		if senderName == "" {
 			senderName = strings.TrimSpace(message.User.Nickname)
 		}
-		senderAvatar = strings.TrimSpace(message.User.Avatar)
+		if senderAvatar == "" && !message.SenderIdentityIsTemporary {
+			senderAvatar = strings.TrimSpace(message.User.Avatar)
+		}
 	}
 	source := AppNotificationMessageSource{
 		WorldID: channel.WorldID, WorldName: world.Name,
@@ -248,8 +250,9 @@ func EnqueueAppNotificationForMessageWithMeow(messageID, webURL, publicOrigin, f
 		DefaultAppNotificationHub.Enqueue(device.ID, BuildAppNotificationEvent(source, device.UserID, sequence, instanceID, webURL))
 	}
 	serverChanErr := sendServerChanAppNotifications(source, webURL, canReadByUser)
+	barkErr := sendBarkAppNotifications(source, webURL, publicOrigin, faviconURL, canReadByUser)
 	meowErr := sendMeowAppNotifications(source, webURL, publicOrigin, faviconURL, canReadByUser)
-	return errors.Join(serverChanErr, meowErr)
+	return errors.Join(serverChanErr, barkErr, meowErr)
 }
 
 func sendServerChanAppNotifications(source AppNotificationMessageSource, webURL string, canReadByUser map[string]bool) error {
@@ -321,6 +324,97 @@ func sendServerChan(sendKey, title, content string) error {
 
 func SendServerChanTestNotification(sendKey, title, content string) error {
 	return sendServerChan(sendKey, title, content)
+}
+
+func sendBarkAppNotifications(source AppNotificationMessageSource, webURL, publicOrigin, faviconURL string, canReadByUser map[string]bool) error {
+	preferences, err := model.ListBarkAppNotificationPreferences()
+	if err != nil {
+		return err
+	}
+	for _, preference := range preferences {
+		canRead, known := canReadByUser[preference.UserID]
+		if !known {
+			canRead = IsWorldMember(source.WorldID, preference.UserID) && CanReadChannelByUserId(preference.UserID, source.ChannelID)
+			canReadByUser[preference.UserID] = canRead
+		}
+		candidate := AppNotificationDeviceCandidate{
+			UserID: preference.UserID, CanRead: canRead, WorldWhitelistEnabled: preference.WorldWhitelistEnabled,
+			WorldWhitelistIDs: appNotificationWorldIDSet(preference.WorldWhitelistJSON),
+		}
+		if !ShouldDeliverAppNotification(source, candidate) || AppNotificationUserPageOnline(preference.UserID) {
+			continue
+		}
+		event := BuildAppNotificationEvent(source, preference.UserID, 0, "", webURL)
+		messageURL := appNotificationExternalURL(publicOrigin, event.Navigation.OpenPath)
+		avatarURL := appNotificationAvatarURL(publicOrigin, webURL, source.SenderAvatarURL)
+		if err := sendBark(preference.BarkServerURL, preference.BarkDeviceKey, source.WorldName, source.ChannelName, event.Notification.Body, messageURL, faviconURL, avatarURL); err != nil {
+			return fmt.Errorf("send Bark notification to user %s: %w", preference.UserID, err)
+		}
+	}
+	return nil
+}
+
+func barkEndpoint(serverURL, deviceKey string) string {
+	return strings.TrimRight(strings.TrimSpace(serverURL), "/") + "/" + url.PathEscape(strings.TrimSpace(deviceKey))
+}
+
+func sendBark(serverURL, deviceKey, title, subtitle, body, messageURL, iconURL, imageURL string) error {
+	payload, err := json.Marshal(map[string]string{
+		"title":    strings.TrimSpace(title),
+		"subtitle": strings.TrimSpace(subtitle),
+		"body":     body,
+		"group":    "sealchat",
+		"url":      messageURL,
+		"icon":     iconURL,
+		"image":    imageURL,
+	})
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequest(http.MethodPost, barkEndpoint(serverURL, deviceKey), strings.NewReader(string(payload)))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json;charset=utf-8")
+	response, err := appNotificationHTTPClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 64*1024))
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("unexpected HTTP status %d", response.StatusCode)
+	}
+	var result struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	}
+	if len(responseBody) > 0 && json.Unmarshal(responseBody, &result) == nil && result.Code != 0 && result.Code != http.StatusOK {
+		return fmt.Errorf("Bark rejected request: code=%d message=%s", result.Code, result.Message)
+	}
+	return nil
+}
+
+func SendBarkTestNotification(serverURL, deviceKey, title, subtitle, body, messageURL, iconURL string) error {
+	return sendBark(serverURL, deviceKey, title, subtitle, body, messageURL, iconURL, "")
+}
+
+func appNotificationAvatarURL(publicOrigin, webURL, avatar string) string {
+	avatar = strings.TrimSpace(avatar)
+	if avatar == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(avatar), "http://") || strings.HasPrefix(strings.ToLower(avatar), "https://") {
+		return avatar
+	}
+	if attachmentID := strings.TrimPrefix(avatar, "id:"); attachmentID != avatar && attachmentID != "" {
+		path := strings.TrimRight(strings.TrimSpace(webURL), "/") + "/api/v1/attachment/" + url.PathEscape(attachmentID) + "?v=" + url.QueryEscape(attachmentID)
+		return appNotificationExternalURL(publicOrigin, path)
+	}
+	return appNotificationExternalURL(publicOrigin, avatar)
 }
 
 func sendMeowAppNotifications(source AppNotificationMessageSource, webURL, publicOrigin, faviconURL string, canReadByUser map[string]bool) error {
