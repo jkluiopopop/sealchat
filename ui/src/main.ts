@@ -147,6 +147,7 @@ document.head.appendChild(meta)
 
 const displayStore = useDisplayStore(pinia)
 displayStore.bindStorageSync()
+displayStore.bindSystemThemeSync()
 displayStore.applyTheme()
 displayStore.restoreGlobalFontAsset()
   .then(() => {
