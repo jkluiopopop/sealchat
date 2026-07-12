@@ -24,7 +24,7 @@ import { findChannelByIdFromTree, findFirstEnterableChannel, isDeletedChannelFor
 import { addWhisperTargetUnique } from './whisperTargetSelection';
 import { parseLastChannelByWorldMap, resolvePreferredChannelForWorld, updateLastChannelByWorldMap } from './chatWorldChannelSession';
 import { normalizeStoredChannelIcOocMode, resolveChannelRestorePreference, resolveChannelSessionRestoreStrategy as resolveChannelSessionRestoreState, type StoredChannelIcOocMode } from '@/utils/channelSessionRestore';
-import { resolveWindowFocusState } from '@/utils/windowFocusState';
+import { isMobileBrowserRuntime, resolveWindowFocusState, shouldSuppressExternalNotification } from '@/utils/windowFocusState';
 import { canCreateChannelSession } from '@/utils/channelCreateGuard';
 
 const inFlightChannelIdentityLoads = new Map<string, Promise<ChannelIdentity[]>>();
@@ -1502,6 +1502,10 @@ export const useChatStore = defineStore({
             const { hasFocus, isVisible } = resolveWindowFocusState();
             store.setFocusState(hasFocus && isVisible);
           };
+          const reportNotificationState = () => {
+            updateFocusState();
+            store.sendPresencePing(true);
+          };
           const triggerForegroundRecover = (reason: string) => {
             if (document.visibilityState !== 'visible') {
               return;
@@ -1517,11 +1521,12 @@ export const useChatStore = defineStore({
             triggerForegroundRecover('network-online');
           });
           window.addEventListener('pageshow', () => {
-            updateFocusState();
+            reportNotificationState();
             triggerForegroundRecover('window-pageshow');
           });
+          window.addEventListener('pagehide', reportNotificationState);
           document.addEventListener('visibilitychange', () => {
-            updateFocusState();
+            reportNotificationState();
             if (document.visibilityState === 'visible') {
               triggerForegroundRecover('visibility-visible');
             }
@@ -1549,6 +1554,8 @@ export const useChatStore = defineStore({
             token: user.token,
             observer: this.observerMode,
             observerSlug: this.observerSlug,
+            mobileBrowser: isMobileBrowserRuntime(),
+            suppressExternalNotification: shouldSuppressExternalNotification(),
           }
         });
  
@@ -5814,6 +5821,8 @@ export const useChatStore = defineStore({
         body: {
           token: user.token,
           focused: this.isAppFocused,
+          mobileBrowser: isMobileBrowserRuntime(),
+          suppressExternalNotification: shouldSuppressExternalNotification(),
           clientSentAt: now,
           ...(latency > 0 && latency <= 60_000 ? { latency } : {}),
         },

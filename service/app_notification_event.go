@@ -23,11 +23,11 @@ const (
 var appNotificationAtTagIDPattern = regexp.MustCompile(`<at\b[^>]*\bid\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*/?>`)
 
 var (
-	appNotificationHTTPClient     = &http.Client{Timeout: 10 * time.Second}
-	serverChanTurboBaseURL        = "https://sctapi.ftqq.com"
-	serverChanSC3Domain           = "push.ft07.com"
-	meowAPIBaseURL                = "https://api.chuckfang.com"
-	AppNotificationUserPageOnline = func(string) bool { return false }
+	appNotificationHTTPClient              = &http.Client{Timeout: 10 * time.Second}
+	serverChanTurboBaseURL                 = "https://sctapi.ftqq.com"
+	serverChanSC3Domain                    = "push.ft07.com"
+	meowAPIBaseURL                         = "https://api.chuckfang.com"
+	AppNotificationUserSuppressingExternal = func(string) bool { return false }
 )
 
 type AppNotificationMessageSource struct {
@@ -162,6 +162,10 @@ func ShouldDeliverAppNotification(source AppNotificationMessageSource, candidate
 	return false
 }
 
+func ShouldSuppressExternalAppNotification(candidate AppNotificationDeviceCandidate, userSuppressing bool) bool {
+	return userSuppressing && !candidate.WorldWhitelistEnabled
+}
+
 func EnqueueAppNotificationForMessage(messageID, webURL string) error {
 	return EnqueueAppNotificationForMessageWithMeow(messageID, webURL, "", "")
 }
@@ -270,7 +274,7 @@ func sendServerChanAppNotifications(source AppNotificationMessageSource, webURL 
 			UserID: preference.UserID, CanRead: canRead, WorldWhitelistEnabled: preference.WorldWhitelistEnabled,
 			WorldWhitelistIDs: appNotificationWorldIDSet(preference.WorldWhitelistJSON),
 		}
-		if !ShouldDeliverAppNotification(source, candidate) || AppNotificationUserPageOnline(preference.UserID) {
+		if !ShouldDeliverAppNotification(source, candidate) || ShouldSuppressExternalAppNotification(candidate, AppNotificationUserSuppressingExternal(preference.UserID)) {
 			continue
 		}
 		event := BuildAppNotificationEvent(source, preference.UserID, 0, "", webURL)
@@ -341,7 +345,7 @@ func sendBarkAppNotifications(source AppNotificationMessageSource, webURL, publi
 			UserID: preference.UserID, CanRead: canRead, WorldWhitelistEnabled: preference.WorldWhitelistEnabled,
 			WorldWhitelistIDs: appNotificationWorldIDSet(preference.WorldWhitelistJSON),
 		}
-		if !ShouldDeliverAppNotification(source, candidate) || AppNotificationUserPageOnline(preference.UserID) {
+		if !ShouldDeliverAppNotification(source, candidate) || ShouldSuppressExternalAppNotification(candidate, AppNotificationUserSuppressingExternal(preference.UserID)) {
 			continue
 		}
 		event := BuildAppNotificationEvent(source, preference.UserID, 0, "", webURL)
@@ -432,7 +436,7 @@ func sendMeowAppNotifications(source AppNotificationMessageSource, webURL, publi
 			UserID: preference.UserID, CanRead: canRead, WorldWhitelistEnabled: preference.WorldWhitelistEnabled,
 			WorldWhitelistIDs: appNotificationWorldIDSet(preference.WorldWhitelistJSON),
 		}
-		if !ShouldDeliverAppNotification(source, candidate) || AppNotificationUserPageOnline(preference.UserID) {
+		if !ShouldDeliverAppNotification(source, candidate) || ShouldSuppressExternalAppNotification(candidate, AppNotificationUserSuppressingExternal(preference.UserID)) {
 			continue
 		}
 		event := BuildAppNotificationEvent(source, preference.UserID, 0, "", webURL)

@@ -59,35 +59,38 @@ func (c *WsSyncConn) WriteJSONWithTimeout(v interface{}, timeout time.Duration) 
 }
 
 type ConnInfo struct {
-	User                    *model.UserModel
-	Conn                    *WsSyncConn
-	ClientAddr              string
-	LastPingTime            int64
-	LastAliveTime           int64
-	LatencyMs               int64
-	ChannelId               string
-	WorldId                 string
-	IsGuest                 bool
-	IsObserver              bool
-	ObserverSlug            string
-	ObserverWorldID         string
-	TypingEnabled           bool
-	TypingState             protocol.TypingState
-	TypingContent           string
-	TypingWhisperTo         string
-	TypingUpdatedAt         int64
-	TypingIcMode            string
-	TypingIdentityID        string
-	TypingIdentityVariantID string
-	TypingOrderKey          float64
-	Focused                 bool
-	BotLastMessageContext   *utils.SyncMap[string, *protocol.MessageContext]
-	BotLastWhisperTargets   *utils.SyncMap[string, []string]
-	BotHiddenDicePending    *utils.SyncMap[string, *BotHiddenDicePending]
-	BotNicknameSyncPending  *utils.SyncMap[string, *BotNicknameSyncPending]
-	BotCharacterSupport     BotCharacterSupportState
-	BotCharacterProbeOn     bool
-	BotCharacterProbeFail   int
+	User                         *model.UserModel
+	Conn                         *WsSyncConn
+	ClientAddr                   string
+	LastPingTime                 int64
+	LastAliveTime                int64
+	LatencyMs                    int64
+	ChannelId                    string
+	WorldId                      string
+	IsGuest                      bool
+	IsObserver                   bool
+	ObserverSlug                 string
+	ObserverWorldID              string
+	TypingEnabled                bool
+	TypingState                  protocol.TypingState
+	TypingContent                string
+	TypingWhisperTo              string
+	TypingUpdatedAt              int64
+	TypingIcMode                 string
+	TypingIdentityID             string
+	TypingIdentityVariantID      string
+	TypingOrderKey               float64
+	Focused                      bool
+	MobileBrowser                bool
+	SuppressExternalNotification bool
+	NotificationStateUpdatedAt   int64
+	BotLastMessageContext        *utils.SyncMap[string, *protocol.MessageContext]
+	BotLastWhisperTargets        *utils.SyncMap[string, []string]
+	BotHiddenDicePending         *utils.SyncMap[string, *BotHiddenDicePending]
+	BotNicknameSyncPending       *utils.SyncMap[string, *BotNicknameSyncPending]
+	BotCharacterSupport          BotCharacterSupportState
+	BotCharacterProbeOn          bool
+	BotCharacterProbeFail        int
 }
 
 type BotHiddenDicePending struct {
@@ -316,7 +319,9 @@ func getUserConnInfoMap() *utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *Co
 	return userId2ConnInfoGlobal
 }
 
-func isUserPageOnline(userID string) bool {
+const mobileNotificationStateTTL = 45 * time.Second
+
+func isUserSuppressingExternalNotification(userID string) bool {
 	connections := getUserConnInfoMap()
 	if connections == nil {
 		return false
@@ -325,12 +330,19 @@ func isUserPageOnline(userID string) bool {
 	if !ok || userConnections == nil {
 		return false
 	}
-	online := false
+	suppress := false
+	now := time.Now().UnixMilli()
 	userConnections.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
-		online = info != nil && !info.IsGuest && !info.IsObserver
-		return !online
+		if info == nil || info.IsGuest || info.IsObserver || !info.SuppressExternalNotification {
+			return true
+		}
+		if info.MobileBrowser && now-info.NotificationStateUpdatedAt > mobileNotificationStateTTL.Milliseconds() {
+			return true
+		}
+		suppress = true
+		return false
 	})
-	return online
+	return suppress
 }
 
 func websocketWorks(app *fiber.App, webUrl string) {
@@ -338,7 +350,7 @@ func websocketWorks(app *fiber.App, webUrl string) {
 	userId2ConnInfo := &utils.SyncMap[string, *utils.SyncMap[*WsSyncConn, *ConnInfo]]{}
 	channelUsersMapGlobal = channelUsersMap
 	userId2ConnInfoGlobal = userId2ConnInfo
-	service.AppNotificationUserPageOnline = isUserPageOnline
+	service.AppNotificationUserSuppressingExternal = isUserSuppressingExternalNotification
 
 	// 在线态兜底广播：事件驱动为主，周期性全量广播用于状态收敛。
 	go func() {
@@ -411,6 +423,14 @@ func websocketWorks(app *fiber.App, webUrl string) {
 			observer := false
 			observerSlug := ""
 			observerWorldID := ""
+			mobileBrowser := false
+			suppressExternalNotification := true
+			if value, ok := m["mobileBrowser"].(bool); ok {
+				mobileBrowser = value
+			}
+			if value, ok := m["suppressExternalNotification"].(bool); ok {
+				suppressExternalNotification = value
+			}
 			if observerRaw, exists := m["observer"]; exists {
 				if observerValue, ok := observerRaw.(bool); ok {
 					observer = observerValue
@@ -458,18 +478,21 @@ func websocketWorks(app *fiber.App, webUrl string) {
 				user.ID = guestID
 				m, _ := userId2ConnInfo.LoadOrStore(user.ID, &utils.SyncMap[*WsSyncConn, *ConnInfo]{})
 				curConnInfo = &ConnInfo{
-					Conn:            c,
-					ClientAddr:      clientAddr,
-					LastPingTime:    time.Now().UnixMilli(),
-					LastAliveTime:   time.Now().UnixMilli(),
-					User:            user,
-					IsGuest:         true,
-					IsObserver:      observer,
-					ObserverSlug:    observerSlug,
-					ObserverWorldID: observerWorldID,
-					TypingState:     protocol.TypingStateSilent,
-					TypingIcMode:    "ic",
-					Focused:         true,
+					Conn:                         c,
+					ClientAddr:                   clientAddr,
+					LastPingTime:                 time.Now().UnixMilli(),
+					LastAliveTime:                time.Now().UnixMilli(),
+					User:                         user,
+					IsGuest:                      true,
+					IsObserver:                   observer,
+					ObserverSlug:                 observerSlug,
+					ObserverWorldID:              observerWorldID,
+					TypingState:                  protocol.TypingStateSilent,
+					TypingIcMode:                 "ic",
+					Focused:                      true,
+					MobileBrowser:                mobileBrowser,
+					SuppressExternalNotification: suppressExternalNotification,
+					NotificationStateUpdatedAt:   time.Now().UnixMilli(),
 				}
 				m.Store(c, curConnInfo)
 				curUser = user
@@ -540,17 +563,20 @@ func websocketWorks(app *fiber.App, webUrl string) {
 				}
 
 				curConnInfo = &ConnInfo{
-					Conn:            c,
-					ClientAddr:      clientAddr,
-					LastPingTime:    time.Now().UnixMilli(),
-					LastAliveTime:   time.Now().UnixMilli(),
-					User:            user,
-					IsObserver:      observer,
-					ObserverSlug:    observerSlug,
-					ObserverWorldID: observerWorldID,
-					TypingState:     protocol.TypingStateSilent,
-					TypingIcMode:    "ic",
-					Focused:         true,
+					Conn:                         c,
+					ClientAddr:                   clientAddr,
+					LastPingTime:                 time.Now().UnixMilli(),
+					LastAliveTime:                time.Now().UnixMilli(),
+					User:                         user,
+					IsObserver:                   observer,
+					ObserverSlug:                 observerSlug,
+					ObserverWorldID:              observerWorldID,
+					TypingState:                  protocol.TypingStateSilent,
+					TypingIcMode:                 "ic",
+					Focused:                      true,
+					MobileBrowser:                mobileBrowser,
+					SuppressExternalNotification: suppressExternalNotification,
+					NotificationStateUpdatedAt:   time.Now().UnixMilli(),
 				}
 				m.Store(c, curConnInfo)
 
@@ -807,6 +833,17 @@ func websocketWorks(app *fiber.App, webUrl string) {
 											info2.Focused = focusedVal
 											focusChanged = true
 										}
+									}
+								}
+								if mobileRaw, exists := bodyMap["mobileBrowser"]; exists {
+									if mobileVal, ok := mobileRaw.(bool); ok {
+										info2.MobileBrowser = mobileVal
+									}
+								}
+								if suppressRaw, exists := bodyMap["suppressExternalNotification"]; exists {
+									if suppressVal, ok := suppressRaw.(bool); ok {
+										info2.SuppressExternalNotification = suppressVal
+										info2.NotificationStateUpdatedAt = now
 									}
 								}
 								if latencyRaw, exists := bodyMap["latency"]; exists {
