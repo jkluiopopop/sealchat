@@ -33,7 +33,12 @@ import { MESSAGE_SOUND_MODE_VALUES, type MessageSoundMode } from '@/utils/messag
 import { DEFAULT_WORLD_KEYWORD_TOOLTIP_INTERACTION } from '@/utils/worldKeywordTooltipInteraction'
 
 export type DisplayLayout = 'bubble' | 'compact'
-export type DisplayPalette = StoredDisplayPalette
+export type DisplayPalette = 'day' | 'night'
+export type SystemThemeSource = 'base' | 'platform' | 'personal'
+export interface SystemThemeBinding {
+  source: SystemThemeSource
+  themeId: string | null
+}
 export type BotBadgeStyle = 'solidBlue' | 'solidTone' | 'outline' | 'dice'
 export type EditingSelfActionsPlacement = 'left' | 'right'
 export type InterjectSwitchRule = 'invert' | 'preserve' | 'forceOoc' | 'forceIc'
@@ -71,6 +76,9 @@ export type TimestampFormat = 'relative' | 'time' | 'datetime' | 'datetimeSecond
 export interface DisplaySettings {
   layout: DisplayLayout
   palette: DisplayPalette
+  followSystemTheme: boolean
+  systemDayTheme: SystemThemeBinding
+  systemNightTheme: SystemThemeBinding
   sidebarWidth: number         // 左侧频道栏宽度 (px)
   channelNameWrapEnabled: boolean // 侧栏频道名自动换行
   showAvatar: boolean
@@ -303,9 +311,15 @@ const normalizeFontAssetId = (value: unknown): string | null => {
 }
 
 const coerceLayout = (value?: string): DisplayLayout => (value === 'compact' ? 'compact' : 'bubble')
-const coercePalette = (value?: string): DisplayPalette => {
-  if (value === 'day' || value === 'auto') return value
-  return 'night'
+const coercePalette = (value?: string): DisplayPalette => (value === 'day' ? 'day' : 'night')
+const normalizeSystemThemeBinding = (value: unknown): SystemThemeBinding => {
+  if (!value || typeof value !== 'object') return { source: 'base', themeId: null }
+  const source = (value as any).source
+  const themeId = typeof (value as any).themeId === 'string' ? (value as any).themeId.trim() || null : null
+  if ((source === 'platform' || source === 'personal') && themeId) {
+    return { source, themeId }
+  }
+  return { source: 'base', themeId: null }
 }
 const coerceEditingSelfActionsPlacement = (value: unknown): EditingSelfActionsPlacement => (value === 'left' ? 'left' : 'right')
 const BOT_BADGE_STYLE_VALUES: BotBadgeStyle[] = ['solidBlue', 'solidTone', 'outline', 'dice']
@@ -484,6 +498,9 @@ const createDefaultToolbarHotkeys = (): Record<ToolbarHotkeyKey, ToolbarHotkeyCo
 export const createDefaultDisplaySettings = (): DisplaySettings => ({
   layout: 'compact',
   palette: 'night',
+  followSystemTheme: false,
+  systemDayTheme: { source: 'base', themeId: null },
+  systemNightTheme: { source: 'base', themeId: null },
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   channelNameWrapEnabled: false,
   showAvatar: true,
@@ -706,6 +723,9 @@ export const parseStoredSettings = (raw: string | null | undefined): DisplaySett
     return {
       layout: coerceLayout(parsed.layout),
       palette: coercePalette(parsed.palette),
+      followSystemTheme: coerceBoolean((parsed as any)?.followSystemTheme ?? false),
+      systemDayTheme: normalizeSystemThemeBinding((parsed as any)?.systemDayTheme),
+      systemNightTheme: normalizeSystemThemeBinding((parsed as any)?.systemNightTheme),
       sidebarWidth: coerceNumberInRange(
         (parsed as any)?.sidebarWidth,
         SIDEBAR_WIDTH_DEFAULT,
@@ -878,10 +898,24 @@ const loadSettings = (): DisplaySettings => {
 }
 
 let storageSyncBound = false
+let systemThemeSyncBound = false
+let systemThemeMediaQuery: MediaQueryList | null = null
 
 const normalizeWith = (base: DisplaySettings, patch?: Partial<DisplaySettings>): DisplaySettings => ({
   layout: patch && patch.layout ? coerceLayout(patch.layout) : base.layout,
   palette: patch && patch.palette ? coercePalette(patch.palette) : base.palette,
+  followSystemTheme:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'followSystemTheme')
+      ? coerceBoolean((patch as any).followSystemTheme)
+      : base.followSystemTheme,
+  systemDayTheme:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'systemDayTheme')
+      ? normalizeSystemThemeBinding((patch as any).systemDayTheme)
+      : { ...base.systemDayTheme },
+  systemNightTheme:
+    patch && Object.prototype.hasOwnProperty.call(patch, 'systemNightTheme')
+      ? normalizeSystemThemeBinding((patch as any).systemNightTheme)
+      : { ...base.systemNightTheme },
   sidebarWidth:
     patch && Object.prototype.hasOwnProperty.call(patch, 'sidebarWidth')
       ? coerceNumberInRange((patch as any).sidebarWidth, SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX)
@@ -1446,9 +1480,30 @@ export const useDisplayStore = defineStore('display', {
         console.warn('恢复字体资源失败，继续使用当前字体设置', error)
       }
     },
+    syncSystemTheme() {
+      if (!this.settings.followSystemTheme || typeof window === 'undefined') return
+      const query = systemThemeMediaQuery || window.matchMedia('(prefers-color-scheme: dark)')
+      const palette: DisplayPalette = query.matches ? 'night' : 'day'
+      if (this.settings.palette !== palette) {
+        this.settings.palette = palette
+        this.persist()
+      }
+      this.applyTheme()
+    },
+    bindSystemThemeSync() {
+      if (typeof window === 'undefined' || systemThemeSyncBound) return
+      systemThemeSyncBound = true
+      systemThemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+      systemThemeMediaQuery.addEventListener('change', () => this.syncSystemTheme())
+      this.syncSystemTheme()
+    },
     updateSettings(patch: Partial<DisplaySettings>) {
       this.settings = normalizeWith(this.settings, patch)
       this.persist()
+      if (this.settings.followSystemTheme) {
+        this.syncSystemTheme()
+        return
+      }
       this.applyTheme()
     },
     bindStorageSync() {
@@ -1462,7 +1517,11 @@ export const useDisplayStore = defineStore('display', {
         const nextSnapshot = JSON.stringify(nextSettings)
         if (currentSnapshot === nextSnapshot) return
         this.settings = nextSettings
-        this.applyTheme()
+        if (this.settings.followSystemTheme) {
+          this.syncSystemTheme()
+        } else {
+          this.applyTheme()
+        }
         void this.restoreGlobalFontAsset().catch((error) => {
           console.warn('同步外部常规设置字体资源失败，继续使用当前字体设置', error)
         })
@@ -1471,7 +1530,11 @@ export const useDisplayStore = defineStore('display', {
     async replaceSettings(snapshot: Partial<DisplaySettings>, options?: { restoreFontAsset?: boolean }) {
       this.settings = normalizeWith(defaultSettings(), snapshot)
       this.persist()
-      this.applyTheme()
+      if (this.settings.followSystemTheme) {
+        this.syncSystemTheme()
+      } else {
+        this.applyTheme()
+      }
       if (options?.restoreFontAsset) {
         await this.restoreGlobalFontAsset()
       }
@@ -1582,7 +1645,15 @@ export const useDisplayStore = defineStore('display', {
       customColorVars.forEach(v => removeVar(v))
 
       const resolvedSelection = this.getResolvedThemeSelection(effective)
-      const activeThemeColors = resolvedSelection.theme?.colors || null
+      const systemBinding = effective.palette === 'night' ? effective.systemNightTheme : effective.systemDayTheme
+      const systemTheme = effective.followSystemTheme && systemBinding.source === 'platform'
+        ? this.platformThemes.find(theme => theme.id === systemBinding.themeId) || null
+        : effective.followSystemTheme && systemBinding.source === 'personal'
+          ? effective.customThemes.find(theme => theme.id === systemBinding.themeId) || null
+          : null
+      const activeThemeColors = effective.followSystemTheme
+        ? systemTheme?.colors || null
+        : resolvedSelection.theme?.colors || null
       const previewColors = this.customThemePreviewEnabled ? this.customThemePreviewColors : null
       const sourceColors = previewColors || activeThemeColors
 
