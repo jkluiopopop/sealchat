@@ -196,7 +196,7 @@ func ApplyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 
 var delegatedTheaterObjectFields = map[string]bool{
 	"name": true, "x": true, "y": true, "width": true, "height": true,
-	"rotation": true, "z": true, "orderKey": true, "content": true,
+	"rotation": true, "scale": true, "z": true, "orderKey": true, "content": true,
 }
 
 func validateDelegatedTheaterObjectUpdate(tx *gorm.DB, roomID string, payload *theaterObjectUpdatePayload) error {
@@ -211,7 +211,7 @@ func validateDelegatedTheaterObjectUpdate(tx *gorm.DB, roomID string, payload *t
 		if !delegatedTheaterObjectFields[field] {
 			return newTheaterError(TheaterErrorPermissionDenied, "成员不能修改对象管理字段", 403, map[string]any{"field": field})
 		}
-		if object.SizeLocked && (field == "width" || field == "height") {
+		if object.SizeLocked && (field == "width" || field == "height" || field == "scale") {
 			return newTheaterError(TheaterErrorPermissionDenied, "对象尺寸已锁定", 403, map[string]any{"field": field})
 		}
 	}
@@ -435,14 +435,21 @@ func createTheaterObject(tx *gorm.DB, room *model.TheaterRoomModel, actorID stri
 		if parent.SceneID != sceneValue {
 			return theaterPayloadError("parent 必须与对象处于同一范围")
 		}
+		if parent.Kind != "group" {
+			return theaterPayloadError("parent 必须是组")
+		}
 	}
 	visible := true
 	if input.Visible != nil {
 		visible = *input.Visible
 	}
+	scale := 1.0
+	if input.Scale != nil {
+		scale = *input.Scale
+	}
 	object := model.TheaterObjectModel{
 		StringPKBaseModel: model.StringPKBaseModel{ID: input.ID}, RoomID: room.ID, SceneID: sceneValue, ParentID: derefString(input.ParentID), Kind: input.Kind, Name: input.Name,
-		X: input.X, Y: input.Y, Width: input.Width, Height: input.Height, Rotation: input.Rotation, Z: input.Z, OrderKey: input.OrderKey,
+		X: input.X, Y: input.Y, Width: input.Width, Height: input.Height, Rotation: input.Rotation, Scale: scale, Z: input.Z, OrderKey: input.OrderKey,
 		Visible: visible, Locked: input.Locked, SizeLocked: input.SizeLocked, Interactive: input.Interactive, Editable: input.Editable,
 		OwnerUserID: derefString(input.OwnerUserID), CharacterIdentityID: derefString(input.CharacterIdentityID), ContentJSON: defaultJSON(input.Content, `{}`), ActionsJSON: defaultJSON(input.Actions, `[]`), MetadataJSON: defaultJSON(input.Metadata, `{}`),
 		SchemaVersion: model.TheaterSchemaVersion, CreatedBy: actorID, UpdatedBy: actorID,
@@ -476,7 +483,7 @@ func applyTheaterObjectUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID
 		return newTheaterError(TheaterErrorPermissionDenied, "对象已锁定", 403, nil)
 	}
 	updates := map[string]any{"updated_by": actorID, "updated_at": time.Now()}
-	columnMap := map[string]string{"parentId": "parent_id", "name": "name", "x": "x", "y": "y", "width": "width", "height": "height", "rotation": "rotation", "z": "z", "orderKey": "order_key", "visible": "visible", "locked": "locked", "sizeLocked": "size_locked", "interactive": "interactive", "editable": "editable"}
+	columnMap := map[string]string{"parentId": "parent_id", "name": "name", "x": "x", "y": "y", "width": "width", "height": "height", "rotation": "rotation", "scale": "scale", "z": "z", "orderKey": "order_key", "visible": "visible", "locked": "locked", "sizeLocked": "size_locked", "interactive": "interactive", "editable": "editable"}
 	for key, value := range payload.Fields {
 		if key == "parentId" {
 			parentID := strings.TrimSpace(fmt.Sprint(value))
@@ -490,6 +497,9 @@ func applyTheaterObjectUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID
 				}
 				if parent.SceneID != object.SceneID || theaterObjectHasAncestor(tx, room.ID, parentID, object.ID) {
 					return theaterPayloadError("parent 范围或循环无效")
+				}
+				if parent.Kind != "group" {
+					return theaterPayloadError("parent 必须是组")
 				}
 			}
 			updates["parent_id"] = parentID

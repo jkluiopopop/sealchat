@@ -65,6 +65,7 @@ const stageObjectTransformSchema = z.strictObject({
   width: z.number().finite(),
   height: z.number().finite(),
   rotation: z.number().finite(),
+  scale: z.number().finite().positive().max(100).default(1),
   z: z.number().finite(),
   order: z.number().finite(),
 })

@@ -5,6 +5,7 @@ import {
   type StageImageRef,
   type StageLiveState,
   type StageObject,
+  type StageObjectTransform,
   type StageObjectType,
   type StageScene,
   type StageWorkspaceState,
@@ -51,6 +52,7 @@ const makeObject = (
     width: type === 'group' ? 12 : type === 'image' ? 9 : 7,
     height: type === 'group' ? 8 : type === 'image' ? 6 : 4.5,
     rotation: 0,
+    scale: 1,
     z: 0,
     order,
   },
@@ -85,7 +87,7 @@ const createScene = (name: string, order: number, color: string): StageScene => 
   const actor = makeObject('主角', 'shape', 1, { parentId: group.id })
   const title = makeObject('场景标题', 'text', 2, { text: name, parentId: group.id })
   const panel = makeObject('信息面板', 'shape', 3, {
-    transform: { x: -13, y: -7, width: 8, height: 4, rotation: 0, z: 1, order: 3 },
+    transform: { x: -13, y: -7, width: 8, height: 4, rotation: 0, scale: 1, z: 1, order: 3 },
   })
   return {
     id: uid('scene'),
@@ -166,6 +168,12 @@ const normalizeActions = (input: unknown): StageAction[] => {
 
 const normalizeObject = (input: StageObject): StageObject => ({
   ...input,
+  transform: {
+    ...input.transform,
+    scale: Number.isFinite(input.transform?.scale) && input.transform.scale > 0
+      ? Math.min(100, Math.max(0.01, input.transform.scale))
+      : 1,
+  },
   type: ['group', 'shape', 'text', 'image', 'button', 'character', 'video'].includes(input.type) ? input.type : 'shape',
   parentId: typeof input.parentId === 'string' ? input.parentId : null,
   visible: input.visible !== false,
@@ -240,7 +248,12 @@ export interface TheaterStageStore {
   beginObjectEdit: (label?: string) => void
   commitObjectEdit: () => void
   cancelObjectEdit: () => void
-  setParent: (objectId: string, parentId: string | null) => void
+  setParent: (objectId: string, parentId: string | null) => boolean
+  reparentObject: (
+    objectId: string,
+    parentId: string | null,
+    transform: Pick<StageObjectTransform, 'x' | 'y' | 'rotation' | 'scale'>,
+  ) => boolean
   moveOrder: (objectId: string, direction: -1 | 1) => void
   reorderObject: (objectId: string, targetId: string, placement: 'before' | 'after') => void
   setSceneImage: (target: 'background' | 'foreground', url: string, resourceId?: string) => boolean
@@ -567,13 +580,37 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     return false
   }
 
-  const setParent = (objectId: string, parentId: string | null) => runObjectEdit('调整对象分组', () => {
+  const canSetParent = (objectId: string, parentId: string | null) => {
     const object = getObject(objectId)
-    if (!object || objectId === parentId) return
-    if (parentId && collectDescendants(objectId).includes(parentId)) return
-    if (parentId && !getObject(parentId)) return
-    if (parentId && isPersistentObject(objectId) !== isPersistentObject(parentId)) return
+    if (!object || objectId === parentId) return false
+    if (!parentId) return true
+    const parent = getObject(parentId)
+    if (!parent || parent.type !== 'group') return false
+    if (collectDescendants(objectId).includes(parentId)) return false
+    if (isPersistentObject(objectId) !== isPersistentObject(parentId)) return false
+    return true
+  }
+
+  const setParent = (objectId: string, parentId: string | null) => runObjectEdit('调整对象分组', () => {
+    if (!canSetParent(objectId, parentId)) return false
+    const object = getObject(objectId)!
     object.parentId = parentId
+    return true
+  })
+
+  const reparentObject = (
+    objectId: string,
+    parentId: string | null,
+    transform: Pick<StageObjectTransform, 'x' | 'y' | 'rotation' | 'scale'>,
+  ) => runObjectEdit('调整对象分组', () => {
+    if (!canSetParent(objectId, parentId)) return false
+    const object = getObject(objectId)!
+    object.parentId = parentId
+    object.transform.x = transform.x
+    object.transform.y = transform.y
+    object.transform.rotation = transform.rotation
+    object.transform.scale = Math.min(100, Math.max(0.01, transform.scale))
+    return true
   })
 
   const moveOrder = (objectId: string, direction: -1 | 1) => runObjectEdit('调整对象顺序', () => {
@@ -711,6 +748,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     commitObjectEdit,
     cancelObjectEdit,
     setParent,
+    reparentObject,
     moveOrder,
     reorderObject,
     setSceneImage,

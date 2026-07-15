@@ -91,6 +91,8 @@ const imageEditorTarget = ref<ImageTarget | null>(null)
 const imageEditorFile = ref<File | null>(null)
 const imageEditorVisible = ref(false)
 const draggedLayerId = ref<string | null>(null)
+type LayerDropPlacement = 'before' | 'inside' | 'after'
+const layerDropTarget = ref<{ id: string | null, placement: LayerDropPlacement } | null>(null)
 const workspaceRef = ref<HTMLDivElement | null>(null)
 const hasPermission = (permission: string) => props.syncReady && props.permissions.includes(permission)
 const canEditAllObjects = computed(() => hasPermission('stage.object.edit'))
@@ -435,6 +437,34 @@ const layerRows = computed<LayerRow[]>(() => {
 
 const getObject = (objectId: string) => props.store.activeObjects.value[objectId]
 
+const objectIsDescendantOf = (objectId: string, ancestorId: string) => {
+  let parentId = getObject(objectId)?.parentId || null
+  while (parentId) {
+    if (parentId === ancestorId) return true
+    parentId = getObject(parentId)?.parentId || null
+  }
+  return false
+}
+
+const canvasSelectionTarget = (objectId: string) => {
+  let target = getObject(objectId)
+  let outerGroupId: string | null = null
+  while (target?.parentId) {
+    const parent = getObject(target.parentId)
+    if (!parent || parent.type !== 'group') break
+    outerGroupId = parent.id
+    target = parent
+  }
+  if (!outerGroupId) return objectId
+  const selectedId = props.store.state.selectedObjectId
+  if (
+    selectedId === objectId
+    || selectedId === outerGroupId
+    || (selectedId && objectIsDescendantOf(selectedId, outerGroupId))
+  ) return objectId
+  return outerGroupId
+}
+
 const addAction = (type: StageAction['type']) => {
   const object = selectedObject.value
   if (!object || !canEditAllObjects.value) return
@@ -492,22 +522,39 @@ const updateTransformer = () => {
       .map((id) => objectNodes.get(id))
       .filter((node): node is Konva.Group => Boolean(node))
     transformer.nodes(nodes)
+    transformer.padding(0)
+    transformer.borderStrokeWidth(1)
+    transformer.borderDash([])
+    transformer.anchorSize(9)
+    transformer.rotateAnchorOffset(50)
     transformer.keepRatio(false)
     transformer.enabledAnchors([])
     transformer.rotateEnabled(false)
+    transformer.forceUpdate()
     interactionLayer?.batchDraw()
     return
   }
   const object = selectedObject.value
-  const node = object && object.type !== 'group' && !object.locked && canEditObject(object) ? objectNodes.get(object.id) : null
+  const node = object && canEditObject(object) ? objectNodes.get(object.id) : null
   transformer.nodes(node ? [node] : [])
-  transformer.keepRatio(object?.type === 'image')
-  transformer.enabledAnchors(object?.sizeLocked ? [] : [
-    'top-left', 'top-center', 'top-right',
-    'middle-left', 'middle-right',
-    'bottom-left', 'bottom-center', 'bottom-right',
-  ])
-  transformer.rotateEnabled(true)
+  transformer.visible(Boolean(node))
+  const groupSelected = object?.type === 'group'
+  const proportional = object?.type === 'image' || groupSelected
+  transformer.padding(groupSelected ? 8 : 0)
+  transformer.borderStrokeWidth(groupSelected ? 2 : 1)
+  transformer.borderDash(groupSelected ? [6, 4] : [])
+  transformer.anchorSize(groupSelected ? 11 : 9)
+  transformer.rotateAnchorOffset(groupSelected ? 32 : 50)
+  transformer.keepRatio(proportional)
+  transformer.enabledAnchors(object?.locked || object?.sizeLocked ? [] : proportional
+    ? ['top-left', 'top-right', 'bottom-left', 'bottom-right']
+    : [
+        'top-left', 'top-center', 'top-right',
+        'middle-left', 'middle-right',
+        'bottom-left', 'bottom-center', 'bottom-right',
+      ])
+  transformer.rotateEnabled(!object?.locked)
+  transformer.forceUpdate()
   interactionLayer?.batchDraw()
 }
 
@@ -767,30 +814,36 @@ const rebuildObjectContent = (wrapper: Konva.Group, object: StageObject) => {
     )
     return
   }
+  if (object.type === 'group') {
+    wrapper.add(new Konva.Rect({
+      name: 'theater-object-group-control-bounds',
+      visible: false,
+      fill: 'rgba(0, 0, 0, 0)',
+      strokeEnabled: false,
+    }))
+    wrapper.add(new Konva.Rect({
+      name: 'theater-object-group-selection-outline',
+      visible: false,
+      listening: false,
+      stroke: '#38bdf8',
+      strokeWidth: 2,
+      strokeScaleEnabled: false,
+      dash: [6, 4],
+    }))
+    return
+  }
   wrapper.add(new Konva.Rect({
     name: 'theater-object-content',
     width,
     height,
     fill: object.fill,
-    stroke: object.type === 'group' ? 'rgba(148, 163, 184, 0.8)' : 'rgba(255, 255, 255, 0.58)',
-    dash: object.type === 'group' ? [10, 7] : undefined,
-    strokeWidth: object.type === 'group' ? 2 : 1,
-    cornerRadius: object.type === 'group' ? 6 : 14,
-    shadowColor: object.type === 'group' ? undefined : '#000000',
-    shadowBlur: object.type === 'group' ? 0 : 18,
-    shadowOpacity: object.type === 'group' ? 0 : 0.28,
+    stroke: 'rgba(255, 255, 255, 0.58)',
+    strokeWidth: 1,
+    cornerRadius: 14,
+    shadowColor: '#000000',
+    shadowBlur: 18,
+    shadowOpacity: 0.28,
   }))
-  if (object.type === 'group') {
-    wrapper.add(new Konva.Text({
-      name: 'theater-object-group-label',
-      text: object.name,
-      x: 8,
-      y: 7,
-      fill: '#cbd5e1',
-      fontSize: 13,
-      listening: false,
-    }))
-  }
 }
 
 const createObjectNode = (object: StageObject) => {
@@ -800,14 +853,20 @@ const createObjectNode = (object: StageObject) => {
   wrapper.on('pointerdown', (event) => {
     const current = getObject(object.id)
     if (!canEditObject(current)) return
-    event.cancelBubble = true
+    const selectionId = canvasSelectionTarget(object.id)
+    event.cancelBubble = selectionId === object.id
     const additive = event.evt.shiftKey || event.evt.ctrlKey || event.evt.metaKey
     if (
       props.store.selection.bulkMode
-      && selectedIdSet.value.has(object.id)
+      && selectedIdSet.value.has(selectionId)
       && !additive
     ) return
-    selectObject(object.id, additive)
+    selectObject(selectionId, additive)
+  })
+  wrapper.on('dblclick dbltap', (event) => {
+    if (!canEditObject(getObject(object.id))) return
+    event.cancelBubble = true
+    selectObject(object.id)
   })
   wrapper.on('click tap', () => {
     const current = getObject(object.id)
@@ -893,11 +952,20 @@ const createObjectNode = (object: StageObject) => {
     }
     const center = transformCenters.get(object.id) || { x: wrapper.x(), y: wrapper.y() }
     transformCenters.delete(object.id)
+    if (current.type === 'group') {
+      current.transform.x = Number((wrapper.x() / WORLD_UNIT_PX).toFixed(6))
+      current.transform.y = Number((wrapper.y() / WORLD_UNIT_PX).toFixed(6))
+      current.transform.rotation = Number(wrapper.rotation().toFixed(6))
+      current.transform.scale = Number(Math.min(100, Math.max(0.01, wrapper.scaleX())).toFixed(6))
+      props.store.commitObjectEdit()
+      return
+    }
     current.transform.width = Number((Math.max(12, current.transform.width * WORLD_UNIT_PX * wrapper.scaleX()) / WORLD_UNIT_PX).toFixed(6))
     current.transform.height = Number((Math.max(12, current.transform.height * WORLD_UNIT_PX * wrapper.scaleY()) / WORLD_UNIT_PX).toFixed(6))
     current.transform.rotation = Number(wrapper.rotation().toFixed(6))
     current.transform.x = Number((center.x / WORLD_UNIT_PX).toFixed(6))
     current.transform.y = Number((center.y / WORLD_UNIT_PX).toFixed(6))
+    current.transform.scale = 1
     wrapper.position(center)
     wrapper.scale({ x: 1, y: 1 })
     props.store.commitObjectEdit()
@@ -977,14 +1045,22 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
   const height = Math.max(0.5, object.transform.height) * WORLD_UNIT_PX
   const multiSelected = isBatchSelection.value && selectedIdSet.value.has(object.id)
   const selectedAncestor = multiSelected && !selectedMovementRootIds().includes(object.id)
+  const groupedObjectDirectlySelected = !object.parentId
+    || props.store.state.selectedObjectId === object.id
+    || multiSelected
   wrapper.setAttrs({
     x: object.transform.x * WORLD_UNIT_PX,
     y: object.transform.y * WORLD_UNIT_PX,
     offsetX: width / 2,
     offsetY: height / 2,
     rotation: object.transform.rotation,
+    scaleX: object.transform.scale,
+    scaleY: object.transform.scale,
     visible: object.visible,
-    draggable: !object.locked && canEditObject(object) && (!multiSelected || (!batchMoveBlocked.value && !selectedAncestor)),
+    draggable: !object.locked
+      && canEditObject(object)
+      && groupedObjectDirectlySelected
+      && (!multiSelected || (!batchMoveBlocked.value && !selectedAncestor)),
     listening: canEditObject(object) || (canTriggerActions.value && object.interactive && ['image', 'button'].includes(object.type)),
   })
   if (object.type === 'text') {
@@ -1003,9 +1079,8 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
       width,
       height,
     })
-  } else {
+  } else if (object.type !== 'group') {
     wrapper.findOne<Konva.Rect>('.theater-object-content')?.setAttrs({ width, height, fill: object.fill })
-    wrapper.findOne<Konva.Text>('.theater-object-group-label')?.text(object.name)
   }
 }
 
@@ -1023,6 +1098,48 @@ const syncObjects = () => {
     updateObjectNode(node, object)
   }
   syncStageObjectHierarchy(objects, objectNodes, objectRoot)
+  const groupControls: Array<{
+    object: StageObject
+    wrapper: Konva.Group
+    controlBounds: Konva.Rect
+    outline: Konva.Rect
+  }> = []
+  for (const object of Object.values(objects)) {
+    if (object.type !== 'group') continue
+    const wrapper = objectNodes.get(object.id)
+    const controlBounds = wrapper?.findOne<Konva.Rect>('.theater-object-group-control-bounds')
+    const outline = wrapper?.findOne<Konva.Rect>('.theater-object-group-selection-outline')
+    if (!wrapper || !controlBounds || !outline) continue
+    controlBounds.visible(false)
+    outline.visible(false)
+    groupControls.push({ object, wrapper, controlBounds, outline })
+  }
+  const selectedId = props.store.state.selectedObjectId
+  for (const { object, wrapper, controlBounds, outline } of groupControls) {
+    const bounds = wrapper.getClientRect({
+      skipTransform: true,
+      skipShadow: true,
+      skipStroke: true,
+    })
+    if (bounds.width <= 0 || bounds.height <= 0) continue
+    controlBounds.setAttrs({
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+      visible: true,
+    })
+    if (!selectedId || isBatchSelection.value || !objectIsDescendantOf(selectedId, object.id)) continue
+    const padding = 8
+    outline.setAttrs({
+      x: bounds.x - padding,
+      y: bounds.y - padding,
+      width: bounds.width + padding * 2,
+      height: bounds.height + padding * 2,
+      visible: true,
+      opacity: 0.65,
+    })
+  }
   worldLayer?.batchDraw()
   nextTick(updateTransformer)
 }
@@ -1242,13 +1359,95 @@ const handleCanvasDrop = async (event: DragEvent) => {
   }
 }
 
+const reparentObjectPreservingTransform = (objectId: string, parentId: string | null) => {
+  const object = getObject(objectId)
+  const node = objectNodes.get(objectId)
+  const parentNode = parentId ? objectNodes.get(parentId) : objectRoot
+  if (!object || !node || !parentNode || object.parentId === parentId) return false
+  if (parentId) {
+    let parent: StageObject | undefined = getObject(parentId)
+    if (!parent || parent.type !== 'group') return false
+    if (props.store.isPersistentObject(objectId) !== props.store.isPersistentObject(parentId)) return false
+    while (parent) {
+      if (parent.id === objectId) return false
+      parent = parent.parentId ? getObject(parent.parentId) : undefined
+    }
+  }
+  const absolutePosition = node.absolutePosition()
+  const absoluteRotation = node.getAbsoluteRotation()
+  const absoluteScale = node.getAbsoluteScale().x
+  node.moveTo(parentNode)
+  const parentScale = Math.max(0.000001, parentNode.getAbsoluteScale().x)
+  node.rotation(absoluteRotation - parentNode.getAbsoluteRotation())
+  node.scale({ x: absoluteScale / parentScale, y: absoluteScale / parentScale })
+  node.absolutePosition(absolutePosition)
+  const changed = props.store.reparentObject(objectId, parentId, {
+    x: Number((node.x() / WORLD_UNIT_PX).toFixed(6)),
+    y: Number((node.y() / WORLD_UNIT_PX).toFixed(6)),
+    rotation: Number(node.rotation().toFixed(6)),
+    scale: Number(node.scaleX().toFixed(6)),
+  })
+  if (!changed) syncObjects()
+  return changed
+}
+
+const startLayerDrag = (event: DragEvent, objectId: string) => {
+  if (!canEditAllObjects.value) return
+  draggedLayerId.value = objectId
+  layerDropTarget.value = null
+  event.dataTransfer?.setData('application/x-sealchat-stage-object', objectId)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+  props.store.beginObjectEdit('调整对象分组')
+}
+
+const finishLayerDrag = () => {
+  draggedLayerId.value = null
+  layerDropTarget.value = null
+  props.store.commitObjectEdit()
+}
+
+const handleLayerDragOver = (event: DragEvent, targetId: string) => {
+  const target = getObject(targetId)
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const ratio = (event.clientY - rect.top) / Math.max(1, rect.height)
+  const placement: LayerDropPlacement = target?.type === 'group' && ratio >= 0.25 && ratio <= 0.75
+    ? 'inside'
+    : ratio < 0.5 ? 'before' : 'after'
+  layerDropTarget.value = { id: targetId, placement }
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+}
+
+const handleLayerDragLeave = (event: DragEvent, targetId: string | null) => {
+  const currentTarget = event.currentTarget as HTMLElement
+  if (event.relatedTarget && currentTarget.contains(event.relatedTarget as Node)) return
+  if (layerDropTarget.value?.id === targetId) layerDropTarget.value = null
+}
+
 const handleLayerDrop = (event: DragEvent, targetId: string) => {
   if (!canEditAllObjects.value) return
-  const objectId = draggedLayerId.value
-  draggedLayerId.value = null
+  const objectId = draggedLayerId.value || event.dataTransfer?.getData('application/x-sealchat-stage-object')
   if (!objectId || objectId === targetId) return
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  props.store.reorderObject(objectId, targetId, event.clientY < rect.top + rect.height / 2 ? 'before' : 'after')
+  const target = getObject(targetId)
+  const placement = layerDropTarget.value?.id === targetId ? layerDropTarget.value.placement : 'after'
+  if (!target) return
+  if (placement === 'inside' && target.type === 'group') {
+    reparentObjectPreservingTransform(objectId, target.id)
+    selectObject(objectId)
+    return
+  }
+  const object = getObject(objectId)
+  if (!object) return
+  if (object.parentId !== target.parentId && !reparentObjectPreservingTransform(objectId, target.parentId)) return
+  props.store.reorderObject(objectId, targetId, placement === 'before' ? 'before' : 'after')
+  selectObject(objectId)
+}
+
+const handleRootLayerDrop = (event: DragEvent) => {
+  if (!canEditAllObjects.value) return
+  const objectId = draggedLayerId.value || event.dataTransfer?.getData('application/x-sealchat-stage-object')
+  if (!objectId) return
+  reparentObjectPreservingTransform(objectId, null)
+  selectObject(objectId)
 }
 
 onMounted(() => {
@@ -1279,7 +1478,7 @@ onMounted(() => {
   transformer = new Konva.Transformer({
     rotateEnabled: true,
     keepRatio: false,
-    centeredScaling: true,
+    centeredScaling: false,
     flipEnabled: false,
     borderStroke: '#38bdf8',
     anchorStroke: '#38bdf8',
@@ -1601,15 +1800,21 @@ onBeforeUnmount(() => {
                 <n-button size="small" quaternary type="error" :disabled="!selectedObject.image" @click="clearImage({ kind: 'object', objectId: selectedObject.id })">清除</n-button>
               </div>
             </template>
-            <template v-if="selectedObject.type !== 'image'">
+            <template v-if="selectedObject.type !== 'image' && selectedObject.type !== 'group'">
               <label>颜色</label>
               <n-input v-model:value="selectedObject.fill" />
             </template>
             <div class="theater-object-editor__transform">
               <label>X</label><n-input-number v-model:value="selectedObject.transform.x" :precision="2" />
               <label>Y</label><n-input-number v-model:value="selectedObject.transform.y" :precision="2" />
-              <label>宽</label><n-input-number v-model:value="selectedObject.transform.width" :disabled="!canEditAllObjects && selectedObject.sizeLocked" :min="0.5" :precision="2" />
-              <label>高</label><n-input-number v-model:value="selectedObject.transform.height" :disabled="!canEditAllObjects && selectedObject.sizeLocked" :min="0.5" :precision="2" />
+              <template v-if="selectedObject.type === 'group'">
+                <label>旋转</label><n-input-number v-model:value="selectedObject.transform.rotation" :precision="2" />
+                <label>缩放</label><n-input-number v-model:value="selectedObject.transform.scale" :disabled="selectedObject.sizeLocked" :min="0.01" :max="100" :step="0.1" :precision="2" />
+              </template>
+              <template v-else>
+                <label>宽</label><n-input-number v-model:value="selectedObject.transform.width" :disabled="!canEditAllObjects && selectedObject.sizeLocked" :min="0.5" :precision="2" />
+                <label>高</label><n-input-number v-model:value="selectedObject.transform.height" :disabled="!canEditAllObjects && selectedObject.sizeLocked" :min="0.5" :precision="2" />
+              </template>
             </div>
             <div v-if="canEditAllObjects" class="theater-object-editor__checks">
               <n-checkbox v-model:checked="selectedObject.visible">显示</n-checkbox>
@@ -1642,12 +1847,12 @@ onBeforeUnmount(() => {
                 size="small"
                 clearable
                 placeholder="根层级"
-                @update:value="store.setParent(selectedObject.id, $event || null)"
+                @update:value="reparentObjectPreservingTransform(selectedObject.id, $event || null)"
               />
               <div class="theater-inspector-actions">
                 <n-button size="tiny" @click="store.moveOrder(selectedObject.id, 1)"><template #icon><n-icon><ArrowUp /></n-icon></template>上移</n-button>
                 <n-button size="tiny" @click="store.moveOrder(selectedObject.id, -1)"><template #icon><n-icon><ArrowDown /></n-icon></template>下移</n-button>
-                <n-button size="tiny" :disabled="!selectedObject.parentId" @click="store.setParent(selectedObject.id, null)"><template #icon><n-icon><ArrowBackUp /></n-icon></template>移出组</n-button>
+                <n-button size="tiny" :disabled="!selectedObject.parentId" @click="reparentObjectPreservingTransform(selectedObject.id, null)"><template #icon><n-icon><ArrowBackUp /></n-icon></template>移出组</n-button>
               </div>
               <small v-if="resourceError" class="theater-resource-error">{{ resourceError }}</small>
               <n-button size="small" secondary type="error" @click="store.removeSelectedObject()"><template #icon><n-icon><Trash /></n-icon></template>删除对象</n-button>
@@ -1689,17 +1894,33 @@ onBeforeUnmount(() => {
         <div class="theater-panel-heading"><span>层级</span></div>
         <div class="theater-layer-list">
           <button
+            v-if="canEditAllObjects"
+            class="theater-layer-root-drop"
+            :class="{ 'is-drop-target': layerDropTarget?.id === null }"
+            @dragover.prevent="layerDropTarget = { id: null, placement: 'inside' }"
+            @dragleave="handleLayerDragLeave($event, null)"
+            @drop.prevent="handleRootLayerDrop"
+          >
+            根层级
+          </button>
+          <button
             v-for="row in layerRows"
             :key="row.object.id"
             class="theater-layer-row"
-            :class="{ 'is-active': store.selection.selectedIds.includes(row.object.id) }"
+            :class="{
+              'is-active': store.selection.selectedIds.includes(row.object.id),
+              'is-drop-before': layerDropTarget?.id === row.object.id && layerDropTarget.placement === 'before',
+              'is-drop-inside': layerDropTarget?.id === row.object.id && layerDropTarget.placement === 'inside',
+              'is-drop-after': layerDropTarget?.id === row.object.id && layerDropTarget.placement === 'after',
+            }"
             :style="{ paddingLeft: `${10 + row.depth * 15}px` }"
             :disabled="!canEditObject(row.object)"
             :draggable="canEditAllObjects"
             @click="selectObject(row.object.id, store.selection.bulkMode && ($event.shiftKey || $event.ctrlKey || $event.metaKey))"
-            @dragstart="canEditAllObjects && (draggedLayerId = row.object.id, store.beginObjectEdit('调整对象顺序'))"
-            @dragend="draggedLayerId = null; store.commitObjectEdit()"
-            @dragover.prevent
+            @dragstart="startLayerDrag($event, row.object.id)"
+            @dragend="finishLayerDrag"
+            @dragover.prevent="handleLayerDragOver($event, row.object.id)"
+            @dragleave="handleLayerDragLeave($event, row.object.id)"
             @drop.prevent="handleLayerDrop($event, row.object.id)"
           >
             <n-icon class="theater-layer-row__grip"><GripVertical /></n-icon>
@@ -1805,14 +2026,25 @@ onBeforeUnmount(() => {
 .theater-image-actions { display: flex; align-items: center; gap: 4px; }
 .theater-resource-error { color: #f87171; font-size: 10px; line-height: 1.3; }
 .theater-layer-list { min-height: 100px; flex: 1; overflow: auto; padding: 4px 0; }
+.theater-layer-root-drop {
+  width: calc(100% - 12px); height: 25px; margin: 2px 6px 5px; border: 1px dashed var(--sc-border-mute, rgba(255, 255, 255, .16));
+  border-radius: 5px; color: var(--sc-fg-muted, #71717a); background: transparent; font-size: 10px; cursor: default;
+}
+.theater-layer-root-drop.is-drop-target { border-color: #38bdf8; color: #7dd3fc; background: rgba(56, 189, 248, .1); }
 .theater-layer-row {
-  width: 100%; height: 31px; display: flex; align-items: center; gap: 7px; border: 0;
+  position: relative; width: 100%; height: 31px; display: flex; align-items: center; gap: 7px; border: 0;
   color: var(--sc-text-primary, #f4f4f5); background: transparent; font-size: 12px; text-align: left; cursor: pointer;
   transition: color .14s ease, background .14s ease;
 }
 .theater-layer-row:hover { background: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)); }
 .theater-layer-row:active { cursor: grabbing; }
 .theater-layer-row.is-active { color: var(--sc-text-primary, #f4f4f5); background: color-mix(in srgb, var(--theater-accent) 18%, transparent); }
+.theater-layer-row.is-drop-inside { outline: 1px solid #38bdf8; outline-offset: -2px; background: rgba(56, 189, 248, .12); }
+.theater-layer-row.is-drop-before::before, .theater-layer-row.is-drop-after::after {
+  position: absolute; right: 5px; left: 5px; height: 2px; border-radius: 1px; background: #38bdf8; content: '';
+}
+.theater-layer-row.is-drop-before::before { top: 0; }
+.theater-layer-row.is-drop-after::after { bottom: 0; }
 .theater-layer-row__grip { flex: 0 0 auto; color: var(--sc-fg-muted, #71717a); font-size: 14px; cursor: grab; }
 .theater-layer-row__type { width: 22px; color: var(--sc-fg-muted, #71717a); font-size: 10px; }
 .theater-layer-row__name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

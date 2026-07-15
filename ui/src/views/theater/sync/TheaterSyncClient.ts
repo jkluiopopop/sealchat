@@ -19,6 +19,7 @@ interface TheaterObjectSnapshot {
   width: number
   height: number
   rotation: number
+  scale?: number
   z: number
   orderKey: string
   visible: boolean
@@ -172,6 +173,7 @@ const objectFromServer = (value: TheaterObjectSnapshot): StageObject => {
       width: finite(value.width, 1),
       height: finite(value.height, 1),
       rotation: finite(value.rotation, 0),
+      scale: finite(value.scale, 1) > 0 ? Math.min(100, finite(value.scale, 1)) : 1,
       z: finite(value.z, 0),
       order: finite(Number.parseFloat(value.orderKey), 0),
     },
@@ -202,6 +204,7 @@ const objectForServer = (object: StageObject, sceneId: string | null): TheaterOb
   width: object.transform.width,
   height: object.transform.height,
   rotation: object.transform.rotation,
+  scale: object.transform.scale,
   z: object.transform.z,
   orderKey: String(object.transform.order),
   visible: object.visible,
@@ -289,6 +292,7 @@ const objectFields = (object: TheaterObjectSnapshot, previous: TheaterObjectSnap
     width: object.width,
     height: object.height,
     rotation: object.rotation,
+    scale: object.scale ?? 1,
     z: object.z,
     orderKey: object.orderKey,
     visible: object.visible,
@@ -308,6 +312,7 @@ const objectFields = (object: TheaterObjectSnapshot, previous: TheaterObjectSnap
     width: previous.width,
     height: previous.height,
     rotation: previous.rotation,
+    scale: previous.scale ?? 1,
     z: previous.z,
     orderKey: previous.orderKey,
     visible: previous.visible,
@@ -332,6 +337,7 @@ const objectInput = (object: TheaterObjectSnapshot): JsonObject => ({
   width: object.width,
   height: object.height,
   rotation: object.rotation,
+  scale: object.scale ?? 1,
   z: object.z,
   orderKey: object.orderKey,
   visible: object.visible,
@@ -455,7 +461,7 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
 }
 
 const delegatedObjectFields = new Set([
-  'name', 'x', 'y', 'width', 'height', 'rotation', 'z', 'orderKey', 'content',
+  'name', 'x', 'y', 'width', 'height', 'rotation', 'scale', 'z', 'orderKey', 'content',
 ])
 
 const canApplyMutation = (mutation: TheaterMutation, permissions: string[], baseDocument: TheaterDocument) => {
@@ -466,7 +472,7 @@ const canApplyMutation = (mutation: TheaterMutation, permissions: string[], base
   const fields = asObject(mutation.payload.fields)
   return Boolean(object?.editable && !object.locked)
     && Object.keys(fields).every((field) => delegatedObjectFields.has(field))
-    && !(object?.sizeLocked && ('width' in fields || 'height' in fields))
+    && !(object?.sizeLocked && ('width' in fields || 'height' in fields || 'scale' in fields))
 }
 
 const errorMessage = (error: unknown) => {

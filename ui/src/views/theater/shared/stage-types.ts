@@ -57,6 +57,7 @@ export interface StageObjectTransform {
   width: number
   height: number
   rotation: number
+  scale: number
   z: number
   order: number
 }

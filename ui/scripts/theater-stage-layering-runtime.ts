@@ -4,13 +4,14 @@ import Konva from 'konva'
 
 import type { StageObject } from '../src/views/theater/shared/stage-types'
 import { syncStageObjectHierarchy } from '../src/views/theater/stage/stage-layering.js'
+import { createTheaterStageStore } from '../src/views/theater/stage/StageStore.js'
 
 const makeObject = (id: string, z: number, parentId: string | null = null): StageObject => ({
   id,
   parentId,
   type: parentId === null && id === 'group' ? 'group' : 'shape',
   name: id,
-  transform: { x: 0, y: 0, width: 1, height: 1, rotation: 0, z, order: z },
+  transform: { x: 0, y: 0, width: 1, height: 1, rotation: 0, scale: 1, z, order: z },
   visible: true,
   locked: false,
   sizeLocked: false,
@@ -53,6 +54,28 @@ syncStageObjectHierarchy(objects, nodes, root)
 assert.deepEqual(
   root.getChildren().map((node) => (node as Konva.Node).getAttr('stageObjectId')),
   ['group', 'scene', 'persistent'],
+)
+
+const store = createTheaterStageStore()
+const initialObjects = Object.values(store.activeObjects.value)
+const initialGroup = initialObjects.find((object) => object.type === 'group')!
+const initialChild = initialObjects.find((object) => object.parentId === initialGroup.id)!
+const rootShape = initialObjects.find((object) => object.type === 'shape' && object.parentId === null)!
+assert.equal(store.setParent(initialChild.id, rootShape.id), false)
+
+const nestedGroup = store.addObject('group')
+assert.equal(store.setParent(nestedGroup.id, initialGroup.id), true)
+assert.equal(store.setParent(initialGroup.id, nestedGroup.id), false)
+assert.equal(store.reparentObject(initialChild.id, null, { x: 3, y: 4, rotation: 25, scale: 1.5 }), true)
+assert.equal(initialChild.parentId, null)
+assert.deepEqual(
+  {
+    x: initialChild.transform.x,
+    y: initialChild.transform.y,
+    rotation: initialChild.transform.rotation,
+    scale: initialChild.transform.scale,
+  },
+  { x: 3, y: 4, rotation: 25, scale: 1.5 },
 )
 
 console.log('theater stage layering runtime tests passed')

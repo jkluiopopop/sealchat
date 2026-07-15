@@ -67,6 +67,7 @@ type TheaterObjectModel struct {
 	Width               float64 `json:"width" gorm:"not null"`
 	Height              float64 `json:"height" gorm:"not null"`
 	Rotation            float64 `json:"rotation" gorm:"not null"`
+	Scale               float64 `json:"scale" gorm:"not null;default:1"`
 	Z                   float64 `json:"z" gorm:"not null"`
 	OrderKey            string  `json:"orderKey" gorm:"size:128;not null;index:idx_theater_object_scope_order,priority:3"`
 	Visible             bool    `json:"visible" gorm:"not null;default:true"`
