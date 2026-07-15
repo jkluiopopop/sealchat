@@ -65,10 +65,16 @@ const stageObjectTransformSchema = z.strictObject({
   width: z.number().finite(),
   height: z.number().finite(),
   rotation: z.number().finite(),
-  scale: z.number().finite().positive().max(100).default(1),
+  scale: z.number().finite().positive().max(100).optional(),
+  scaleX: z.number().finite().positive().max(100).optional(),
+  scaleY: z.number().finite().positive().max(100).optional(),
   z: z.number().finite(),
   order: z.number().finite(),
-})
+}).transform(({ scale, ...transform }) => ({
+  ...transform,
+  scaleX: transform.scaleX ?? scale ?? 1,
+  scaleY: transform.scaleY ?? scale ?? 1,
+}))
 
 const stageImageRefSchema = z.strictObject({
   resourceId: nonEmptyIdSchema,
@@ -228,7 +234,7 @@ const stageObjectSchema = z.strictObject({
   transform: stageObjectTransformSchema,
   visible: z.boolean(),
   locked: z.boolean(),
-  sizeLocked: z.boolean(),
+  aspectRatioLocked: z.boolean(),
   interactive: z.boolean(),
   fill: z.string().max(256),
   text: z.string().max(100_000).optional(),

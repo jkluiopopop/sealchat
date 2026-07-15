@@ -89,11 +89,13 @@ type TheaterObjectSnapshot struct {
 	Height              float64         `json:"height"`
 	Rotation            float64         `json:"rotation"`
 	Scale               float64         `json:"scale"`
+	ScaleX              float64         `json:"scaleX"`
+	ScaleY              float64         `json:"scaleY"`
 	Z                   float64         `json:"z"`
 	OrderKey            string          `json:"orderKey"`
 	Visible             bool            `json:"visible"`
 	Locked              bool            `json:"locked"`
-	SizeLocked          bool            `json:"sizeLocked"`
+	AspectRatioLocked   *bool           `json:"aspectRatioLocked,omitempty"`
 	Interactive         bool            `json:"interactive"`
 	Editable            bool            `json:"editable"`
 	OwnerUserID         *string         `json:"ownerUserId"`

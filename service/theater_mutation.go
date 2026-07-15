@@ -196,7 +196,7 @@ func ApplyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 
 var delegatedTheaterObjectFields = map[string]bool{
 	"name": true, "x": true, "y": true, "width": true, "height": true,
-	"rotation": true, "scale": true, "z": true, "orderKey": true, "content": true,
+	"rotation": true, "scale": true, "scaleX": true, "scaleY": true, "z": true, "orderKey": true, "content": true,
 }
 
 func validateDelegatedTheaterObjectUpdate(tx *gorm.DB, roomID string, payload *theaterObjectUpdatePayload) error {
@@ -210,9 +210,6 @@ func validateDelegatedTheaterObjectUpdate(tx *gorm.DB, roomID string, payload *t
 	for field := range payload.Fields {
 		if !delegatedTheaterObjectFields[field] {
 			return newTheaterError(TheaterErrorPermissionDenied, "成员不能修改对象管理字段", 403, map[string]any{"field": field})
-		}
-		if object.SizeLocked && (field == "width" || field == "height" || field == "scale") {
-			return newTheaterError(TheaterErrorPermissionDenied, "对象尺寸已锁定", 403, map[string]any{"field": field})
 		}
 	}
 	return nil
@@ -447,10 +444,22 @@ func createTheaterObject(tx *gorm.DB, room *model.TheaterRoomModel, actorID stri
 	if input.Scale != nil {
 		scale = *input.Scale
 	}
+	scaleX := scale
+	if input.ScaleX != nil {
+		scaleX = *input.ScaleX
+	}
+	scaleY := scale
+	if input.ScaleY != nil {
+		scaleY = *input.ScaleY
+	}
+	aspectRatioLocked := true
+	if input.AspectRatioLocked != nil {
+		aspectRatioLocked = *input.AspectRatioLocked
+	}
 	object := model.TheaterObjectModel{
 		StringPKBaseModel: model.StringPKBaseModel{ID: input.ID}, RoomID: room.ID, SceneID: sceneValue, ParentID: derefString(input.ParentID), Kind: input.Kind, Name: input.Name,
-		X: input.X, Y: input.Y, Width: input.Width, Height: input.Height, Rotation: input.Rotation, Scale: scale, Z: input.Z, OrderKey: input.OrderKey,
-		Visible: visible, Locked: input.Locked, SizeLocked: input.SizeLocked, Interactive: input.Interactive, Editable: input.Editable,
+		X: input.X, Y: input.Y, Width: input.Width, Height: input.Height, Rotation: input.Rotation, Scale: scaleX, ScaleX: scaleX, ScaleY: scaleY, Z: input.Z, OrderKey: input.OrderKey,
+		Visible: visible, Locked: input.Locked, AspectRatioLocked: aspectRatioLocked, Interactive: input.Interactive, Editable: input.Editable,
 		OwnerUserID: derefString(input.OwnerUserID), CharacterIdentityID: derefString(input.CharacterIdentityID), ContentJSON: defaultJSON(input.Content, `{}`), ActionsJSON: defaultJSON(input.Actions, `[]`), MetadataJSON: defaultJSON(input.Metadata, `{}`),
 		SchemaVersion: model.TheaterSchemaVersion, CreatedBy: actorID, UpdatedBy: actorID,
 	}
@@ -483,8 +492,23 @@ func applyTheaterObjectUpdate(tx *gorm.DB, room *model.TheaterRoomModel, actorID
 		return newTheaterError(TheaterErrorPermissionDenied, "对象已锁定", 403, nil)
 	}
 	updates := map[string]any{"updated_by": actorID, "updated_at": time.Now()}
-	columnMap := map[string]string{"parentId": "parent_id", "name": "name", "x": "x", "y": "y", "width": "width", "height": "height", "rotation": "rotation", "scale": "scale", "z": "z", "orderKey": "order_key", "visible": "visible", "locked": "locked", "sizeLocked": "size_locked", "interactive": "interactive", "editable": "editable"}
+	columnMap := map[string]string{"parentId": "parent_id", "name": "name", "x": "x", "y": "y", "width": "width", "height": "height", "rotation": "rotation", "z": "z", "orderKey": "order_key", "visible": "visible", "locked": "locked", "aspectRatioLocked": "aspect_ratio_locked", "interactive": "interactive", "editable": "editable"}
 	for key, value := range payload.Fields {
+		if key == "scale" {
+			updates["scale"] = value
+			updates["scale_x"] = value
+			updates["scale_y"] = value
+			continue
+		}
+		if key == "scaleX" {
+			updates["scale"] = value
+			updates["scale_x"] = value
+			continue
+		}
+		if key == "scaleY" {
+			updates["scale_y"] = value
+			continue
+		}
 		if key == "parentId" {
 			parentID := strings.TrimSpace(fmt.Sprint(value))
 			if parentID == object.ID {

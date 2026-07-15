@@ -257,7 +257,15 @@ func replaceTheaterRows(tx *gorm.DB, room *model.TheaterRoomModel, actorID strin
 		if scale <= 0 {
 			scale = 1
 		}
-		input := theaterObjectInput{ID: item.ID, ParentID: item.ParentID, Kind: item.Kind, Name: item.Name, X: item.X, Y: item.Y, Width: item.Width, Height: item.Height, Rotation: item.Rotation, Scale: &scale, Z: item.Z, OrderKey: item.OrderKey, Visible: &item.Visible, Locked: item.Locked, SizeLocked: item.SizeLocked, Interactive: item.Interactive, Editable: item.Editable, OwnerUserID: item.OwnerUserID, CharacterIdentityID: item.CharacterIdentityID, Content: item.Content, Actions: item.Actions, Metadata: item.Metadata}
+		scaleX := item.ScaleX
+		if scaleX <= 0 {
+			scaleX = scale
+		}
+		scaleY := item.ScaleY
+		if scaleY <= 0 {
+			scaleY = scale
+		}
+		input := theaterObjectInput{ID: item.ID, ParentID: item.ParentID, Kind: item.Kind, Name: item.Name, X: item.X, Y: item.Y, Width: item.Width, Height: item.Height, Rotation: item.Rotation, Scale: &scale, ScaleX: &scaleX, ScaleY: &scaleY, Z: item.Z, OrderKey: item.OrderKey, Visible: &item.Visible, Locked: item.Locked, AspectRatioLocked: item.AspectRatioLocked, Interactive: item.Interactive, Editable: item.Editable, OwnerUserID: item.OwnerUserID, CharacterIdentityID: item.CharacterIdentityID, Content: item.Content, Actions: item.Actions, Metadata: item.Metadata}
 		if err := validateObjectInput(&input); err != nil {
 			return err
 		}
@@ -413,10 +421,19 @@ func theaterObjectSnapshotFromModel(object model.TheaterObjectModel) TheaterObje
 	if scale <= 0 {
 		scale = 1
 	}
+	scaleX := object.ScaleX
+	if scaleX <= 0 {
+		scaleX = scale
+	}
+	scaleY := object.ScaleY
+	if scaleY <= 0 {
+		scaleY = scale
+	}
+	aspectRatioLocked := object.AspectRatioLocked
 	return TheaterObjectSnapshot{
 		ID: object.ID, SceneID: sceneID, ParentID: optionalString(object.ParentID), Kind: object.Kind, Name: object.Name,
-		X: object.X, Y: object.Y, Width: object.Width, Height: object.Height, Rotation: object.Rotation, Scale: scale, Z: object.Z, OrderKey: object.OrderKey,
-		Visible: object.Visible, Locked: object.Locked, SizeLocked: object.SizeLocked, Interactive: object.Interactive, Editable: object.Editable,
+		X: object.X, Y: object.Y, Width: object.Width, Height: object.Height, Rotation: object.Rotation, Scale: scale, ScaleX: scaleX, ScaleY: scaleY, Z: object.Z, OrderKey: object.OrderKey,
+		Visible: object.Visible, Locked: object.Locked, AspectRatioLocked: &aspectRatioLocked, Interactive: object.Interactive, Editable: object.Editable,
 		OwnerUserID: optionalString(object.OwnerUserID), CharacterIdentityID: optionalString(object.CharacterIdentityID),
 		Content: normalizedRawJSON(object.ContentJSON, `{}`), Actions: normalizedRawJSON(object.ActionsJSON, `[]`), Metadata: normalizedRawJSON(object.MetadataJSON, `{}`),
 	}

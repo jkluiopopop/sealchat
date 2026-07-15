@@ -59,11 +59,13 @@ type theaterObjectInput struct {
 	Height              float64         `json:"height"`
 	Rotation            float64         `json:"rotation"`
 	Scale               *float64        `json:"scale,omitempty"`
+	ScaleX              *float64        `json:"scaleX,omitempty"`
+	ScaleY              *float64        `json:"scaleY,omitempty"`
 	Z                   float64         `json:"z"`
 	OrderKey            string          `json:"orderKey"`
 	Visible             *bool           `json:"visible"`
 	Locked              bool            `json:"locked"`
-	SizeLocked          bool            `json:"sizeLocked"`
+	AspectRatioLocked   *bool           `json:"aspectRatioLocked"`
 	Interactive         bool            `json:"interactive"`
 	Editable            bool            `json:"editable"`
 	OwnerUserID         *string         `json:"ownerUserId"`
@@ -321,8 +323,10 @@ func validateObjectInput(object *theaterObjectInput) error {
 			return theaterPayloadError("object transform 必须为有限数")
 		}
 	}
-	if object.Scale != nil && (math.IsNaN(*object.Scale) || math.IsInf(*object.Scale, 0) || *object.Scale < 0.01 || *object.Scale > 100) {
-		return theaterPayloadError("object scale 无效")
+	for name, scale := range map[string]*float64{"scale": object.Scale, "scaleX": object.ScaleX, "scaleY": object.ScaleY} {
+		if scale != nil && (math.IsNaN(*scale) || math.IsInf(*scale, 0) || *scale < 0.01 || *scale > 100) {
+			return theaterPayloadError("object " + name + " 无效")
+		}
 	}
 	if object.Width < 0 || object.Height < 0 || object.Width > 1000000 || object.Height > 1000000 {
 		return theaterPayloadError("object 尺寸无效")
@@ -356,7 +360,7 @@ func validateObjectFields(fields map[string]any, characterOnly bool) error {
 	if len(fields) == 0 {
 		return theaterPayloadError("fields 不能为空")
 	}
-	allowed := map[string]bool{"parentId": true, "name": true, "x": true, "y": true, "width": true, "height": true, "rotation": true, "scale": true, "z": true, "orderKey": true, "visible": true, "locked": true, "sizeLocked": true, "interactive": true, "editable": true, "content": true, "actions": true, "metadata": true}
+	allowed := map[string]bool{"parentId": true, "name": true, "x": true, "y": true, "width": true, "height": true, "rotation": true, "scale": true, "scaleX": true, "scaleY": true, "z": true, "orderKey": true, "visible": true, "locked": true, "aspectRatioLocked": true, "interactive": true, "editable": true, "content": true, "actions": true, "metadata": true}
 	if characterOnly {
 		allowed = map[string]bool{"x": true, "y": true, "width": true, "height": true, "rotation": true, "z": true, "orderKey": true, "visible": true, "locked": true, "content": true, "metadata": true}
 	}
@@ -365,10 +369,12 @@ func validateObjectFields(fields map[string]any, characterOnly bool) error {
 			return theaterPayloadError("object fields 包含禁止字段: " + key)
 		}
 	}
-	if value, ok := fields["scale"]; ok {
-		scale, ok := theaterNumericValue(value)
-		if !ok || math.IsNaN(scale) || math.IsInf(scale, 0) || scale < 0.01 || scale > 100 {
-			return theaterPayloadError("object scale 无效")
+	for _, name := range []string{"scale", "scaleX", "scaleY"} {
+		if value, ok := fields[name]; ok {
+			scale, valid := theaterNumericValue(value)
+			if !valid || math.IsNaN(scale) || math.IsInf(scale, 0) || scale < 0.01 || scale > 100 {
+				return theaterPayloadError("object " + name + " 无效")
+			}
 		}
 	}
 	if actions, ok := fields["actions"]; ok {

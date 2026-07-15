@@ -59,7 +59,8 @@ export interface StageObjectTransform {
   width: number
   height: number
   rotation: number
-  scale: number
+  scaleX: number
+  scaleY: number
   z: number
   order: number
 }
@@ -72,7 +73,7 @@ export interface StageObject {
   transform: StageObjectTransform
   visible: boolean
   locked: boolean
-  sizeLocked: boolean
+  aspectRatioLocked: boolean
   interactive: boolean
   editable: boolean
   fill: string

@@ -11,10 +11,10 @@ const makeObject = (id: string, z: number, parentId: string | null = null): Stag
   parentId,
   type: parentId === null && id === 'group' ? 'group' : 'shape',
   name: id,
-  transform: { x: 0, y: 0, width: 1, height: 1, rotation: 0, scale: 1, z, order: z },
+  transform: { x: 0, y: 0, width: 1, height: 1, rotation: 0, scaleX: 1, scaleY: 1, z, order: z },
   visible: true,
   locked: false,
-  sizeLocked: false,
+  aspectRatioLocked: true,
   interactive: true,
   editable: false,
   fill: '#000000',
@@ -61,21 +61,28 @@ const initialObjects = Object.values(store.activeObjects.value)
 const initialGroup = initialObjects.find((object) => object.type === 'group')!
 const initialChild = initialObjects.find((object) => object.parentId === initialGroup.id)!
 const rootShape = initialObjects.find((object) => object.type === 'shape' && object.parentId === null)!
+assert.equal(initialChild.aspectRatioLocked, true)
 assert.equal(store.setParent(initialChild.id, rootShape.id), false)
 
 const nestedGroup = store.addObject('group')
 assert.equal(store.setParent(nestedGroup.id, initialGroup.id), true)
 assert.equal(store.setParent(initialGroup.id, nestedGroup.id), false)
-assert.equal(store.reparentObject(initialChild.id, null, { x: 3, y: 4, rotation: 25, scale: 1.5 }), true)
+assert.equal(store.reparentObject(initialChild.id, null, { x: 3, y: 4, rotation: 25, scaleX: 1.5, scaleY: 0.75 }), true)
 assert.equal(initialChild.parentId, null)
 assert.deepEqual(
   {
     x: initialChild.transform.x,
     y: initialChild.transform.y,
     rotation: initialChild.transform.rotation,
-    scale: initialChild.transform.scale,
+    scaleX: initialChild.transform.scaleX,
+    scaleY: initialChild.transform.scaleY,
   },
-  { x: 3, y: 4, rotation: 25, scale: 1.5 },
+  { x: 3, y: 4, rotation: 25, scaleX: 1.5, scaleY: 0.75 },
 )
+
+const legacySnapshot = store.getSnapshot() as any
+delete legacySnapshot.liveState.sceneObjects[initialChild.id].aspectRatioLocked
+store.replaceState(legacySnapshot)
+assert.equal(store.activeObjects.value[initialChild.id].aspectRatioLocked, true)
 
 console.log('theater stage layering runtime tests passed')

@@ -68,11 +68,13 @@ type TheaterObjectModel struct {
 	Height              float64 `json:"height" gorm:"not null"`
 	Rotation            float64 `json:"rotation" gorm:"not null"`
 	Scale               float64 `json:"scale" gorm:"not null;default:1"`
+	ScaleX              float64 `json:"scaleX" gorm:"not null;default:1"`
+	ScaleY              float64 `json:"scaleY" gorm:"not null;default:1"`
 	Z                   float64 `json:"z" gorm:"not null"`
 	OrderKey            string  `json:"orderKey" gorm:"size:128;not null;index:idx_theater_object_scope_order,priority:3"`
 	Visible             bool    `json:"visible" gorm:"not null;default:true"`
 	Locked              bool    `json:"locked" gorm:"not null;default:false"`
-	SizeLocked          bool    `json:"sizeLocked" gorm:"not null;default:false"`
+	AspectRatioLocked   bool    `json:"aspectRatioLocked" gorm:"not null;default:true"`
 	Interactive         bool    `json:"interactive" gorm:"not null;default:false"`
 	Editable            bool    `json:"editable" gorm:"not null;default:false"`
 	OwnerUserID         string  `json:"ownerUserId,omitempty" gorm:"size:100;index"`
@@ -218,7 +220,10 @@ func theaterModels() []any {
 }
 
 func autoMigrateTheaterModels(conn *gorm.DB) error {
-	return conn.AutoMigrate(theaterModels()...)
+	if err := conn.AutoMigrate(theaterModels()...); err != nil {
+		return err
+	}
+	return conn.Exec("UPDATE theater_objects SET scale_x = scale, scale_y = scale WHERE scale <> 1 AND scale_x = 1 AND scale_y = 1").Error
 }
 
 func TheaterRoomFindByScope(worldID, channelID string) (*TheaterRoomModel, error) {

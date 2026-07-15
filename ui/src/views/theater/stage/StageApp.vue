@@ -359,7 +359,6 @@ let gridSignature = ''
 
 const objectNodes = new Map<string, Konva.Group>()
 const imageLoadVersions = new Map<string, number>()
-const transformCenters = new Map<string, { x: number, y: number }>()
 type StageMediaSource = HTMLImageElement | HTMLVideoElement
 const activeStageVideos = new Set<HTMLVideoElement>()
 let mediaAnimation: Konva.Animation | null = null
@@ -392,15 +391,67 @@ const selectedIdSet = computed(() => new Set(props.store.selection.selectedIds))
 const isBatchSelection = computed(() => props.store.selection.bulkMode && selectedObjects.value.length > 1)
 const batchMoveBlocked = computed(() => isBatchSelection.value && selectedObjects.value.some((object) => object.locked))
 
-type BatchBooleanKey = 'visible' | 'interactive' | 'editable' | 'locked' | 'sizeLocked'
-const batchBooleanChecked = (key: BatchBooleanKey) => selectedObjects.value.length > 0
-  && selectedObjects.value.every((object) => object[key])
+type BatchBooleanKey = 'visible' | 'interactive' | 'editable' | 'locked' | 'aspectRatioLocked'
+const batchBooleanObjects = (_key: BatchBooleanKey) => selectedObjects.value
+const batchBooleanChecked = (key: BatchBooleanKey) => batchBooleanObjects(key).length > 0
+  && batchBooleanObjects(key).every((object) => object[key])
 const batchBooleanIndeterminate = (key: BatchBooleanKey) => {
-  const enabled = selectedObjects.value.filter((object) => object[key]).length
-  return enabled > 0 && enabled < selectedObjects.value.length
+  const objects = batchBooleanObjects(key)
+  const enabled = objects.filter((object) => object[key]).length
+  return enabled > 0 && enabled < objects.length
 }
 const updateBatchBoolean = (key: BatchBooleanKey, checked: boolean) => {
   props.store.patchSelectedObjects({ [key]: checked })
+  if (key === 'aspectRatioLocked') {
+    nextTick(() => {
+      syncObjects()
+      updateTransformer()
+    })
+  }
+}
+
+const updateSelectedAspectRatioLocked = (checked: boolean) => {
+  const object = selectedObject.value
+  if (!object || object.aspectRatioLocked === checked) return
+  props.store.beginObjectEdit('修改对象比例锁定')
+  object.aspectRatioLocked = checked
+  props.store.commitObjectEdit()
+  nextTick(() => {
+    syncObjects()
+    updateTransformer()
+  })
+}
+
+const updateSelectedDimension = (dimension: 'width' | 'height', value: number | null) => {
+  const object = selectedObject.value
+  if (!object || object.type === 'group' || value === null || !Number.isFinite(value)) return
+  const nextValue = Math.max(0.5, value)
+  const width = Math.max(0.5, object.transform.width)
+  const height = Math.max(0.5, object.transform.height)
+  const aspectRatio = width / height
+  object.transform[dimension] = nextValue
+  if (!object.aspectRatioLocked || !Number.isFinite(aspectRatio) || aspectRatio <= 0) return
+  if (dimension === 'width') {
+    object.transform.height = Number(Math.max(0.5, nextValue / aspectRatio).toFixed(6))
+  } else {
+    object.transform.width = Number(Math.max(0.5, nextValue * aspectRatio).toFixed(6))
+  }
+}
+
+const updateSelectedScale = (dimension: 'scaleX' | 'scaleY', value: number | null) => {
+  const object = selectedObject.value
+  if (!object || object.type !== 'group' || value === null || !Number.isFinite(value)) return
+  const nextValue = Math.min(100, Math.max(0.01, value))
+  const scaleX = Math.max(0.01, object.transform.scaleX)
+  const scaleY = Math.max(0.01, object.transform.scaleY)
+  const aspectRatio = scaleX / scaleY
+  object.transform[dimension] = nextValue
+  if (!object.aspectRatioLocked || !Number.isFinite(aspectRatio) || aspectRatio <= 0) return
+  if (dimension === 'scaleX') {
+    object.transform.scaleY = Number(Math.min(100, Math.max(0.01, nextValue / aspectRatio)).toFixed(6))
+  } else {
+    object.transform.scaleX = Number(Math.min(100, Math.max(0.01, nextValue * aspectRatio)).toFixed(6))
+  }
 }
 
 const selectedMovementRootIds = () => {
@@ -547,14 +598,14 @@ const updateTransformer = () => {
   transformer.nodes(node ? [node] : [])
   transformer.visible(Boolean(node))
   const groupSelected = object?.type === 'group'
-  const proportional = object?.type === 'image' || groupSelected
+  const proportional = object?.aspectRatioLocked !== false
   transformer.padding(groupSelected ? 8 : 0)
   transformer.borderStrokeWidth(groupSelected ? 2 : 1)
   transformer.borderDash(groupSelected ? [6, 4] : [])
   transformer.anchorSize(groupSelected ? 11 : 9)
   transformer.rotateAnchorOffset(groupSelected ? 32 : 50)
   transformer.keepRatio(proportional)
-  transformer.enabledAnchors(object?.locked || object?.sizeLocked ? [] : proportional
+  transformer.enabledAnchors(object?.locked ? [] : proportional
     ? ['top-left', 'top-right', 'bottom-left', 'bottom-right']
     : [
         'top-left', 'top-center', 'top-right',
@@ -666,6 +717,8 @@ const setImageFit = (
   node.size({ width: renderedWidth, height: renderedHeight })
   node.crop({ x: 0, y: 0, width: sourceWidth, height: sourceHeight })
 }
+
+const objectImageFit = (object: StageObject): StageObjectFit => object.aspectRatioLocked ? 'contain' : 'fill'
 
 const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean): SurfaceSlot => {
   const group = new Konva.Group()
@@ -1023,7 +1076,6 @@ const createObjectNode = (object: StageObject) => {
   wrapper.on('transformstart', () => {
     if (!canEditObject(getObject(object.id))) return
     props.store.beginObjectEdit('变换对象')
-    transformCenters.set(object.id, { x: wrapper.x(), y: wrapper.y() })
   })
   wrapper.on('transformend', () => {
     const current = getObject(object.id)
@@ -1031,23 +1083,22 @@ const createObjectNode = (object: StageObject) => {
       props.store.cancelObjectEdit()
       return
     }
-    const center = transformCenters.get(object.id) || { x: wrapper.x(), y: wrapper.y() }
-    transformCenters.delete(object.id)
     if (current.type === 'group') {
       current.transform.x = Number((wrapper.x() / WORLD_UNIT_PX).toFixed(6))
       current.transform.y = Number((wrapper.y() / WORLD_UNIT_PX).toFixed(6))
       current.transform.rotation = Number(wrapper.rotation().toFixed(6))
-      current.transform.scale = Number(Math.min(100, Math.max(0.01, wrapper.scaleX())).toFixed(6))
+      current.transform.scaleX = Number(Math.min(100, Math.max(0.01, wrapper.scaleX())).toFixed(6))
+      current.transform.scaleY = Number(Math.min(100, Math.max(0.01, wrapper.scaleY())).toFixed(6))
       props.store.commitObjectEdit()
       return
     }
     current.transform.width = Number((Math.max(12, current.transform.width * WORLD_UNIT_PX * wrapper.scaleX()) / WORLD_UNIT_PX).toFixed(6))
     current.transform.height = Number((Math.max(12, current.transform.height * WORLD_UNIT_PX * wrapper.scaleY()) / WORLD_UNIT_PX).toFixed(6))
     current.transform.rotation = Number(wrapper.rotation().toFixed(6))
-    current.transform.x = Number((center.x / WORLD_UNIT_PX).toFixed(6))
-    current.transform.y = Number((center.y / WORLD_UNIT_PX).toFixed(6))
-    current.transform.scale = 1
-    wrapper.position(center)
+    current.transform.x = Number((wrapper.x() / WORLD_UNIT_PX).toFixed(6))
+    current.transform.y = Number((wrapper.y() / WORLD_UNIT_PX).toFixed(6))
+    current.transform.scaleX = 1
+    current.transform.scaleY = 1
     wrapper.scale({ x: 1, y: 1 })
     props.store.commitObjectEdit()
   })
@@ -1085,7 +1136,7 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
   }
   const currentSource = image.image() as StageMediaSource | undefined
   if (wrapper.getAttr('stageImageUrl') === resolved && currentSource) {
-    setImageFit(image, currentSource, width, height, 'contain')
+    setImageFit(image, currentSource, width, height, objectImageFit(object))
     return
   }
   if (wrapper.getAttr('stageImageUrl') === resolved) return
@@ -1103,17 +1154,13 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
       releaseStageMedia(loadedSource)
       return
     }
-    const dimensions = stageMediaDimensions(loadedSource)
-    const sourceWidth = Math.max(1, dimensions.width)
-    const sourceHeight = Math.max(1, dimensions.height)
-    object.transform.width = Number((Math.max(0.5, object.transform.height * sourceWidth / sourceHeight)).toFixed(6))
     image.image(loadedSource)
     setImageFit(
       image,
       loadedSource,
       frame?.width() || width,
       frame?.height() || height,
-      'contain',
+      objectImageFit(object),
     )
     image.visible(true)
     placeholder.visible(false)
@@ -1144,8 +1191,8 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
     offsetX: width / 2,
     offsetY: height / 2,
     rotation: object.transform.rotation,
-    scaleX: object.transform.scale,
-    scaleY: object.transform.scale,
+    scaleX: object.transform.scaleX,
+    scaleY: object.transform.scaleY,
     visible: object.visible,
     draggable: !object.locked
       && canEditObject(object)
@@ -1498,17 +1545,21 @@ const reparentObjectPreservingTransform = (objectId: string, parentId: string | 
   }
   const absolutePosition = node.absolutePosition()
   const absoluteRotation = node.getAbsoluteRotation()
-  const absoluteScale = node.getAbsoluteScale().x
+  const absoluteScale = node.getAbsoluteScale()
   node.moveTo(parentNode)
-  const parentScale = Math.max(0.000001, parentNode.getAbsoluteScale().x)
+  const parentScale = parentNode.getAbsoluteScale()
   node.rotation(absoluteRotation - parentNode.getAbsoluteRotation())
-  node.scale({ x: absoluteScale / parentScale, y: absoluteScale / parentScale })
+  node.scale({
+    x: absoluteScale.x / Math.max(0.000001, parentScale.x),
+    y: absoluteScale.y / Math.max(0.000001, parentScale.y),
+  })
   node.absolutePosition(absolutePosition)
   const changed = props.store.reparentObject(objectId, parentId, {
     x: Number((node.x() / WORLD_UNIT_PX).toFixed(6)),
     y: Number((node.y() / WORLD_UNIT_PX).toFixed(6)),
     rotation: Number(node.rotation().toFixed(6)),
-    scale: Number(node.scaleX().toFixed(6)),
+    scaleX: Number(node.scaleX().toFixed(6)),
+    scaleY: Number(node.scaleY().toFixed(6)),
   })
   if (!changed) syncObjects()
   return changed
@@ -1601,6 +1652,7 @@ onMounted(() => {
   transformer = new Konva.Transformer({
     rotateEnabled: true,
     keepRatio: false,
+    shiftBehavior: 'none',
     centeredScaling: false,
     flipEnabled: false,
     borderStroke: '#38bdf8',
@@ -1886,10 +1938,10 @@ onBeforeUnmount(() => {
                 @update:checked="updateBatchBoolean('locked', $event)"
               >锁定位置</n-checkbox>
               <n-checkbox
-                :checked="batchBooleanChecked('sizeLocked')"
-                :indeterminate="batchBooleanIndeterminate('sizeLocked')"
-                @update:checked="updateBatchBoolean('sizeLocked', $event)"
-              >锁定尺寸</n-checkbox>
+                :checked="batchBooleanChecked('aspectRatioLocked')"
+                :indeterminate="batchBooleanIndeterminate('aspectRatioLocked')"
+                @update:checked="updateBatchBoolean('aspectRatioLocked', $event)"
+              >锁定比例</n-checkbox>
             </div>
           </div>
         </template>
@@ -1938,11 +1990,12 @@ onBeforeUnmount(() => {
               <label>Y</label><n-input-number v-model:value="selectedObject.transform.y" :precision="2" />
               <template v-if="selectedObject.type === 'group'">
                 <label>旋转</label><n-input-number v-model:value="selectedObject.transform.rotation" :precision="2" />
-                <label>缩放</label><n-input-number v-model:value="selectedObject.transform.scale" :disabled="selectedObject.sizeLocked" :min="0.01" :max="100" :step="0.1" :precision="2" />
+                <label>缩放 X</label><n-input-number :value="selectedObject.transform.scaleX" :min="0.01" :max="100" :step="0.1" :precision="2" @update:value="updateSelectedScale('scaleX', $event)" />
+                <label>缩放 Y</label><n-input-number :value="selectedObject.transform.scaleY" :min="0.01" :max="100" :step="0.1" :precision="2" @update:value="updateSelectedScale('scaleY', $event)" />
               </template>
               <template v-else>
-                <label>宽</label><n-input-number v-model:value="selectedObject.transform.width" :disabled="!canEditAllObjects && selectedObject.sizeLocked" :min="0.5" :precision="2" />
-                <label>高</label><n-input-number v-model:value="selectedObject.transform.height" :disabled="!canEditAllObjects && selectedObject.sizeLocked" :min="0.5" :precision="2" />
+                <label>宽</label><n-input-number :value="selectedObject.transform.width" :min="0.5" :precision="2" @update:value="updateSelectedDimension('width', $event)" />
+                <label>高</label><n-input-number :value="selectedObject.transform.height" :min="0.5" :precision="2" @update:value="updateSelectedDimension('height', $event)" />
               </template>
             </div>
             <div v-if="canEditAllObjects" class="theater-object-editor__checks">
@@ -1950,7 +2003,10 @@ onBeforeUnmount(() => {
               <n-checkbox v-model:checked="selectedObject.interactive">可交互</n-checkbox>
               <n-checkbox v-model:checked="selectedObject.editable">可编辑</n-checkbox>
               <n-checkbox v-model:checked="selectedObject.locked">锁定位置</n-checkbox>
-              <n-checkbox v-model:checked="selectedObject.sizeLocked">锁定尺寸</n-checkbox>
+              <n-checkbox
+                :checked="selectedObject.aspectRatioLocked"
+                @update:checked="updateSelectedAspectRatioLocked"
+              >锁定比例</n-checkbox>
             </div>
             <template v-if="canEditAllObjects && (selectedObject.type === 'image' || selectedObject.type === 'button')">
               <label>点击动作</label>

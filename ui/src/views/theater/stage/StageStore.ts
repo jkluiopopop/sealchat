@@ -64,13 +64,14 @@ const makeObject = (
     width: type === 'group' ? 12 : type === 'image' ? 9 : 7,
     height: type === 'group' ? 8 : type === 'image' ? 6 : 4.5,
     rotation: 0,
-    scale: 1,
+    scaleX: 1,
+    scaleY: 1,
     z: 0,
     order,
   },
   visible: true,
   locked: false,
-  sizeLocked: false,
+  aspectRatioLocked: true,
   interactive: true,
   editable: false,
   fill: palette[order % palette.length],
@@ -99,7 +100,7 @@ const createScene = (name: string, order: number, color: string): StageScene => 
   const actor = makeObject('主角', 'shape', 1, { parentId: group.id })
   const title = makeObject('场景标题', 'text', 2, { text: name, parentId: group.id })
   const panel = makeObject('信息面板', 'shape', 3, {
-    transform: { x: -13, y: -7, width: 8, height: 4, rotation: 0, scale: 1, z: 1, order: 3 },
+    transform: { x: -13, y: -7, width: 8, height: 4, rotation: 0, scaleX: 1, scaleY: 1, z: 1, order: 3 },
   })
   return {
     id: uid('scene'),
@@ -180,27 +181,37 @@ const normalizeActions = (input: unknown): StageAction[] => {
   }, []).slice(0, 32)
 }
 
-const normalizeObject = (input: StageObject): StageObject => ({
-  ...input,
-  transform: {
-    ...input.transform,
-    scale: Number.isFinite(input.transform?.scale) && input.transform.scale > 0
-      ? Math.min(100, Math.max(0.01, input.transform.scale))
-      : 1,
-  },
-  type: ['group', 'shape', 'text', 'image', 'button', 'character', 'video'].includes(input.type) ? input.type : 'shape',
-  parentId: typeof input.parentId === 'string' ? input.parentId : null,
-  visible: input.visible !== false,
-  locked: input.locked === true,
-  sizeLocked: input.sizeLocked === true,
-  interactive: input.interactive !== false,
-  editable: input.editable === true,
-  fill: typeof input.fill === 'string' ? input.fill : '#60a5fa',
-  image: normalizeImageRef(input.image) || undefined,
-  content: input.content && typeof input.content === 'object' ? input.content : {},
-  actions: normalizeActions(input.actions),
-  metadata: input.metadata && typeof input.metadata === 'object' ? input.metadata : {},
-})
+const normalizeObject = (input: StageObject): StageObject => {
+  const legacyTransform = input.transform as StageObjectTransform & { scale?: number }
+  const legacyScale = Number.isFinite(legacyTransform?.scale) && (legacyTransform.scale || 0) > 0
+    ? Math.min(100, Math.max(0.01, legacyTransform.scale!))
+    : 1
+  const transform = { ...legacyTransform }
+  delete transform.scale
+  const normalizeScale = (value: number | undefined) => Number.isFinite(value) && (value || 0) > 0
+    ? Math.min(100, Math.max(0.01, value!))
+    : legacyScale
+  return {
+    ...input,
+    transform: {
+      ...transform,
+      scaleX: normalizeScale(input.transform?.scaleX),
+      scaleY: normalizeScale(input.transform?.scaleY),
+    },
+    type: ['group', 'shape', 'text', 'image', 'button', 'character', 'video'].includes(input.type) ? input.type : 'shape',
+    parentId: typeof input.parentId === 'string' ? input.parentId : null,
+    visible: input.visible !== false,
+    locked: input.locked === true,
+    aspectRatioLocked: input.aspectRatioLocked !== false,
+    interactive: input.interactive !== false,
+    editable: input.editable === true,
+    fill: typeof input.fill === 'string' ? input.fill : '#60a5fa',
+    image: normalizeImageRef(input.image) || undefined,
+    content: input.content && typeof input.content === 'object' ? input.content : {},
+    actions: normalizeActions(input.actions),
+    metadata: input.metadata && typeof input.metadata === 'object' ? input.metadata : {},
+  }
+}
 
 const normalizeObjects = (input: unknown) => {
   if (!input || typeof input !== 'object') return {}
@@ -266,7 +277,7 @@ export interface TheaterStageStore {
   reparentObject: (
     objectId: string,
     parentId: string | null,
-    transform: Pick<StageObjectTransform, 'x' | 'y' | 'rotation' | 'scale'>,
+    transform: Pick<StageObjectTransform, 'x' | 'y' | 'rotation' | 'scaleX' | 'scaleY'>,
   ) => boolean
   moveOrder: (objectId: string, direction: -1 | 1) => void
   reorderObject: (objectId: string, targetId: string, placement: 'before' | 'after') => void
@@ -288,7 +299,7 @@ export interface TheaterStageSelectionState {
 }
 
 export type StageObjectBatchPatch = Partial<Pick<StageObject,
-  'visible' | 'interactive' | 'editable' | 'locked' | 'sizeLocked' | 'fill'
+  'visible' | 'interactive' | 'editable' | 'locked' | 'aspectRatioLocked' | 'fill'
 >>
 
 export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore => {
@@ -615,7 +626,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   const reparentObject = (
     objectId: string,
     parentId: string | null,
-    transform: Pick<StageObjectTransform, 'x' | 'y' | 'rotation' | 'scale'>,
+    transform: Pick<StageObjectTransform, 'x' | 'y' | 'rotation' | 'scaleX' | 'scaleY'>,
   ) => runObjectEdit('调整对象分组', () => {
     if (!canSetParent(objectId, parentId)) return false
     const object = getObject(objectId)!
@@ -623,7 +634,8 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     object.transform.x = transform.x
     object.transform.y = transform.y
     object.transform.rotation = transform.rotation
-    object.transform.scale = Math.min(100, Math.max(0.01, transform.scale))
+    object.transform.scaleX = Math.min(100, Math.max(0.01, transform.scaleX))
+    object.transform.scaleY = Math.min(100, Math.max(0.01, transform.scaleY))
     return true
   })
 

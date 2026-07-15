@@ -20,11 +20,13 @@ interface TheaterObjectSnapshot {
   height: number
   rotation: number
   scale?: number
+  scaleX?: number
+  scaleY?: number
   z: number
   orderKey: string
   visible: boolean
   locked: boolean
-  sizeLocked: boolean
+  aspectRatioLocked?: boolean
   interactive: boolean
   editable: boolean
   ownerUserId?: string | null
@@ -161,6 +163,7 @@ const serverStateFromStage = (state: StageLiveState): JsonObject => ({
 
 const objectFromServer = (value: TheaterObjectSnapshot): StageObject => {
   const content = asObject(value.content)
+  const legacyScale = finite(value.scale, 1) > 0 ? Math.min(100, finite(value.scale, 1)) : 1
   const kind = ['group', 'shape', 'text', 'image', 'button', 'character', 'video'].includes(value.kind)
     ? value.kind as StageObjectType
     : 'shape'
@@ -175,13 +178,14 @@ const objectFromServer = (value: TheaterObjectSnapshot): StageObject => {
       width: finite(value.width, 1),
       height: finite(value.height, 1),
       rotation: finite(value.rotation, 0),
-      scale: finite(value.scale, 1) > 0 ? Math.min(100, finite(value.scale, 1)) : 1,
+      scaleX: finite(value.scaleX, legacyScale) > 0 ? Math.min(100, finite(value.scaleX, legacyScale)) : legacyScale,
+      scaleY: finite(value.scaleY, legacyScale) > 0 ? Math.min(100, finite(value.scaleY, legacyScale)) : legacyScale,
       z: finite(value.z, 0),
       order: finite(Number.parseFloat(value.orderKey), 0),
     },
     visible: value.visible !== false,
     locked: value.locked === true,
-    sizeLocked: value.sizeLocked === true,
+    aspectRatioLocked: value.aspectRatioLocked !== false,
     interactive: value.interactive !== false,
     editable: value.editable === true,
     fill: typeof content.fill === 'string' ? content.fill : '#60a5fa',
@@ -206,12 +210,13 @@ const objectForServer = (object: StageObject, sceneId: string | null): TheaterOb
   width: object.transform.width,
   height: object.transform.height,
   rotation: object.transform.rotation,
-  scale: object.transform.scale,
+  scaleX: object.transform.scaleX,
+  scaleY: object.transform.scaleY,
   z: object.transform.z,
   orderKey: String(object.transform.order),
   visible: object.visible,
   locked: object.locked,
-  sizeLocked: object.sizeLocked,
+  aspectRatioLocked: object.aspectRatioLocked,
   interactive: object.interactive,
   editable: object.editable,
   ownerUserId: object.ownerUserId || null,
@@ -294,12 +299,13 @@ const objectFields = (object: TheaterObjectSnapshot, previous: TheaterObjectSnap
     width: object.width,
     height: object.height,
     rotation: object.rotation,
-    scale: object.scale ?? 1,
+    scaleX: object.scaleX ?? object.scale ?? 1,
+    scaleY: object.scaleY ?? object.scale ?? 1,
     z: object.z,
     orderKey: object.orderKey,
     visible: object.visible,
     locked: object.locked,
-    sizeLocked: object.sizeLocked,
+    aspectRatioLocked: object.aspectRatioLocked,
     interactive: object.interactive,
     editable: object.editable,
     content: object.content,
@@ -314,12 +320,13 @@ const objectFields = (object: TheaterObjectSnapshot, previous: TheaterObjectSnap
     width: previous.width,
     height: previous.height,
     rotation: previous.rotation,
-    scale: previous.scale ?? 1,
+    scaleX: previous.scaleX ?? previous.scale ?? 1,
+    scaleY: previous.scaleY ?? previous.scale ?? 1,
     z: previous.z,
     orderKey: previous.orderKey,
     visible: previous.visible,
     locked: previous.locked,
-    sizeLocked: previous.sizeLocked,
+    aspectRatioLocked: previous.aspectRatioLocked,
     interactive: previous.interactive,
     editable: previous.editable,
     content: previous.content,
@@ -339,12 +346,13 @@ const objectInput = (object: TheaterObjectSnapshot): JsonObject => ({
   width: object.width,
   height: object.height,
   rotation: object.rotation,
-  scale: object.scale ?? 1,
+  scaleX: object.scaleX ?? object.scale ?? 1,
+  scaleY: object.scaleY ?? object.scale ?? 1,
   z: object.z,
   orderKey: object.orderKey,
   visible: object.visible,
   locked: object.locked,
-  sizeLocked: object.sizeLocked,
+  aspectRatioLocked: object.aspectRatioLocked,
   interactive: object.interactive,
   editable: object.editable,
   ownerUserId: object.ownerUserId || null,
@@ -463,7 +471,7 @@ const diffDocuments = (before: TheaterDocument, after: TheaterDocument): Theater
 }
 
 const delegatedObjectFields = new Set([
-  'name', 'x', 'y', 'width', 'height', 'rotation', 'scale', 'z', 'orderKey', 'content',
+  'name', 'x', 'y', 'width', 'height', 'rotation', 'scaleX', 'scaleY', 'z', 'orderKey', 'content',
 ])
 
 const canApplyMutation = (mutation: TheaterMutation, permissions: string[], baseDocument: TheaterDocument) => {
@@ -474,7 +482,6 @@ const canApplyMutation = (mutation: TheaterMutation, permissions: string[], base
   const fields = asObject(mutation.payload.fields)
   return Boolean(object?.editable && !object.locked)
     && Object.keys(fields).every((field) => delegatedObjectFields.has(field))
-    && !(object?.sizeLocked && ('width' in fields || 'height' in fields || 'scale' in fields))
 }
 
 const errorMessage = (error: unknown) => {
