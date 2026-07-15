@@ -8,8 +8,10 @@ import {
   ArrowLeft,
   ArrowUp,
   Bolt,
+  Clipboard,
   Components,
   Copy,
+  Cut,
   Edit,
   FolderPlus,
   Focus,
@@ -98,6 +100,28 @@ const canEditObject = (object: StageObject | null | undefined) => Boolean(object
   canEditAllObjects.value
   || (canEditDelegatedObjects.value && object!.editable && !object!.locked)
 )
+
+const isEditableShortcutTarget = (target: EventTarget | null) => {
+  const element = target instanceof HTMLElement ? target : null
+  return Boolean(element?.closest('input, textarea, select, [contenteditable="true"]'))
+}
+
+const handleStageShortcut = (event: KeyboardEvent) => {
+  if (
+    event.isComposing
+    || event.altKey
+    || !(event.ctrlKey || event.metaKey)
+    || isEditableShortcutTarget(event.target)
+    || imageEditorVisible.value
+  ) return
+  const key = event.key.toLowerCase()
+  let handled = false
+  if (key === 'c') handled = props.store.copySelectedObject()
+  else if (key === 'x' && canEditAllObjects.value) handled = props.store.cutSelectedObject()
+  else if (key === 'v' && canEditAllObjects.value) handled = Boolean(props.store.pasteObject())
+  else if (key === 'z' && !event.shiftKey && canEditAllObjects.value) handled = props.store.undo()
+  if (handled) event.preventDefault()
+}
 
 type PanelId = 'scene' | 'inspector' | 'layer'
 interface PanelLayout {
@@ -722,19 +746,30 @@ const createObjectNode = (object: StageObject) => {
     event.cancelBubble = true
     selectObject(object.id)
   })
+  wrapper.on('dragstart', () => {
+    if (canEditObject(getObject(object.id))) props.store.beginObjectEdit('移动对象')
+  })
   wrapper.on('dragend', () => {
     const current = getObject(object.id)
-    if (!canEditObject(current)) return
+    if (!canEditObject(current)) {
+      props.store.cancelObjectEdit()
+      return
+    }
     current.transform.x = Number((wrapper.x() / WORLD_UNIT_PX).toFixed(6))
     current.transform.y = Number((wrapper.y() / WORLD_UNIT_PX).toFixed(6))
+    props.store.commitObjectEdit()
   })
   wrapper.on('transformstart', () => {
     if (!canEditObject(getObject(object.id))) return
+    props.store.beginObjectEdit('变换对象')
     transformCenters.set(object.id, { x: wrapper.x(), y: wrapper.y() })
   })
   wrapper.on('transformend', () => {
     const current = getObject(object.id)
-    if (!canEditObject(current)) return
+    if (!canEditObject(current)) {
+      props.store.cancelObjectEdit()
+      return
+    }
     const center = transformCenters.get(object.id) || { x: wrapper.x(), y: wrapper.y() }
     transformCenters.delete(object.id)
     current.transform.width = Number((Math.max(12, current.transform.width * WORLD_UNIT_PX * wrapper.scaleX()) / WORLD_UNIT_PX).toFixed(6))
@@ -744,6 +779,7 @@ const createObjectNode = (object: StageObject) => {
     current.transform.y = Number((center.y / WORLD_UNIT_PX).toFixed(6))
     wrapper.position(center)
     wrapper.scale({ x: 1, y: 1 })
+    props.store.commitObjectEdit()
   })
   objectNodes.set(object.id, wrapper)
   return wrapper
@@ -1066,7 +1102,7 @@ const handleCanvasDrop = async (event: DragEvent) => {
   try {
     await uploadImage(file, { kind: 'object', objectId: object.id })
   } catch {
-    props.store.removeSelectedObject()
+    props.store.removeSelectedObject(false)
   }
 }
 
@@ -1136,6 +1172,7 @@ onMounted(() => {
   window.addEventListener('pointermove', movePanel)
   window.addEventListener('pointerup', stopPanelDrag)
   window.addEventListener('pointercancel', stopPanelDrag)
+  window.addEventListener('keydown', handleStageShortcut)
 })
 
 watch(() => props.store.state.liveState, () => {
@@ -1169,6 +1206,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointermove', movePanel)
   window.removeEventListener('pointerup', stopPanelDrag)
   window.removeEventListener('pointercancel', stopPanelDrag)
+  window.removeEventListener('keydown', handleStageShortcut)
+  props.store.commitObjectEdit()
   objectNodes.clear()
   imageLoadVersions.clear()
   stage?.destroy()
@@ -1238,6 +1277,13 @@ onBeforeUnmount(() => {
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('image', true)"><template #icon><n-icon><Pin /></n-icon></template></n-button></template>添加持久图片</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('button')"><template #icon><n-icon><Bolt /></n-icon></template></n-button></template>添加动作按钮</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('group')"><template #icon><n-icon><FolderPlus /></n-icon></template></n-button></template>添加组</n-tooltip>
+      </n-button-group>
+      <span v-if="canEditAllObjects" class="theater-toolbar-divider" />
+      <n-button-group v-if="canEditAllObjects" class="theater-stage-object-actions" size="small">
+        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canCopy.value" aria-label="复制组件" @click="store.copySelectedObject"><template #icon><n-icon><Copy /></n-icon></template></n-button></template>复制组件 Ctrl+C</n-tooltip>
+        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canCut.value" aria-label="剪切组件" @click="store.cutSelectedObject"><template #icon><n-icon><Cut /></n-icon></template></n-button></template>剪切组件 Ctrl+X</n-tooltip>
+        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canPaste.value" aria-label="粘贴组件" @click="store.pasteObject"><template #icon><n-icon><Clipboard /></n-icon></template></n-button></template>粘贴组件 Ctrl+V</n-tooltip>
+        <n-tooltip trigger="hover"><template #trigger><n-button :disabled="!store.canUndo.value" aria-label="撤回组件编辑" @click="store.undo"><template #icon><n-icon><ArrowBackUp /></n-icon></template></n-button></template>撤回 Ctrl+Z</n-tooltip>
       </n-button-group>
       <div class="theater-stage-character-bridge" :class="{ 'is-offline': !chatBridgeOnline }">
         <img
@@ -1321,7 +1367,11 @@ onBeforeUnmount(() => {
               <n-button class="theater-panel-close" text size="tiny" aria-label="关闭组件编辑面板" @click="inspectorPanelOpen = false"><n-icon><X /></n-icon></n-button>
             </div>
           </div>
-          <div class="theater-inspector">
+          <div
+            class="theater-inspector"
+            @focusin="store.beginObjectEdit('修改对象')"
+            @focusout="store.commitObjectEdit"
+          >
             <label>名称</label>
             <n-input v-model:value="selectedObject.name" size="small" />
             <template v-if="selectedObject.type === 'text' || selectedObject.type === 'button'">
@@ -1441,8 +1491,8 @@ onBeforeUnmount(() => {
             :disabled="!canEditObject(row.object)"
             :draggable="canEditAllObjects"
             @click="selectObject(row.object.id)"
-            @dragstart="canEditAllObjects && (draggedLayerId = row.object.id)"
-            @dragend="draggedLayerId = null"
+            @dragstart="canEditAllObjects && (draggedLayerId = row.object.id, store.beginObjectEdit('调整对象顺序'))"
+            @dragend="draggedLayerId = null; store.commitObjectEdit()"
             @dragover.prevent
             @drop.prevent="handleLayerDrop($event, row.object.id)"
           >

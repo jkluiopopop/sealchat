@@ -9,6 +9,14 @@ import {
   type StageScene,
   type StageWorkspaceState,
 } from '../shared/stage-types'
+import {
+  applyObjectHistoryEntry,
+  collectObjectSubtree,
+  createObjectHistoryEntry,
+  instantiateClipboardBundle,
+  type StageClipboardBundle,
+  type StageObjectCollectionsSnapshot,
+} from './stage-editing'
 
 const palette = ['#60a5fa', '#a78bfa', '#f472b6', '#34d399', '#fbbf24', '#fb7185']
 
@@ -213,7 +221,18 @@ export interface TheaterStageStore {
   duplicateScene: () => void
   removeScene: () => void
   addObject: (type: StageObjectType, persistent?: boolean) => StageObject
-  removeSelectedObject: () => void
+  removeSelectedObject: (recordHistory?: boolean) => void
+  copySelectedObject: () => boolean
+  cutSelectedObject: () => boolean
+  pasteObject: () => StageObject | null
+  undo: () => boolean
+  canCopy: ComputedRef<boolean>
+  canCut: ComputedRef<boolean>
+  canPaste: ComputedRef<boolean>
+  canUndo: ComputedRef<boolean>
+  beginObjectEdit: (label?: string) => void
+  commitObjectEdit: () => void
+  cancelObjectEdit: () => void
   setParent: (objectId: string, parentId: string | null) => void
   moveOrder: (objectId: string, direction: -1 | 1) => void
   reorderObject: (objectId: string, targetId: string, placement: 'before' | 'after') => void
@@ -234,6 +253,75 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
   const scenes = computed(() => Object.values(state.scenes).sort((a, b) => a.order - b.order))
   const activeScene = computed(() => state.scenes[state.activeSceneId] || scenes.value[0])
   const activeObjects = computed(() => ({ ...state.liveState.sceneObjects, ...state.persistentObjects }))
+  const editingState = reactive({ historyDepth: 0, clipboardReady: false })
+  const history: NonNullable<ReturnType<typeof createObjectHistoryEntry>>[] = []
+  let clipboard: StageClipboardBundle | null = null
+  let pasteCount = 0
+  let transaction: {
+    label: string
+    before: StageObjectCollectionsSnapshot
+    selectionBefore: string | null
+  } | null = null
+
+  const snapshotObjectCollections = (): StageObjectCollectionsSnapshot => ({
+    sceneId: state.activeSceneId,
+    sceneObjects: clone(state.liveState.sceneObjects),
+    persistentObjects: clone(state.persistentObjects),
+  })
+
+  const beginObjectEdit = (label = '修改对象') => {
+    if (transaction) return
+    transaction = {
+      label,
+      before: snapshotObjectCollections(),
+      selectionBefore: state.selectedObjectId,
+    }
+  }
+
+  const commitObjectEdit = () => {
+    if (!transaction) return
+    const current = transaction
+    transaction = null
+    const entry = createObjectHistoryEntry(
+      current.label,
+      current.before,
+      snapshotObjectCollections(),
+      current.selectionBefore,
+      state.selectedObjectId,
+    )
+    if (!entry) return
+    history.push(entry)
+    if (history.length > 100) history.shift()
+    editingState.historyDepth = history.length
+  }
+
+  const cancelObjectEdit = () => {
+    if (!transaction) return
+    const current = transaction
+    transaction = null
+    if (current.before.sceneId !== state.activeSceneId) return
+    state.liveState.sceneObjects = clone(current.before.sceneObjects)
+    state.persistentObjects = clone(current.before.persistentObjects)
+    state.selectedObjectId = current.selectionBefore
+  }
+
+  const runObjectEdit = <T>(label: string, mutate: () => T): T => {
+    const ownsTransaction = !transaction
+    if (ownsTransaction) beginObjectEdit(label)
+    try {
+      const result = mutate()
+      if (ownsTransaction) commitObjectEdit()
+      return result
+    } catch (error) {
+      if (ownsTransaction) cancelObjectEdit()
+      throw error
+    }
+  }
+
+  const canCopy = computed(() => Boolean(state.selectedObjectId && activeObjects.value[state.selectedObjectId]))
+  const canCut = computed(() => canCopy.value)
+  const canPaste = computed(() => editingState.clipboardReady)
+  const canUndo = computed(() => editingState.historyDepth > 0)
 
   const saveLiveState = () => {
     const scene = state.scenes[state.activeSceneId]
@@ -296,7 +384,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     state.selectedObjectId = null
   }
 
-  const addObject = (type: StageObjectType, persistent = false) => {
+  const addObject = (type: StageObjectType, persistent = false) => runObjectEdit('添加对象', () => {
     const objects = persistent ? state.persistentObjects : state.liveState.sceneObjects
     const object = makeObject(
       type === 'group'
@@ -314,7 +402,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     objects[object.id] = object
     state.selectedObjectId = object.id
     return object
-  }
+  })
 
   const getObject = (objectId: string) => activeObjects.value[objectId]
   const getObjectCollection = (objectId: string) => state.persistentObjects[objectId]
@@ -334,7 +422,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     return result
   }
 
-  const removeSelectedObject = () => {
+  const removeSelectedObjectNow = () => {
     const id = state.selectedObjectId
     if (!id) return
     for (const childId of collectDescendants(id)) delete getObjectCollection(childId)[childId]
@@ -342,16 +430,87 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     state.selectedObjectId = null
   }
 
-  const setParent = (objectId: string, parentId: string | null) => {
+  const removeSelectedObject = (recordHistory = true) => {
+    if (recordHistory) runObjectEdit('删除对象', removeSelectedObjectNow)
+    else removeSelectedObjectNow()
+  }
+
+  const copySelectedObject = () => {
+    const rootId = state.selectedObjectId
+    if (!rootId) return false
+    const persistent = isPersistentObject(rootId)
+    const collection = persistent ? state.persistentObjects : state.liveState.sceneObjects
+    const objects = collectObjectSubtree(collection, rootId)
+    if (!objects.length) return false
+    clipboard = {
+      version: 1,
+      sourceSceneId: state.activeSceneId,
+      persistent,
+      rootId,
+      objects,
+    }
+    pasteCount = 0
+    editingState.clipboardReady = true
+    return true
+  }
+
+  const cutSelectedObject = () => {
+    if (!copySelectedObject()) return false
+    runObjectEdit('剪切对象', removeSelectedObjectNow)
+    return true
+  }
+
+  const pasteObject = () => {
+    if (!clipboard) return null
+    return runObjectEdit('粘贴对象', () => {
+      const collection = clipboard!.persistent ? state.persistentObjects : state.liveState.sceneObjects
+      const sourceRoot = clipboard!.objects.find((object) => object.id === clipboard!.rootId)
+      const keepParent = sourceRoot?.parentId
+        && (clipboard!.persistent || clipboard!.sourceSceneId === state.activeSceneId)
+        && Boolean(collection[sourceRoot.parentId])
+      pasteCount += 1
+      const pasted = instantiateClipboardBundle(
+        clipboard!,
+        uid,
+        pasteCount,
+        keepParent && sourceRoot?.parentId ? sourceRoot.parentId : null,
+      )
+      pasted.objects.forEach((object) => { collection[object.id] = object })
+      state.selectedObjectId = pasted.rootId
+      return collection[pasted.rootId]
+    })
+  }
+
+  const undo = () => {
+    commitObjectEdit()
+    while (history.length) {
+      const entry = history.pop()!
+      editingState.historyDepth = history.length
+      const scene = state.scenes[entry.sceneId]
+      if (!scene) continue
+      const sceneObjects = entry.sceneId === state.activeSceneId
+        ? state.liveState.sceneObjects
+        : scene.state.sceneObjects
+      applyObjectHistoryEntry(entry, 'undo', sceneObjects, state.persistentObjects)
+      const restoredSelection = entry.selectionBefore
+      state.selectedObjectId = restoredSelection && activeObjects.value[restoredSelection]
+        ? restoredSelection
+        : null
+      return true
+    }
+    return false
+  }
+
+  const setParent = (objectId: string, parentId: string | null) => runObjectEdit('调整对象分组', () => {
     const object = getObject(objectId)
     if (!object || objectId === parentId) return
     if (parentId && collectDescendants(objectId).includes(parentId)) return
     if (parentId && !getObject(parentId)) return
     if (parentId && isPersistentObject(objectId) !== isPersistentObject(parentId)) return
     object.parentId = parentId
-  }
+  })
 
-  const moveOrder = (objectId: string, direction: -1 | 1) => {
+  const moveOrder = (objectId: string, direction: -1 | 1) => runObjectEdit('调整对象顺序', () => {
     const object = getObject(objectId)
     if (!object) return
     const siblings = Object.values(activeObjects.value)
@@ -361,9 +520,9 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     const target = siblings[index - direction]
     if (!target) return
     reorderObject(objectId, target.id, direction > 0 ? 'before' : 'after')
-  }
+  })
 
-  const reorderObject = (objectId: string, targetId: string, placement: 'before' | 'after') => {
+  const reorderObject = (objectId: string, targetId: string, placement: 'before' | 'after') => runObjectEdit('调整对象顺序', () => {
     const object = getObject(objectId)
     const target = getObject(targetId)
     if (!object || !target || object.id === target.id || object.parentId !== target.parentId) return
@@ -379,7 +538,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       item.transform.z = rank
       item.transform.order = rank
     })
-  }
+  })
 
   const setSceneImage = (target: 'background' | 'foreground', url: string, resourceId?: string) => {
     if (!url.trim()) {
@@ -392,7 +551,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     return true
   }
 
-  const setObjectImage = (objectId: string, url: string, resourceId?: string) => {
+  const setObjectImage = (objectId: string, url: string, resourceId?: string) => runObjectEdit('修改对象图片', () => {
     const object = getObject(objectId)
     if (!object || object.type !== 'image') return false
     if (!url.trim()) {
@@ -403,23 +562,23 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     if (!image) return false
     object.image = image
     return true
-  }
+  })
 
-  const addObjectAction = (objectId: string, action: StageAction) => {
+  const addObjectAction = (objectId: string, action: StageAction) => runObjectEdit('添加对象动作', () => {
     const object = getObject(objectId)
     if (!object || !['image', 'button'].includes(object.type)) return false
     object.actions.push(clone(action))
     return true
-  }
+  })
 
-  const removeObjectAction = (objectId: string, actionId: string) => {
+  const removeObjectAction = (objectId: string, actionId: string) => runObjectEdit('删除对象动作', () => {
     const object = getObject(objectId)
     if (!object) return false
     const index = object.actions.findIndex((action) => action.id === actionId)
     if (index < 0) return false
     object.actions.splice(index, 1)
     return true
-  }
+  })
 
   const toggleObject = (objectId: string) => {
     const object = getObject(objectId)
@@ -438,6 +597,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     return true
   }
   const replaceState = (next: StageWorkspaceState) => {
+    transaction = null
     const value = clone(next)
     state.activeSceneId = value.activeSceneId
     state.liveState = value.liveState
@@ -460,6 +620,17 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     removeScene,
     addObject,
     removeSelectedObject,
+    copySelectedObject,
+    cutSelectedObject,
+    pasteObject,
+    undo,
+    canCopy,
+    canCut,
+    canPaste,
+    canUndo,
+    beginObjectEdit,
+    commitObjectEdit,
+    cancelObjectEdit,
     setParent,
     moveOrder,
     reorderObject,
