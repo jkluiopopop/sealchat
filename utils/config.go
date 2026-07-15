@@ -59,6 +59,25 @@ type AudioConfig struct {
 	AllowNonAdminCreateWorld bool     `json:"allowNonAdminCreateWorld" yaml:"allowNonAdminCreateWorld"`
 }
 
+type TheaterMediaConfig struct {
+	Enabled                 bool  `json:"enabled" yaml:"enabled"`
+	WorkerConcurrency       int   `json:"workerConcurrency" yaml:"workerConcurrency"`
+	ImageMaxSizeMB          int64 `json:"imageMaxSizeMB" yaml:"imageMaxSizeMB"`
+	VideoMaxSizeMB          int64 `json:"videoMaxSizeMB" yaml:"videoMaxSizeMB"`
+	RoomQuotaMB             int64 `json:"roomQuotaMB" yaml:"roomQuotaMB"`
+	MaxDimension            int   `json:"maxDimension" yaml:"maxDimension"`
+	MaxAnimatedFrames       int   `json:"maxAnimatedFrames" yaml:"maxAnimatedFrames"`
+	MaxAnimatedDurationMS   int64 `json:"maxAnimatedDurationMs" yaml:"maxAnimatedDurationMs"`
+	MaxAnimatedPixelFrames  int64 `json:"maxAnimatedPixelFrames" yaml:"maxAnimatedPixelFrames"`
+	VideoMaxDurationMS      int64 `json:"videoMaxDurationMs" yaml:"videoMaxDurationMs"`
+	VideoMaxWidth           int   `json:"videoMaxWidth" yaml:"videoMaxWidth"`
+	VideoMaxHeight          int   `json:"videoMaxHeight" yaml:"videoMaxHeight"`
+	VideoMaxFrameRate       int   `json:"videoMaxFrameRate" yaml:"videoMaxFrameRate"`
+	ProbeTimeoutSeconds     int   `json:"probeTimeoutSeconds" yaml:"probeTimeoutSeconds"`
+	TranscodeTimeoutSeconds int   `json:"transcodeTimeoutSeconds" yaml:"transcodeTimeoutSeconds"`
+	KeepOriginal            bool  `json:"keepOriginal" yaml:"keepOriginal"`
+}
+
 type StorageMode string
 
 const (
@@ -426,6 +445,7 @@ type AppConfig struct {
 	GalleryQuotaMB            int64                     `json:"galleryQuotaMB" yaml:"galleryQuotaMB"`
 	LogUpload                 LogUploadConfig           `json:"logUpload" yaml:"logUpload"`
 	Audio                     AudioConfig               `json:"audio" yaml:"audio"`
+	TheaterMedia              TheaterMediaConfig        `json:"theaterMedia" yaml:"theaterMedia"`
 	Export                    ExportConfig              `json:"export" yaml:"export"`
 	Storage                   StorageConfig             `json:"storage" yaml:"storage"`
 	SQLite                    SQLiteConfig              `json:"sqlite" yaml:"sqlite"`
@@ -528,6 +548,24 @@ func ReadConfig() *AppConfig {
 			FFmpegPath:               "",
 			AllowWorldAudioWorkbench: false,
 			AllowNonAdminCreateWorld: true,
+		},
+		TheaterMedia: TheaterMediaConfig{
+			Enabled:                 true,
+			WorkerConcurrency:       2,
+			ImageMaxSizeMB:          20,
+			VideoMaxSizeMB:          200,
+			RoomQuotaMB:             2048,
+			MaxDimension:            16384,
+			MaxAnimatedFrames:       500,
+			MaxAnimatedDurationMS:   300000,
+			MaxAnimatedPixelFrames:  512000000,
+			VideoMaxDurationMS:      900000,
+			VideoMaxWidth:           3840,
+			VideoMaxHeight:          2160,
+			VideoMaxFrameRate:       60,
+			ProbeTimeoutSeconds:     30,
+			TranscodeTimeoutSeconds: 900,
+			KeepOriginal:            true,
 		},
 		Export: ExportConfig{
 			StorageDir:            defaultExportStorageDir,

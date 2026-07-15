@@ -428,7 +428,24 @@ const (
 	EventCharacterRemarkSnapshot EventName = "character-remark-snapshot"
 	// Quick Login Events
 	EventQuickLoginRequested EventName = "quick-login-requested"
+	// Theater Events
+	EventTheaterSnapshot           EventName = "theater.snapshot"
+	EventTheaterMutationApplied    EventName = "theater.mutation.applied"
+	EventTheaterMutationRejected   EventName = "theater.mutation.rejected"
+	EventTheaterResourceProcessing EventName = "theater.resource.processing"
+	EventTheaterResourceReady      EventName = "theater.resource.ready"
+	EventTheaterResourceFailed     EventName = "theater.resource.failed"
 )
+
+type TheaterEventPayload struct {
+	WorldID   string `json:"worldId"`
+	ChannelID string `json:"channelId"`
+	RoomID    string `json:"roomId"`
+	Revision  int64  `json:"revision"`
+	EventID   string `json:"eventId"`
+	Timestamp int64  `json:"timestamp"`
+	Payload   any    `json:"payload"`
+}
 
 type QuickLoginRequestedPayload struct {
 	RequestID        string `json:"requestId"`
@@ -490,6 +507,7 @@ type Event struct {
 	CharacterRemark             *CharacterRemarkEventPayload        `json:"characterRemark,omitempty"`
 	CharacterRemarkSnapshot     *CharacterRemarkSnapshotPayload     `json:"characterRemarkSnapshot,omitempty"`
 	QuickLoginRequested         *QuickLoginRequestedPayload         `json:"quickLoginRequested,omitempty"`
+	Theater                     *TheaterEventPayload                `json:"theater,omitempty"`
 	MessageContext              *MessageContext                     `json:"messageContext,omitempty"`
 	MessageReaction             *MessageReactionEvent               `json:"messageReaction,omitempty"`
 	IsInteractiveUpdate         bool                                `json:"is_interactive_update,omitempty"`

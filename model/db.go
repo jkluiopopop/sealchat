@@ -139,6 +139,9 @@ func DBInit(cfg *utils.AppConfig) {
 	db.AutoMigrate(&AppNotificationInstanceModel{}, &AppNotificationDeviceModel{}, &AppNotificationPreferenceModel{})
 	db.AutoMigrate(&MemberModel{})
 	db.AutoMigrate(&AttachmentModel{})
+	if err := autoMigrateTheaterModels(db); err != nil {
+		panic(fmt.Sprintf("初始化 Theater 数据表失败: %v", err))
+	}
 	db.AutoMigrate(&ChannelAttachmentImageLayoutModel{})
 	db.AutoMigrate(&MentionModel{})
 	db.AutoMigrate(&TimelineModel{})

@@ -218,6 +218,7 @@ func main() {
 	if err := service.InitAudioService(config.Audio, storageManager); err != nil {
 		fatalWithStartupLock("初始化音频子系统失败: %v", err)
 	}
+	service.InitTheaterMediaService(config.TheaterMedia, service.ResolveMediaToolchain(&config.Audio))
 
 	// 输出 FFmpeg 检测结果
 	if svc := service.GetAudioService(); svc != nil {
@@ -318,6 +319,9 @@ func main() {
 		}
 	}
 	go autoSave()
+	service.SetTheaterEventPublisher(api.LocalTheaterEventPublisher{})
+	service.SetTheaterChatSender(api.LocalTheaterChatSender{})
+	service.StartTheaterOutboxWorker(ctx)
 
 	if err := api.Init(config, embedDirStatic); err != nil {
 		fatalWithStartupLock("启动 HTTP 服务失败: %v", err)

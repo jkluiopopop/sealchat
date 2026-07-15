@@ -429,6 +429,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1.Get("/public/ob/:slug", WorldPublicObserverResolveHandler)
 	v1.Get("/public/ob/channels/:channelId/messages/search", ChannelMessageSearchObserver)
 	v1.Get("/public/ob/channels/:channelId/messages/search/refine", ChannelMessageSearchRefineObserver)
+	BindTheaterObserverRoutes(v1)
 	v1.Get("/public/worlds/:worldId/keywords", WorldKeywordPublicListHandler)
 	v1.Get("/public/worlds/:worldId/keywords/effective", EffectiveWorldKeywordPublicListHandler)
 	v1.Get("/public/worlds/:worldId/keywords/categories", WorldKeywordPublicCategoriesHandler)
@@ -590,6 +591,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 
 	// Sticky Note routes
 	BindStickyNoteRoutes(v1Auth)
+	BindTheaterRoutes(v1Auth)
 
 	// Channel webhook integrations (admin-only in channel)
 	webhookIntegrations := v1Auth.Group("/channels/:channelId/webhook-integrations")

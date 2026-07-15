@@ -1,0 +1,75 @@
+package api
+
+import (
+	"github.com/gofiber/fiber/v2"
+
+	"sealchat/service"
+)
+
+func TheaterAdminSnapshots(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	items, err := service.ListTheaterCheckpoints(user.ID, c.Params("worldId"), c.Params("channelId"), 200)
+	if err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "snapshots": items})
+}
+
+func TheaterAdminRestore(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	var body struct {
+		MutationID       string `json:"mutationId"`
+		SnapshotID       string `json:"snapshotId"`
+		Reason           string `json:"reason"`
+		ExpectedRevision *int64 `json:"expectedRevision"`
+	}
+	if err := decodeTheaterBody(c, &body, 256<<10); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	result, err := service.RestoreTheaterSnapshot(c.Context(), user.ID, service.TheaterRestoreCommand{MutationID: body.MutationID, WorldID: c.Params("worldId"), ChannelID: c.Params("channelId"), SnapshotID: body.SnapshotID, Reason: body.Reason, ExpectedRevision: body.ExpectedRevision}, theaterRequestMeta(c, requestID))
+	if err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "result": result})
+}
+
+func TheaterAdminReplace(c *fiber.Ctx) error {
+	requestID := theaterRequestID(c)
+	user := getCurUser(c)
+	var body struct {
+		MutationID       string                        `json:"mutationId"`
+		ExpectedRevision int64                         `json:"expectedRevision"`
+		SchemaVersion    int                           `json:"schemaVersion"`
+		Snapshot         service.TheaterSharedSnapshot `json:"snapshot"`
+		Reason           string                        `json:"reason"`
+	}
+	if err := decodeTheaterBody(c, &body, 4<<20); err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	result, err := service.ReplaceTheaterSnapshot(c.Context(), user.ID, service.TheaterReplaceCommand{MutationID: body.MutationID, WorldID: c.Params("worldId"), ChannelID: c.Params("channelId"), ExpectedRevision: body.ExpectedRevision, SchemaVersion: body.SchemaVersion, Snapshot: body.Snapshot, Reason: body.Reason}, theaterRequestMeta(c, requestID))
+	if err != nil {
+		return theaterErrorResponse(c, requestID, err)
+	}
+	return c.JSON(fiber.Map{"ok": true, "requestId": requestID, "result": result})
+}
+
+func BindTheaterRoutes(router fiber.Router) {
+	base := "/worlds/:worldId/channels/:channelId/theater"
+	router.Get(base, TheaterSnapshotGet)
+	router.Post(base+"/mutations", TheaterMutationPost)
+	router.Get(base+"/events", TheaterEventsGet)
+	router.Post(base+"/actions/trigger", TheaterActionTrigger)
+	router.Post(base+"/resources", TheaterResourceUpload)
+	router.Get(base+"/resources/:resourceId/processing", TheaterResourceProcessingGet)
+	router.Get(base+"/resources/:resourceId/variants/:variant/content", TheaterResourceVariantContent)
+	router.Get(base+"/resources/:resourceId/content", TheaterResourceContent)
+	router.Post(base+"/resources/:resourceId/retry", TheaterResourceRetry)
+	router.Get(base+"/resources/:resourceId", TheaterResourceGet)
+	router.Delete(base+"/resources/:resourceId", TheaterResourceDelete)
+	router.Get(base+"/admin/snapshots", TheaterAdminSnapshots)
+	router.Get(base+"/admin/audit", TheaterAdminAudit)
+	router.Post(base+"/admin/restore", TheaterAdminRestore)
+	router.Put(base+"/admin/snapshot", TheaterAdminReplace)
+}

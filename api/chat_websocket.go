@@ -91,6 +91,9 @@ type ConnInfo struct {
 	BotCharacterSupport          BotCharacterSupportState
 	BotCharacterProbeOn          bool
 	BotCharacterProbeFail        int
+	theaterMu                    sync.RWMutex
+	theaterSubscription          *theaterSubscription
+	theaterQueue                 *theaterWriteQueue
 }
 
 type BotHiddenDicePending struct {
@@ -374,6 +377,8 @@ func websocketWorks(app *fiber.App, webUrl string) {
 		"message.list":               {},
 		"message.get":                {},
 		"message.context":            {},
+		"theater.subscribe":          {},
+		"theater.unsubscribe":        {},
 	}
 
 	normalizeRemoteAddr := func(addr string) string {
@@ -974,6 +979,12 @@ func websocketWorks(app *fiber.App, webUrl string) {
 
 					// 频道相关的非自设API基本都是改为不再需要传入guild_id
 					switch apiMsg.Api {
+					case "theater.subscribe":
+						apiTheaterSubscribeWs(ctx, msg)
+						solved = true
+					case "theater.unsubscribe":
+						apiTheaterUnsubscribeWs(ctx, msg)
+						solved = true
 					// Sticky Note APIs
 					case "sticky-note.update":
 						apiWrap(ctx, msg, apiStickyNoteUpdateWs)
@@ -1247,6 +1258,9 @@ func websocketWorks(app *fiber.App, webUrl string) {
 		}
 
 		// 连接断开时删除该 conn 在所有用户映射中的残留，避免历史脏数据泄漏。
+		if curConnInfo != nil {
+			curConnInfo.closeTheaterQueue()
+		}
 		affectedUserIDs := map[string]struct{}{}
 		affectedChannelIDs := map[string]struct{}{}
 		if curConnInfo != nil && curConnInfo.ChannelId != "" {

@@ -95,7 +95,8 @@ func InitAudioService(cfg utils.AudioConfig, store *storage.Manager) error {
 			return
 		}
 
-		audioSvc.ffmpegPath, audioSvc.ffprobePath = resolveFFmpegPaths(&cfg)
+		toolchain := ResolveMediaToolchain(&cfg)
+		audioSvc.ffmpegPath, audioSvc.ffprobePath = toolchain.FFmpegPath, toolchain.FFprobePath
 	})
 	return audioSvcErr
 }
@@ -116,7 +117,7 @@ func executableDir() string {
 	return ""
 }
 
-func resolveFFmpegPaths(cfg *utils.AudioConfig) (ffmpegPath, ffprobePath string) {
+func resolveFFmpegPathsLegacy(cfg *utils.AudioConfig) (ffmpegPath, ffprobePath string) {
 	configSpecified := strings.TrimSpace(cfg.FFmpegPath) != ""
 
 	if configSpecified {

@@ -777,6 +777,9 @@ func WorldDelete(worldID, actorID string) error {
 			Updates(map[string]any{"status": "archived", "updated_at": time.Now()}).Error; err != nil {
 			return err
 		}
+		if err := archiveTheaterRoomsByWorld(tx, worldID); err != nil {
+			return err
+		}
 		if err := tx.Model(&model.WorldInviteModel{}).
 			Where("world_id = ?", worldID).
 			Updates(map[string]any{"status": "archived", "updated_at": time.Now()}).Error; err != nil {
