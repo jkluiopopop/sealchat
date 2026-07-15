@@ -1,7 +1,25 @@
 export const WORLD_UNIT_PX = 24
 
 export type StageObjectFit = 'fill' | 'cover' | 'contain'
-export type StageObjectType = 'group' | 'shape' | 'text' | 'image' | 'button' | 'character' | 'video'
+export type StageObjectType = 'group' | 'drawing' | 'text' | 'image' | 'button' | 'character' | 'video'
+export type StageDrawingTool = 'pen' | 'highlighter' | 'line' | 'arrow' | 'rectangle' | 'ellipse' | 'triangle' | 'polygon'
+export type StageDrawingDash = 'solid' | 'dashed' | 'dotted'
+
+export interface StageDrawingStyle {
+  stroke: string
+  strokeWidth: number
+  opacity: number
+  fill: string | null
+  dash: StageDrawingDash
+}
+
+export interface StageDrawing {
+  tool: StageDrawingTool
+  style: StageDrawingStyle
+  points?: number[]
+  sides?: number
+  smoothing?: number
+}
 
 export type StageAction =
   | {
@@ -77,6 +95,7 @@ export interface StageObject {
   interactive: boolean
   editable: boolean
   fill: string
+  drawing?: StageDrawing
   text?: string
   image?: StageImageRef
   content?: Record<string, unknown>

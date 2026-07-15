@@ -226,10 +226,24 @@ export const stageActionSchema = z.discriminatedUnion('type', [
   objectToggleActionSchema,
 ])
 
+const stageDrawingSchema = z.strictObject({
+  tool: z.enum(['pen', 'highlighter', 'line', 'arrow', 'rectangle', 'ellipse', 'triangle', 'polygon']),
+  style: z.strictObject({
+    stroke: z.string().max(256),
+    strokeWidth: z.number().finite().min(1).max(128),
+    opacity: z.number().finite().min(0.05).max(1),
+    fill: z.string().max(256).nullable(),
+    dash: z.enum(['solid', 'dashed', 'dotted']),
+  }),
+  points: z.array(z.number().finite()).max(2_000).optional(),
+  sides: z.number().int().min(5).max(12).optional(),
+  smoothing: z.number().finite().min(0).max(1).optional(),
+})
+
 const stageObjectSchema = z.strictObject({
   id: nonEmptyIdSchema,
   parentId: nonEmptyIdSchema.nullable(),
-  type: z.enum(['group', 'shape', 'text', 'image', 'button']),
+  type: z.enum(['group', 'drawing', 'text', 'image', 'button']),
   name: z.string().max(512),
   transform: stageObjectTransformSchema,
   visible: z.boolean(),
@@ -237,10 +251,21 @@ const stageObjectSchema = z.strictObject({
   aspectRatioLocked: z.boolean(),
   interactive: z.boolean(),
   fill: z.string().max(256),
+  drawing: stageDrawingSchema.optional(),
   text: z.string().max(100_000).optional(),
   image: stageImageRefSchema.optional(),
   actions: z.array(stageActionSchema).max(32),
   metadata: z.record(z.string(), z.unknown()),
+}).superRefine((object, context) => {
+  if (object.type !== 'drawing') return
+  if (!object.drawing) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['drawing'], message: '绘制对象缺少 drawing' })
+    return
+  }
+  if (
+    (object.drawing.tool === 'pen' || object.drawing.tool === 'highlighter')
+    && (!object.drawing.points || object.drawing.points.length < 2 || object.drawing.points.length % 2 !== 0)
+  ) context.addIssue({ code: z.ZodIssueCode.custom, path: ['drawing', 'points'], message: '自由笔迹 points 无效' })
 })
 
 const stageSceneStateSchema = z.strictObject({

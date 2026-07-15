@@ -2,7 +2,7 @@ import { watch, type WatchStopHandle } from 'vue'
 
 import { api } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
-import type { StageActionTriggeredPayload, StageImageRef, StageLiveState, StageObject, StageObjectType, StageScene, StageWorkspaceState } from '../shared/stage-types'
+import type { StageActionTriggeredPayload, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StageScene, StageWorkspaceState } from '../shared/stage-types'
 import { isSafeStageImageUrl } from '../shared/stage-types'
 import { createInitialTheaterStageState, type TheaterStageStore } from '../stage/StageStore'
 
@@ -122,6 +122,33 @@ const imageRef = (value: unknown): StageImageRef | null => {
   }
 }
 
+const drawingRef = (value: unknown): StageDrawing | undefined => {
+  const raw = asObject(value)
+  const style = asObject(raw.style)
+  const tools: StageDrawing['tool'][] = ['pen', 'highlighter', 'line', 'arrow', 'rectangle', 'ellipse', 'triangle', 'polygon']
+  const tool = tools.includes(raw.tool as StageDrawing['tool']) ? raw.tool as StageDrawing['tool'] : null
+  if (!tool) return undefined
+  const points = Array.isArray(raw.points)
+    ? raw.points.filter((point): point is number => typeof point === 'number' && Number.isFinite(point)).slice(0, 2_000)
+    : undefined
+  if ((tool === 'pen' || tool === 'highlighter') && (!points || points.length < 2 || points.length % 2 !== 0)) return undefined
+  return {
+    tool,
+    style: {
+      stroke: typeof style.stroke === 'string' ? style.stroke : '#f8fafc',
+      strokeWidth: Math.min(128, Math.max(1, finite(style.strokeWidth, 4))),
+      opacity: Math.min(1, Math.max(0.05, finite(style.opacity, 1))),
+      fill: typeof style.fill === 'string' ? style.fill : null,
+      dash: style.dash === 'dashed' || style.dash === 'dotted' ? style.dash : 'solid',
+    },
+    ...(points ? { points } : {}),
+    ...(tool === 'polygon' ? { sides: Math.min(12, Math.max(5, Math.round(finite(raw.sides, 6)))) } : {}),
+    ...(tool === 'pen' || tool === 'highlighter'
+      ? { smoothing: Math.min(1, Math.max(0, finite(raw.smoothing, 0.35))) }
+      : {}),
+  }
+}
+
 const stageStateFromServer = (value: unknown, objects: Record<string, StageObject>): StageLiveState => {
   const raw = asObject(value)
   const grid = asObject(raw.grid)
@@ -161,12 +188,15 @@ const serverStateFromStage = (state: StageLiveState): JsonObject => ({
   transition: state.transition,
 })
 
-const objectFromServer = (value: TheaterObjectSnapshot): StageObject => {
+const objectFromServer = (value: TheaterObjectSnapshot): StageObject | null => {
   const content = asObject(value.content)
   const legacyScale = finite(value.scale, 1) > 0 ? Math.min(100, finite(value.scale, 1)) : 1
-  const kind = ['group', 'shape', 'text', 'image', 'button', 'character', 'video'].includes(value.kind)
+  const kind = ['group', 'drawing', 'text', 'image', 'button', 'character', 'video'].includes(value.kind)
     ? value.kind as StageObjectType
-    : 'shape'
+    : null
+  if (!kind) return null
+  const drawing = kind === 'drawing' ? drawingRef(content.drawing) : undefined
+  if (kind === 'drawing' && !drawing) return null
   return {
     id: value.id,
     parentId: typeof value.parentId === 'string' && value.parentId ? value.parentId : null,
@@ -189,6 +219,7 @@ const objectFromServer = (value: TheaterObjectSnapshot): StageObject => {
     interactive: value.interactive !== false,
     editable: value.editable === true,
     fill: typeof content.fill === 'string' ? content.fill : '#60a5fa',
+    drawing,
     ...(typeof content.text === 'string' ? { text: content.text } : {}),
     ...(imageRef(content.image) ? { image: imageRef(content.image)! } : {}),
     content,
@@ -226,6 +257,7 @@ const objectForServer = (object: StageObject, sceneId: string | null): TheaterOb
     fill: object.fill,
     ...(object.text === undefined ? {} : { text: object.text }),
     ...(object.image === undefined ? {} : { image: object.image }),
+    ...(object.drawing === undefined ? {} : { drawing: object.drawing }),
   },
   actions: clone(object.actions),
   metadata: clone(object.metadata),
@@ -266,7 +298,10 @@ const documentFromWorkspace = (workspace: StageWorkspaceState): TheaterDocument 
 const workspaceFromDocument = (document: TheaterDocument): StageWorkspaceState => {
   if (!Object.keys(document.scenes).length) return createInitialTheaterStageState()
   const scenes = Object.fromEntries(Object.values(document.scenes).map((scene) => {
-    const objects = Object.fromEntries(Object.values(scene.objects).map((object) => [object.id, objectFromServer(object)]))
+    const objects = Object.fromEntries(Object.values(scene.objects).flatMap((object) => {
+      const parsed = objectFromServer(object)
+      return parsed ? [[object.id, parsed]] : []
+    }))
     const value: StageScene = {
       id: scene.id,
       name: scene.name,
@@ -279,7 +314,10 @@ const workspaceFromDocument = (document: TheaterDocument): StageWorkspaceState =
   const activeSceneId = document.activeSceneId && scenes[document.activeSceneId]
     ? document.activeSceneId
     : Object.values(scenes).sort((a, b) => a.order - b.order)[0].id
-  const persistentObjects = Object.fromEntries(Object.values(document.persistentObjects).map((object) => [object.id, objectFromServer(object)]))
+  const persistentObjects = Object.fromEntries(Object.values(document.persistentObjects).flatMap((object) => {
+    const parsed = objectFromServer(object)
+    return parsed ? [[object.id, parsed]] : []
+  }))
   return {
     activeSceneId,
     liveState: clone(scenes[activeSceneId].state),

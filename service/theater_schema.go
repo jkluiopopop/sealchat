@@ -314,7 +314,7 @@ func validateObjectInput(object *theaterObjectInput) error {
 	if err := validateTheaterID(object.ID, "object.id"); err != nil {
 		return err
 	}
-	allowedKinds := map[string]bool{"group": true, "shape": true, "text": true, "image": true, "button": true, "character": true, "video": true}
+	allowedKinds := map[string]bool{"group": true, "drawing": true, "text": true, "image": true, "button": true, "character": true, "video": true}
 	if !allowedKinds[object.Kind] {
 		return theaterPayloadError("object.kind 无效")
 	}

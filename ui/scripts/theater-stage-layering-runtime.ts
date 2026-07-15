@@ -9,7 +9,7 @@ import { createTheaterStageStore } from '../src/views/theater/stage/StageStore.j
 const makeObject = (id: string, z: number, parentId: string | null = null): StageObject => ({
   id,
   parentId,
-  type: parentId === null && id === 'group' ? 'group' : 'shape',
+  type: parentId === null && id === 'group' ? 'group' : 'drawing',
   name: id,
   transform: { x: 0, y: 0, width: 1, height: 1, rotation: 0, scaleX: 1, scaleY: 1, z, order: z },
   visible: true,
@@ -57,12 +57,15 @@ assert.deepEqual(
 )
 
 const store = createTheaterStageStore()
-const initialObjects = Object.values(store.activeObjects.value)
-const initialGroup = initialObjects.find((object) => object.type === 'group')!
-const initialChild = initialObjects.find((object) => object.parentId === initialGroup.id)!
-const rootShape = initialObjects.find((object) => object.type === 'shape' && object.parentId === null)!
+const initialGroup = store.addObject('group')
+const initialChild = store.addObject('text')
+assert.equal(store.setParent(initialChild.id, initialGroup.id), true)
+const rootDrawing = store.addDrawing({
+  tool: 'rectangle',
+  style: { stroke: '#ffffff', strokeWidth: 2, opacity: 1, fill: null, dash: 'solid' },
+}, { x: 0, y: 0, width: 2, height: 2, rotation: 0 })
 assert.equal(initialChild.aspectRatioLocked, true)
-assert.equal(store.setParent(initialChild.id, rootShape.id), false)
+assert.equal(store.setParent(initialChild.id, rootDrawing.id), false)
 
 const nestedGroup = store.addObject('group')
 assert.equal(store.setParent(nestedGroup.id, initialGroup.id), true)

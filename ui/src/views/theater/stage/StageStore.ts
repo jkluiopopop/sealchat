@@ -2,6 +2,7 @@ import { computed, reactive, toRaw, watch, type ComputedRef } from 'vue'
 import {
   isSafeStageImageUrl,
   type StageAction,
+  type StageDrawing,
   type StageImageRef,
   type StageLiveState,
   type StageObject,
@@ -20,6 +21,8 @@ import {
 } from './stage-editing'
 
 const palette = ['#60a5fa', '#a78bfa', '#f472b6', '#34d399', '#fbbf24', '#fb7185']
+const stageObjectTypes: StageObjectType[] = ['group', 'drawing', 'text', 'image', 'button', 'character', 'video']
+type StageInsertableObjectType = Exclude<StageObjectType, 'drawing'>
 
 const uid = (prefix: string) => {
   const id = typeof crypto !== 'undefined' && crypto.randomUUID
@@ -96,11 +99,9 @@ const createLiveState = (color: string, sceneObjects: Record<string, StageObject
 })
 
 const createScene = (name: string, order: number, color: string): StageScene => {
-  const group = makeObject('角色组', 'group', 0, { fill: 'rgba(96, 165, 250, 0.12)' })
-  const actor = makeObject('主角', 'shape', 1, { parentId: group.id })
-  const title = makeObject('场景标题', 'text', 2, { text: name, parentId: group.id })
-  const panel = makeObject('信息面板', 'shape', 3, {
-    transform: { x: -13, y: -7, width: 8, height: 4, rotation: 0, scaleX: 1, scaleY: 1, z: 1, order: 3 },
+  const title = makeObject('场景标题', 'text', 0, {
+    text: name,
+    transform: { x: 0, y: 0, width: 12, height: 4, rotation: 0, scaleX: 1, scaleY: 1, z: 0, order: 0 },
   })
   return {
     id: uid('scene'),
@@ -108,10 +109,7 @@ const createScene = (name: string, order: number, color: string): StageScene => 
     order,
     locked: false,
     state: createLiveState(color, {
-      [group.id]: group,
-      [actor.id]: actor,
       [title.id]: title,
-      [panel.id]: panel,
     }),
   }
 }
@@ -181,7 +179,38 @@ const normalizeActions = (input: unknown): StageAction[] => {
   }, []).slice(0, 32)
 }
 
-const normalizeObject = (input: StageObject): StageObject => {
+const normalizeDrawing = (input: unknown): StageDrawing | undefined => {
+  if (!input || typeof input !== 'object') return undefined
+  const value = input as Partial<StageDrawing>
+  const tools: StageDrawing['tool'][] = ['pen', 'highlighter', 'line', 'arrow', 'rectangle', 'ellipse', 'triangle', 'polygon']
+  if (!value.tool || !tools.includes(value.tool) || !value.style || typeof value.style !== 'object') return undefined
+  const style = value.style
+  const dash = style.dash === 'dashed' || style.dash === 'dotted' ? style.dash : 'solid'
+  const points = Array.isArray(value.points)
+    ? value.points.filter((point): point is number => Number.isFinite(point)).slice(0, 2_000)
+    : undefined
+  if ((value.tool === 'pen' || value.tool === 'highlighter') && (!points || points.length < 2 || points.length % 2 !== 0)) return undefined
+  return {
+    tool: value.tool,
+    style: {
+      stroke: typeof style.stroke === 'string' ? style.stroke : '#f8fafc',
+      strokeWidth: Number.isFinite(style.strokeWidth) ? Math.min(128, Math.max(1, style.strokeWidth)) : 4,
+      opacity: Number.isFinite(style.opacity) ? Math.min(1, Math.max(0.05, style.opacity)) : 1,
+      fill: typeof style.fill === 'string' ? style.fill : null,
+      dash,
+    },
+    ...(points ? { points } : {}),
+    ...(value.tool === 'polygon' ? { sides: Math.min(12, Math.max(5, Math.round(value.sides || 6))) } : {}),
+    ...(value.tool === 'pen' || value.tool === 'highlighter'
+      ? { smoothing: typeof value.smoothing === 'number' && Number.isFinite(value.smoothing) ? Math.min(1, Math.max(0, value.smoothing)) : 0.35 }
+      : {}),
+  }
+}
+
+const normalizeObject = (input: StageObject): StageObject | null => {
+  if (!stageObjectTypes.includes(input.type)) return null
+  const drawing = input.type === 'drawing' ? normalizeDrawing(input.drawing) : undefined
+  if (input.type === 'drawing' && !drawing) return null
   const legacyTransform = input.transform as StageObjectTransform & { scale?: number }
   const legacyScale = Number.isFinite(legacyTransform?.scale) && (legacyTransform.scale || 0) > 0
     ? Math.min(100, Math.max(0.01, legacyTransform.scale!))
@@ -198,7 +227,7 @@ const normalizeObject = (input: StageObject): StageObject => {
       scaleX: normalizeScale(input.transform?.scaleX),
       scaleY: normalizeScale(input.transform?.scaleY),
     },
-    type: ['group', 'shape', 'text', 'image', 'button', 'character', 'video'].includes(input.type) ? input.type : 'shape',
+    type: input.type,
     parentId: typeof input.parentId === 'string' ? input.parentId : null,
     visible: input.visible !== false,
     locked: input.locked === true,
@@ -206,6 +235,7 @@ const normalizeObject = (input: StageObject): StageObject => {
     interactive: input.interactive !== false,
     editable: input.editable === true,
     fill: typeof input.fill === 'string' ? input.fill : '#60a5fa',
+    drawing,
     image: normalizeImageRef(input.image) || undefined,
     content: input.content && typeof input.content === 'object' ? input.content : {},
     actions: normalizeActions(input.actions),
@@ -217,7 +247,8 @@ const normalizeObjects = (input: unknown) => {
   if (!input || typeof input !== 'object') return {}
   return Object.entries(input as Record<string, StageObject>).reduce<Record<string, StageObject>>((result, [id, object]) => {
     if (!object || typeof object !== 'object' || typeof object.id !== 'string') return result
-    result[id] = normalizeObject(object)
+    const normalized = normalizeObject(object)
+    if (normalized) result[id] = normalized
     return result
   }, {})
 }
@@ -260,7 +291,11 @@ export interface TheaterStageStore {
   addScene: () => void
   duplicateScene: () => void
   removeScene: () => void
-  addObject: (type: StageObjectType, persistent?: boolean) => StageObject
+  addObject: (type: StageInsertableObjectType, persistent?: boolean) => StageObject
+  addDrawing: (
+    drawing: StageDrawing,
+    transform: Pick<StageObjectTransform, 'x' | 'y' | 'width' | 'height' | 'rotation'>,
+  ) => StageObject
   removeSelectedObject: (recordHistory?: boolean) => void
   copySelectedObject: () => boolean
   cutSelectedObject: () => boolean
@@ -488,7 +523,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     clearSelection()
   }
 
-  const addObject = (type: StageObjectType, persistent = false) => runObjectEdit('添加对象', () => {
+  const addObject = (type: StageInsertableObjectType, persistent = false) => runObjectEdit('添加对象', () => {
     const objects = persistent ? state.persistentObjects : state.liveState.sceneObjects
     const object = makeObject(
       type === 'group'
@@ -499,10 +534,39 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
             ? '新建图片'
             : type === 'button'
               ? '新建按钮'
-              : '新建面板',
+              : '新建对象',
       type,
       Object.keys(objects).length,
     )
+    objects[object.id] = object
+    setSelectedObjectIds([object.id], object.id)
+    return object
+  })
+
+  const drawingNames: Record<StageDrawing['tool'], string> = {
+    pen: '画笔',
+    highlighter: '荧光笔',
+    line: '直线',
+    arrow: '箭头',
+    rectangle: '矩形',
+    ellipse: '椭圆',
+    triangle: '三角形',
+    polygon: '多边形',
+  }
+
+  const addDrawing = (
+    drawing: StageDrawing,
+    transform: Pick<StageObjectTransform, 'x' | 'y' | 'width' | 'height' | 'rotation'>,
+  ) => runObjectEdit('添加绘制对象', () => {
+    const objects = state.liveState.sceneObjects
+    const order = Object.keys(objects).length
+    const object = makeObject(`新建${drawingNames[drawing.tool]}`, 'drawing', order, {
+      drawing: clone(drawing),
+      fill: drawing.style.fill || drawing.style.stroke,
+      interactive: false,
+      aspectRatioLocked: false,
+      transform: { ...transform, scaleX: 1, scaleY: 1, z: 0, order },
+    })
     objects[object.id] = object
     setSelectedObjectIds([object.id], object.id)
     return object
@@ -761,6 +825,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     duplicateScene,
     removeScene,
     addObject,
+    addDrawing,
     removeSelectedObject,
     copySelectedObject,
     cutSelectedObject,

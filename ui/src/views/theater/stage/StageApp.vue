@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import Konva from 'konva'
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NButton, NButtonGroup, NCheckbox, NIcon, NInput, NInputNumber, NSelect, NTooltip } from 'naive-ui'
+import { NButton, NButtonGroup, NCheckbox, NColorPicker, NIcon, NInput, NInputNumber, NSelect, NSlider, NTooltip } from 'naive-ui'
 import {
   ArrowBackUp,
   ArrowDown,
@@ -22,7 +22,6 @@ import {
   Photo,
   Pin,
   Plus,
-  Rectangle,
   Refresh,
   Select,
   Stack2,
@@ -36,12 +35,16 @@ import {
   resolveStageImageUrl,
   type StageAction,
   type StageActionTriggeredPayload,
+  type StageDrawing,
+  type StageDrawingStyle,
+  type StageDrawingTool,
   type StageImageRef,
   type StageObject,
   type StageObjectFit,
 } from '../shared/stage-types'
 import { stageActionSchema, type ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import { syncStageObjectHierarchy } from './stage-layering'
+import StageDrawingToolbar, { type StageCanvasTool } from './StageDrawingToolbar.vue'
 import type { TheaterStageStore } from './StageStore'
 
 const props = defineProps<{
@@ -95,6 +98,22 @@ const pendingImageTarget = ref<ImageTarget | null>(null)
 const imageEditorTarget = ref<ImageTarget | null>(null)
 const imageEditorFile = ref<File | null>(null)
 const imageEditorVisible = ref(false)
+const activeCanvasTool = ref<StageCanvasTool | null>(null)
+const drawingStyle = ref<StageDrawingStyle>({
+  stroke: '#f8fafc',
+  strokeWidth: 4,
+  opacity: 1,
+  fill: null,
+  dash: 'solid',
+})
+const drawingSmoothing = ref(0.35)
+const drawingPolygonSides = ref(6)
+const drawingStyleMemory = new Map<StageDrawingTool, StageDrawingStyle>()
+const drawingDashOptions = [
+  { label: '实线', value: 'solid' },
+  { label: '虚线', value: 'dashed' },
+  { label: '点线', value: 'dotted' },
+]
 const draggedLayerId = ref<string | null>(null)
 type LayerDropPlacement = 'before' | 'inside' | 'after'
 const layerDropTarget = ref<{ id: string | null, placement: LayerDropPlacement } | null>(null)
@@ -105,6 +124,7 @@ const canEditDelegatedObjects = computed(() => hasPermission('stage.object.edit.
 const canSwitchScene = computed(() => hasPermission('stage.scene.switch'))
 const canTriggerActions = computed(() => hasPermission('stage.action.trigger'))
 const canUploadResources = computed(() => hasPermission('stage.resource.upload'))
+const isDrawingTool = (tool: StageCanvasTool | null): tool is StageDrawingTool => Boolean(tool && tool !== 'eraser')
 const canEditObject = (object: StageObject | null | undefined) => Boolean(object) && (
   canEditAllObjects.value
   || (canEditDelegatedObjects.value && object!.editable && !object!.locked)
@@ -123,6 +143,13 @@ const handleStageShortcut = (event: KeyboardEvent) => {
     || imageEditorVisible.value
   ) return
   const key = event.key.toLowerCase()
+  if (key === 'escape' && activeCanvasTool.value) {
+    if (drawingSession) cancelDrawingSession()
+    else activeCanvasTool.value = null
+    nextTick(updateTransformer)
+    event.preventDefault()
+    return
+  }
   if (key === 'escape' && props.store.selection.bulkMode) {
     if (props.store.selection.selectedIds.length) props.store.clearSelection()
     else props.store.setBulkSelectionMode(false)
@@ -141,6 +168,33 @@ const handleStageShortcut = (event: KeyboardEvent) => {
   else if (key === 'v' && canEditAllObjects.value) handled = Boolean(props.store.pasteObject())
   else if (key === 'z' && !event.shiftKey && canEditAllObjects.value) handled = props.store.undo()
   if (handled) event.preventDefault()
+}
+
+const selectCanvasTool = (tool: StageCanvasTool) => {
+  cancelDrawingSession()
+  const previousTool = activeCanvasTool.value
+  if (isDrawingTool(previousTool)) drawingStyleMemory.set(previousTool, { ...drawingStyle.value })
+  if (previousTool === tool) {
+    activeCanvasTool.value = null
+    nextTick(updateTransformer)
+    return
+  }
+  activeCanvasTool.value = tool
+  props.store.setBulkSelectionMode(false)
+  props.store.clearSelection()
+  if (isDrawingTool(tool)) {
+    drawingStyle.value = drawingStyleMemory.get(tool) || (tool === 'highlighter'
+      ? { stroke: '#facc15', strokeWidth: 18, opacity: 0.32, fill: null, dash: 'solid' }
+      : tool === 'pen'
+        ? { stroke: '#f8fafc', strokeWidth: 4, opacity: 1, fill: null, dash: 'solid' }
+        : { stroke: '#f8fafc', strokeWidth: 3, opacity: 1, fill: null, dash: 'solid' })
+  }
+  nextTick(updateTransformer)
+}
+
+const updateDrawingStyle = (style: StageDrawingStyle) => {
+  drawingStyle.value = style
+  if (isDrawingTool(activeCanvasTool.value)) drawingStyleMemory.set(activeCanvasTool.value, { ...style })
 }
 
 type PanelId = 'scene' | 'inspector' | 'layer'
@@ -347,6 +401,7 @@ let worldCameraGroup: Konva.Group | null = null
 let foregroundCameraGroup: Konva.Group | null = null
 let gridGroup: Konva.Group | null = null
 let objectRoot: Konva.Group | null = null
+let drawingDraftRoot: Konva.Group | null = null
 let transformer: Konva.Transformer | null = null
 let selectionRect: Konva.Rect | null = null
 let resizeObserver: ResizeObserver | null = null
@@ -356,6 +411,17 @@ let marqueeAdditive = false
 let panPointer = { x: 0, y: 0 }
 let panOrigin = { x: 0, y: 0 }
 let gridSignature = ''
+
+interface DrawingSession {
+  tool: StageDrawingTool
+  start: { x: number, y: number }
+  current: { x: number, y: number }
+  points: number[]
+  shiftKey: boolean
+  altKey: boolean
+}
+
+let drawingSession: DrawingSession | null = null
 
 const objectNodes = new Map<string, Konva.Group>()
 const imageLoadVersions = new Map<string, number>()
@@ -390,6 +456,12 @@ const selectedObjects = props.store.selectedObjects
 const selectedIdSet = computed(() => new Set(props.store.selection.selectedIds))
 const isBatchSelection = computed(() => props.store.selection.bulkMode && selectedObjects.value.length > 1)
 const batchMoveBlocked = computed(() => isBatchSelection.value && selectedObjects.value.some((object) => object.locked))
+
+const toggleSelectedDrawingFill = (checked: boolean) => {
+  const drawing = selectedObject.value?.drawing
+  if (!drawing) return
+  drawing.style.fill = checked ? drawing.style.fill || drawing.style.stroke : null
+}
 
 type BatchBooleanKey = 'visible' | 'interactive' | 'editable' | 'locked' | 'aspectRatioLocked'
 const batchBooleanObjects = (_key: BatchBooleanKey) => selectedObjects.value
@@ -576,6 +648,12 @@ const applyCamera = () => {
 
 const updateTransformer = () => {
   if (!transformer) return
+  if (activeCanvasTool.value) {
+    transformer.nodes([])
+    transformer.visible(false)
+    interactionLayer?.batchDraw()
+    return
+  }
   if (isBatchSelection.value) {
     const nodes = selectedMovementRootIds()
       .map((id) => objectNodes.get(id))
@@ -858,6 +936,187 @@ const syncField = () => {
   foregroundLayer?.batchDraw()
 }
 
+const drawingDash = (style: StageDrawingStyle) => style.dash === 'dashed'
+  ? [style.strokeWidth * 3, style.strokeWidth * 2]
+  : style.dash === 'dotted'
+    ? [style.strokeWidth, style.strokeWidth * 1.8]
+    : []
+
+const createDrawingNode = (drawing: StageDrawing, width: number, height: number): Konva.Shape => {
+  const style = drawing.style
+  const common = {
+    name: 'theater-object-drawing',
+    stroke: style.stroke,
+    strokeWidth: style.strokeWidth,
+    opacity: style.opacity,
+    dash: drawingDash(style),
+    lineCap: 'round' as const,
+    lineJoin: 'round' as const,
+    hitStrokeWidth: Math.max(12, style.strokeWidth + 8),
+  }
+  if (drawing.tool === 'pen' || drawing.tool === 'highlighter') {
+    const points = drawing.points || [0, 0, 1, 1]
+    const mapped = points.map((point, index) => point * (index % 2 === 0 ? width : height))
+    return new Konva.Line({
+      ...common,
+      points: mapped,
+      tension: drawing.smoothing || 0,
+      globalCompositeOperation: drawing.tool === 'highlighter' ? 'source-over' : undefined,
+    })
+  }
+  if (drawing.tool === 'line' || drawing.tool === 'arrow') {
+    const points = drawing.points || [0, 0.5, 1, 0.5]
+    const mapped = points.map((point, index) => point * (index % 2 === 0 ? width : height))
+    return drawing.tool === 'arrow'
+      ? new Konva.Arrow({
+          ...common,
+          points: mapped,
+          fill: style.stroke,
+          pointerLength: Math.max(10, style.strokeWidth * 3),
+          pointerWidth: Math.max(9, style.strokeWidth * 2.5),
+        })
+      : new Konva.Line({ ...common, points: mapped })
+  }
+  if (drawing.tool === 'ellipse') {
+    return new Konva.Ellipse({
+      ...common,
+      x: width / 2,
+      y: height / 2,
+      radiusX: width / 2,
+      radiusY: height / 2,
+      fill: style.fill || undefined,
+    })
+  }
+  if (drawing.tool === 'triangle' || drawing.tool === 'polygon') {
+    return new Konva.RegularPolygon({
+      ...common,
+      x: width / 2,
+      y: height / 2,
+      sides: drawing.tool === 'triangle' ? 3 : drawing.sides || 6,
+      radius: Math.max(1, Math.min(width, height) / 2),
+      fill: style.fill || undefined,
+    })
+  }
+  return new Konva.Rect({
+    ...common,
+    width,
+    height,
+    fill: style.fill || undefined,
+    cornerRadius: Math.min(12, width / 5, height / 5),
+  })
+}
+
+const drawingBounds = (session: DrawingSession) => {
+  let end = { ...session.current }
+  const delta = { x: end.x - session.start.x, y: end.y - session.start.y }
+  if (session.shiftKey) {
+    if (session.tool === 'line' || session.tool === 'arrow') {
+      const length = Math.hypot(delta.x, delta.y)
+      const angle = Math.round(Math.atan2(delta.y, delta.x) / (Math.PI / 4)) * (Math.PI / 4)
+      end = { x: session.start.x + Math.cos(angle) * length, y: session.start.y + Math.sin(angle) * length }
+    } else {
+      const size = Math.max(Math.abs(delta.x), Math.abs(delta.y))
+      end = {
+        x: session.start.x + Math.sign(delta.x || 1) * size,
+        y: session.start.y + Math.sign(delta.y || 1) * size,
+      }
+    }
+  }
+  const start = session.altKey
+    ? { x: session.start.x - (end.x - session.start.x), y: session.start.y - (end.y - session.start.y) }
+    : session.start
+  const minimum = 12
+  if (Math.abs(end.x - start.x) < minimum) end.x = start.x + Math.sign(end.x - start.x || 1) * minimum
+  if (Math.abs(end.y - start.y) < minimum) end.y = start.y + Math.sign(end.y - start.y || 1) * minimum
+  const x = Math.min(start.x, end.x)
+  const y = Math.min(start.y, end.y)
+  const width = Math.max(minimum, Math.abs(end.x - start.x))
+  const height = Math.max(minimum, Math.abs(end.y - start.y))
+  return { start, end, x, y, width, height }
+}
+
+const compactDrawingPoints = (points: number[]) => {
+  const maximumPointCount = 1_000
+  const pointCount = Math.floor(points.length / 2)
+  if (pointCount <= maximumPointCount) return points
+  const result: number[] = []
+  for (let index = 0; index < maximumPointCount; index += 1) {
+    const sourceIndex = Math.round(index * (pointCount - 1) / (maximumPointCount - 1)) * 2
+    result.push(points[sourceIndex], points[sourceIndex + 1])
+  }
+  return result
+}
+
+const drawingResult = (session: DrawingSession) => {
+  const style: StageDrawingStyle = {
+    ...drawingStyle.value,
+    fill: ['rectangle', 'ellipse', 'triangle', 'polygon'].includes(session.tool) ? drawingStyle.value.fill : null,
+  }
+  if (session.tool === 'pen' || session.tool === 'highlighter') {
+    const sourcePoints = compactDrawingPoints(session.points)
+    const xs = sourcePoints.filter((_, index) => index % 2 === 0)
+    const ys = sourcePoints.filter((_, index) => index % 2 === 1)
+    const padding = style.strokeWidth / 2
+    const x = Math.min(...xs) - padding
+    const y = Math.min(...ys) - padding
+    const width = Math.max(12, Math.max(...xs) - Math.min(...xs) + padding * 2)
+    const height = Math.max(12, Math.max(...ys) - Math.min(...ys) + padding * 2)
+    const points = sourcePoints.map((point, index) => index % 2 === 0 ? (point - x) / width : (point - y) / height)
+    return {
+      drawing: { tool: session.tool, style, points, smoothing: drawingSmoothing.value } satisfies StageDrawing,
+      transform: {
+        x: (x + width / 2) / WORLD_UNIT_PX,
+        y: (y + height / 2) / WORLD_UNIT_PX,
+        width: width / WORLD_UNIT_PX,
+        height: height / WORLD_UNIT_PX,
+        rotation: 0,
+      },
+      preview: { x, y, width, height },
+    }
+  }
+  const bounds = drawingBounds(session)
+  const points = session.tool === 'line' || session.tool === 'arrow'
+    ? [
+        (bounds.start.x - bounds.x) / bounds.width,
+        (bounds.start.y - bounds.y) / bounds.height,
+        (bounds.end.x - bounds.x) / bounds.width,
+        (bounds.end.y - bounds.y) / bounds.height,
+      ]
+    : undefined
+  return {
+    drawing: {
+      tool: session.tool,
+      style,
+      ...(points ? { points } : {}),
+      ...(session.tool === 'polygon' ? { sides: drawingPolygonSides.value } : {}),
+    } satisfies StageDrawing,
+    transform: {
+      x: (bounds.x + bounds.width / 2) / WORLD_UNIT_PX,
+      y: (bounds.y + bounds.height / 2) / WORLD_UNIT_PX,
+      width: bounds.width / WORLD_UNIT_PX,
+      height: bounds.height / WORLD_UNIT_PX,
+      rotation: 0,
+    },
+    preview: bounds,
+  }
+}
+
+const renderDrawingDraft = () => {
+  if (!drawingDraftRoot || !drawingSession) return
+  const result = drawingResult(drawingSession)
+  drawingDraftRoot.destroyChildren()
+  const group = new Konva.Group({ x: result.preview.x, y: result.preview.y, listening: false })
+  group.add(createDrawingNode(result.drawing, result.preview.width, result.preview.height))
+  drawingDraftRoot.add(group)
+  worldLayer?.batchDraw()
+}
+
+const cancelDrawingSession = () => {
+  drawingSession = null
+  drawingDraftRoot?.destroyChildren()
+  worldLayer?.batchDraw()
+}
+
 const releaseObjectMedia = (wrapper: Konva.Group) => {
   const image = wrapper.findOne<Konva.Image>('.theater-object-image')
   releaseStageMedia(image?.image() as StageMediaSource | undefined)
@@ -874,6 +1133,11 @@ const rebuildObjectContent = (wrapper: Konva.Group, object: StageObject) => {
   wrapper.setAttr('stageObjectType', object.type)
   const width = Math.max(0.5, object.transform.width) * WORLD_UNIT_PX
   const height = Math.max(0.5, object.transform.height) * WORLD_UNIT_PX
+  if (object.type === 'drawing' && object.drawing) {
+    wrapper.setAttr('stageDrawingSignature', JSON.stringify(object.drawing))
+    wrapper.add(createDrawingNode(object.drawing, width, height))
+    return
+  }
   if (object.type === 'text') {
     wrapper.add(new Konva.Text({
       name: 'theater-object-content',
@@ -986,6 +1250,17 @@ const createObjectNode = (object: StageObject) => {
   rebuildObjectContent(wrapper, object)
   wrapper.on('pointerdown', (event) => {
     const current = getObject(object.id)
+    if (activeCanvasTool.value === 'eraser') {
+      if (!canEditAllObjects.value || current?.type !== 'drawing') return
+      event.cancelBubble = true
+      props.store.selectObject(object.id)
+      props.store.removeSelectedObject()
+      return
+    }
+    if (isDrawingTool(activeCanvasTool.value)) {
+      event.cancelBubble = false
+      return
+    }
     if (!canEditObject(current)) return
     const selectionId = canvasSelectionTarget(object.id)
     event.cancelBubble = selectionId === object.id
@@ -998,15 +1273,18 @@ const createObjectNode = (object: StageObject) => {
     selectObject(selectionId, additive)
   })
   wrapper.on('dblclick dbltap', (event) => {
+    if (activeCanvasTool.value) return
     if (!canEditObject(getObject(object.id))) return
     event.cancelBubble = true
     selectObject(object.id)
   })
   wrapper.on('click tap', () => {
+    if (activeCanvasTool.value) return
     const current = getObject(object.id)
     if (current) triggerObjectActions(current)
   })
   wrapper.on('contextmenu', (event) => {
+    if (activeCanvasTool.value) return
     if (!canEditObject(getObject(object.id))) return
     event.evt.preventDefault()
     event.cancelBubble = true
@@ -1177,7 +1455,10 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
 }
 
 const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
-  if (wrapper.getAttr('stageObjectType') !== object.type) rebuildObjectContent(wrapper, object)
+  if (
+    wrapper.getAttr('stageObjectType') !== object.type
+    || (object.type === 'drawing' && wrapper.getAttr('stageDrawingSignature') !== JSON.stringify(object.drawing))
+  ) rebuildObjectContent(wrapper, object)
   const width = Math.max(0.5, object.transform.width) * WORLD_UNIT_PX
   const height = Math.max(0.5, object.transform.height) * WORLD_UNIT_PX
   const multiSelected = isBatchSelection.value && selectedIdSet.value.has(object.id)
@@ -1195,12 +1476,15 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
     scaleY: object.transform.scaleY,
     visible: object.visible,
     draggable: !object.locked
+      && !activeCanvasTool.value
       && canEditObject(object)
       && groupedObjectDirectlySelected
       && (!multiSelected || (!batchMoveBlocked.value && !selectedAncestor)),
     listening: canEditObject(object) || (canTriggerActions.value && object.interactive && ['image', 'button'].includes(object.type)),
   })
-  if (object.type === 'text') {
+  if (object.type === 'drawing') {
+    return
+  } else if (object.type === 'text') {
     wrapper.findOne<Konva.Text>('.theater-object-content')?.setAttrs({
       text: object.text || object.name,
       width,
@@ -1310,6 +1594,22 @@ const handleWheel = (event: Konva.KonvaEventObject<WheelEvent>) => {
 
 const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
   if (!stage) return
+  if (activeCanvasTool.value === 'eraser') return
+  if (isDrawingTool(activeCanvasTool.value) && canEditAllObjects.value && event.evt.button === 0) {
+    const pointer = worldCameraGroup?.getRelativePointerPosition()
+    if (!pointer) return
+    event.evt.preventDefault()
+    drawingSession = {
+      tool: activeCanvasTool.value,
+      start: pointer,
+      current: pointer,
+      points: [pointer.x, pointer.y],
+      shiftKey: event.evt.shiftKey,
+      altKey: event.evt.altKey,
+    }
+    renderDrawingDraft()
+    return
+  }
   if (event.evt.button !== 0 || event.target !== stage) return
   event.evt.preventDefault()
   if (props.store.selection.bulkMode && canEditAllObjects.value) {
@@ -1328,6 +1628,20 @@ const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
 }
 
 const movePan = (event: Konva.KonvaEventObject<PointerEvent>) => {
+  if (drawingSession) {
+    const pointer = worldCameraGroup?.getRelativePointerPosition()
+    if (!pointer) return
+    drawingSession.current = pointer
+    drawingSession.shiftKey = event.evt.shiftKey
+    drawingSession.altKey = event.evt.altKey
+    if (drawingSession.tool === 'pen' || drawingSession.tool === 'highlighter') {
+      const points = drawingSession.points
+      const previous = { x: points[points.length - 2], y: points[points.length - 1] }
+      if (Math.hypot(pointer.x - previous.x, pointer.y - previous.y) >= 2) points.push(pointer.x, pointer.y)
+    }
+    renderDrawingDraft()
+    return
+  }
   if (marqueeStart && stage && selectionRect) {
     const pointer = stage.getPointerPosition()
     if (!pointer) return
@@ -1345,7 +1659,21 @@ const movePan = (event: Konva.KonvaEventObject<PointerEvent>) => {
   props.store.state.camera.y = panOrigin.y + event.evt.clientY - panPointer.y
 }
 
-const stopPan = () => {
+const stopPan = (event?: Konva.KonvaEventObject<PointerEvent>) => {
+  if (drawingSession) {
+    if (event?.type === 'pointercancel') {
+      cancelDrawingSession()
+      return
+    }
+    const session = drawingSession
+    if ((session.tool === 'pen' || session.tool === 'highlighter') && session.points.length === 2) {
+      session.points.push(session.points[0] + 0.01, session.points[1] + 0.01)
+    }
+    const result = drawingResult(session)
+    cancelDrawingSession()
+    props.store.addDrawing(result.drawing, result.transform)
+    return
+  }
   panning = false
   if (!marqueeStart || !selectionRect || !stage) return
   const box = selectionRect.getClientRect({ relativeTo: stage })
@@ -1649,6 +1977,7 @@ onMounted(() => {
   foregroundCameraGroup = new Konva.Group()
   gridGroup = new Konva.Group({ listening: false })
   objectRoot = new Konva.Group()
+  drawingDraftRoot = new Konva.Group({ listening: false })
   transformer = new Konva.Transformer({
     rotateEnabled: true,
     keepRatio: false,
@@ -1670,7 +1999,7 @@ onMounted(() => {
   })
   backgroundSlot = createSurfaceSlot(backgroundCameraGroup, true)
   foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false)
-  worldCameraGroup.add(gridGroup, objectRoot)
+  worldCameraGroup.add(gridGroup, objectRoot, drawingDraftRoot)
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
   foregroundLayer.add(foregroundCameraGroup)
@@ -1698,6 +2027,10 @@ watch(() => props.store.state.liveState, () => {
 }, { deep: true })
 watch(() => props.store.state.persistentObjects, syncObjects, { deep: true })
 watch(() => props.store.state.camera, applyCamera, { deep: true })
+watch(activeCanvasTool, () => {
+  syncObjects()
+  updateTransformer()
+})
 watch(() => [props.syncReady, ...props.permissions], () => {
   const object = selectedObject.value
   if (object && !canEditObject(object)) props.store.clearSelection()
@@ -1727,6 +2060,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointercancel', stopPanelDrag)
   window.removeEventListener('keydown', handleStageShortcut)
   props.store.commitObjectEdit()
+  cancelDrawingSession()
   objectNodes.forEach(releaseObjectMedia)
   releaseStageMedia(backgroundSlot?.source)
   releaseStageMedia(foregroundSlot?.source)
@@ -1738,6 +2072,7 @@ onBeforeUnmount(() => {
   props.store.setBulkSelectionMode(false)
   stage?.destroy()
   stage = null
+  drawingDraftRoot = null
 })
 </script>
 
@@ -1811,8 +2146,18 @@ onBeforeUnmount(() => {
         :title="syncing ? '正在同步' : syncReady ? '后端同步已连接' : '后端同步未连接'"
       />
       <span v-if="canEditAllObjects" class="theater-toolbar-divider" />
+      <StageDrawingToolbar
+        v-if="canEditAllObjects"
+        :tool="activeCanvasTool"
+        :style="drawingStyle"
+        :smoothing="drawingSmoothing"
+        :sides="drawingPolygonSides"
+        @select="selectCanvasTool"
+        @update:style="updateDrawingStyle"
+        @update:smoothing="drawingSmoothing = $event"
+        @update:sides="drawingPolygonSides = $event"
+      />
       <n-button-group v-if="canEditAllObjects" class="theater-stage-object-actions" size="small">
-        <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('shape')"><template #icon><n-icon><Rectangle /></n-icon></template></n-button></template>添加面板</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('text')"><template #icon><n-icon><LetterT /></n-icon></template></n-button></template>添加文字</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('image')"><template #icon><n-icon><Photo /></n-icon></template></n-button></template>添加图片面板</n-tooltip>
         <n-tooltip trigger="hover"><template #trigger><n-button @click="store.addObject('image', true)"><template #icon><n-icon><Pin /></n-icon></template></n-button></template>添加持久图片</n-tooltip>
@@ -1871,7 +2216,13 @@ onBeforeUnmount(() => {
     </header>
 
     <div ref="workspaceRef" class="theater-stage-workspace">
-      <div ref="viewportRef" class="theater-stage-viewport" @dragover.prevent @drop.prevent="handleCanvasDrop">
+      <div
+        ref="viewportRef"
+        class="theater-stage-viewport"
+        :class="{ 'is-drawing': activeCanvasTool && activeCanvasTool !== 'eraser', 'is-erasing': activeCanvasTool === 'eraser' }"
+        @dragover.prevent
+        @drop.prevent="handleCanvasDrop"
+      >
         <div ref="containerRef" class="theater-stage-canvas" />
       </div>
 
@@ -1981,7 +2332,52 @@ onBeforeUnmount(() => {
                 <n-button size="small" quaternary type="error" :disabled="!selectedObject.image" @click="clearImage({ kind: 'object', objectId: selectedObject.id })">清除</n-button>
               </div>
             </template>
-            <template v-if="selectedObject.type !== 'image' && selectedObject.type !== 'group'">
+            <template v-if="selectedObject.type === 'drawing' && selectedObject.drawing">
+              <label>描边</label>
+              <n-color-picker v-model:value="selectedObject.drawing.style.stroke" :show-alpha="false" :modes="['hex']" size="small" />
+              <label>粗细</label>
+              <div class="theater-drawing-inspector-row">
+                <n-slider v-model:value="selectedObject.drawing.style.strokeWidth" :min="1" :max="32" :step="1" />
+                <span>{{ selectedObject.drawing.style.strokeWidth }} px</span>
+              </div>
+              <label>透明度</label>
+              <div class="theater-drawing-inspector-row">
+                <n-slider
+                  :value="Math.round(selectedObject.drawing.style.opacity * 100)"
+                  :min="5"
+                  :max="100"
+                  :step="5"
+                  @update:value="selectedObject.drawing.style.opacity = $event / 100"
+                />
+                <span>{{ Math.round(selectedObject.drawing.style.opacity * 100) }}%</span>
+              </div>
+              <template v-if="selectedObject.drawing.tool !== 'pen' && selectedObject.drawing.tool !== 'highlighter'">
+                <label>线型</label>
+                <n-select v-model:value="selectedObject.drawing.style.dash" :options="drawingDashOptions" size="small" />
+              </template>
+              <template v-if="['rectangle', 'ellipse', 'triangle', 'polygon'].includes(selectedObject.drawing.tool)">
+                <n-checkbox
+                  :checked="selectedObject.drawing.style.fill !== null"
+                  @update:checked="toggleSelectedDrawingFill"
+                >填充</n-checkbox>
+                <n-color-picker
+                  v-if="selectedObject.drawing.style.fill !== null"
+                  v-model:value="selectedObject.drawing.style.fill"
+                  :show-alpha="false"
+                  :modes="['hex']"
+                  size="small"
+                />
+              </template>
+              <template v-if="selectedObject.drawing.tool === 'pen' || selectedObject.drawing.tool === 'highlighter'">
+                <label>平滑度</label>
+                <n-slider v-model:value="selectedObject.drawing.smoothing" :min="0" :max="0.8" :step="0.05" />
+              </template>
+              <template v-if="selectedObject.drawing.tool === 'polygon'">
+                <label>边数</label>
+                <n-input-number v-model:value="selectedObject.drawing.sides" :min="5" :max="12" />
+              </template>
+            </template>
+            <template v-if="selectedObject.type !== 'image' && selectedObject.type !== 'group' && selectedObject.type !== 'drawing'">
               <label>颜色</label>
               <n-input v-model:value="selectedObject.fill" />
             </template>
@@ -2109,7 +2505,7 @@ onBeforeUnmount(() => {
             @drop.prevent="handleLayerDrop($event, row.object.id)"
           >
             <n-icon class="theater-layer-row__grip"><GripVertical /></n-icon>
-            <span class="theater-layer-row__type">{{ row.object.type === 'group' ? '组' : row.object.type === 'text' ? '字' : row.object.type === 'image' ? '图' : row.object.type === 'button' ? '钮' : '面' }}</span>
+            <span class="theater-layer-row__type">{{ row.object.type === 'group' ? '组' : row.object.type === 'drawing' ? '绘' : row.object.type === 'text' ? '字' : row.object.type === 'image' ? '图' : row.object.type === 'button' ? '钮' : '物' }}</span>
             <span class="theater-layer-row__name">{{ row.object.name }}</span>
             <small v-if="store.isPersistentObject(row.object.id)">持久</small>
           </button>
@@ -2171,6 +2567,8 @@ onBeforeUnmount(() => {
 .theater-stage-zoom { width: 38px; flex: 0 0 38px; color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; text-align: right; }
 .theater-stage-workspace { position: relative; min-height: 0; flex: 1; overflow: hidden; }
 .theater-stage-viewport { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; background: var(--sc-bg-page, #141418); }
+.theater-stage-viewport.is-drawing :deep(canvas) { cursor: crosshair !important; }
+.theater-stage-viewport.is-erasing :deep(canvas) { cursor: cell !important; }
 .theater-stage-canvas { position: absolute; inset: 0; }
 .theater-floating-panel {
   position: absolute; z-index: 10; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
@@ -2235,6 +2633,8 @@ onBeforeUnmount(() => {
 .theater-layer-row__name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .theater-layer-row small { color: #eab308; font-size: 9px; }
 .theater-inspector { display: grid; gap: 8px; padding: 10px; border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); }
+.theater-drawing-inspector-row { display: grid; grid-template-columns: minmax(0, 1fr) 42px; align-items: center; gap: 8px; }
+.theater-drawing-inspector-row span { color: var(--sc-fg-muted, #71717a); font-size: 10px; text-align: right; }
 .theater-inspector-actions, .theater-action-add { display: flex; flex-wrap: wrap; gap: 4px; }
 .theater-action-row { display: grid; gap: 4px; padding: 6px; border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); border-radius: 6px; }
 .theater-action-row small { color: var(--sc-text-secondary, #b5b5c5); font-size: 9px; }
