@@ -701,6 +701,13 @@ const selectObject = (objectId: string | null, additive = false) => {
   nextTick(updateTransformer)
 }
 
+const openObjectInspector = (objectId: string) => {
+  if (!canEditObject(getObject(objectId))) return
+  const keepBatchSelection = props.store.selection.bulkMode && selectedIdSet.value.has(objectId)
+  if (!keepBatchSelection) selectObject(objectId)
+  inspectorPanelOpen.value = true
+}
+
 const toggleBulkSelectionMode = () => {
   if (!canEditAllObjects.value) return
   props.store.setBulkSelectionMode(!props.store.selection.bulkMode)
@@ -1249,6 +1256,7 @@ const createObjectNode = (object: StageObject) => {
   wrapper.setAttr('stageObjectId', object.id)
   rebuildObjectContent(wrapper, object)
   wrapper.on('pointerdown', (event) => {
+    if (event.evt.button !== 0) return
     const current = getObject(object.id)
     if (activeCanvasTool.value === 'eraser') {
       if (!canEditAllObjects.value || current?.type !== 'drawing') return
@@ -1288,7 +1296,7 @@ const createObjectNode = (object: StageObject) => {
     if (!canEditObject(getObject(object.id))) return
     event.evt.preventDefault()
     event.cancelBubble = true
-    selectObject(object.id)
+    openObjectInspector(object.id)
   })
   wrapper.on('dragstart', () => {
     if (!canEditObject(getObject(object.id))) return
@@ -1989,6 +1997,14 @@ onMounted(() => {
     anchorFill: '#0f172a',
     anchorSize: 9,
   })
+  transformer.on('contextmenu', (event) => {
+    if (activeCanvasTool.value) return
+    const selectedId = props.store.state.selectedObjectId
+    if (!selectedId || !canEditObject(getObject(selectedId))) return
+    event.evt.preventDefault()
+    event.cancelBubble = true
+    openObjectInspector(selectedId)
+  })
   selectionRect = new Konva.Rect({
     visible: false,
     listening: false,
@@ -2039,7 +2055,6 @@ watch(() => [props.syncReady, ...props.permissions], () => {
 })
 watch(() => props.store.selection.selectedIds.slice(), () => {
   resourceError.value = ''
-  if (props.store.selection.selectedIds.length) inspectorPanelOpen.value = true
   syncObjects()
   updateTransformer()
 })
@@ -2117,11 +2132,15 @@ onBeforeUnmount(() => {
         </n-tooltip>
         <n-tooltip v-if="canEditAllObjects || canEditDelegatedObjects" trigger="hover">
           <template #trigger>
-            <n-button :class="{ 'is-active': inspectorPanelOpen }" aria-label="切换组件编辑面板" @click="togglePanel('inspector')">
+            <n-button
+              :class="{ 'is-active': inspectorPanelOpen }"
+              :aria-label="inspectorPanelOpen ? '隐藏组件编辑面板' : '显示组件编辑面板'"
+              @click="togglePanel('inspector')"
+            >
               <template #icon><n-icon><Components /></n-icon></template>
             </n-button>
           </template>
-          组件编辑
+          {{ inspectorPanelOpen ? '隐藏组件编辑面板' : '显示组件编辑面板' }}
         </n-tooltip>
         <n-tooltip v-if="canEditAllObjects || canEditDelegatedObjects" trigger="hover">
           <template #trigger>
