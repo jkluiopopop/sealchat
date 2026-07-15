@@ -9,10 +9,31 @@ import { usePushNotificationStore } from '@/stores/pushNotification';
 import { useIFormStore } from '@/stores/iform';
 import { useAudioStudioStore } from '@/stores/audioStudio';
 import AudioDrawer from '@/components/audio/AudioDrawer.vue';
+import ChatHeader from '@/views/components/header.vue';
+import ChatSidebar from '@/views/components/sidebar.vue';
 import { formatSplitChannelDisplayName, type SplitChannelDisplayLike } from '@/views/split/splitChannelDisplay';
 import type { SplitSessionPaneSnapshot } from '@/utils/splitSessionStorage';
+import { TheaterBridgeClient } from '@/views/theater/bridge/TheaterBridgeClient';
+import {
+  THEATER_BRIDGE_VERSION,
+  THEATER_CHAT_CAPABILITIES,
+  type ChatCharacterReadResult,
+  type ChatCharactersSnapshotPayload,
+  type ChatComposerInsertPayload,
+  type ChatComposerInsertResult,
+  type ChatMessageSendPayload,
+  type ChatMessageSendResult,
+  type InitializePayload,
+  type SelectCharacterPayload,
+  type SelectCharacterResult,
+  type SelectCharacterVariantPayload,
+  type SceneAppliedPayload,
+  type StageSceneReadResult,
+} from '@/views/theater/bridge/theater-bridge-protocol';
+import { PostMessageTransport } from '@/views/theater/bridge/theater-bridge-transport';
+import { getCharacterSnapshotContentSignature } from '@/views/theater/bridge/theater-character-snapshot';
 
-type PaneId = 'A' | 'B';
+type PaneId = 'A' | 'B' | 'theater-chat';
 type ConnectState = 'connecting' | 'connected' | 'disconnected' | 'reconnecting';
 type PresenceData = {
   lastPing: number;
@@ -63,11 +84,27 @@ const initialAudioOwner = computed(() => {
   if (route.query.audioOwner === undefined) return true;
   return route.query.audioOwner === '1' || route.query.audioOwner === 'true';
 });
+const theaterMode = computed(() => route.query.mode === 'theater');
+const theaterSessionId = computed(() => (typeof route.query.sessionId === 'string' ? route.query.sessionId.trim() : ''));
 const chatViewRef = ref<any>(null);
+
+const theaterSidebarVisible = ref(false);
+const handleTheaterHeaderSidebarToggle = () => {
+  theaterSidebarVisible.value = !theaterSidebarVisible.value;
+};
 const initializing = ref(false);
 const restoringSession = ref(false);
 const roleOptions = ref<RoleOption[]>([]);
 const audioOwner = ref(initialAudioOwner.value);
+let theaterBridgeClient: TheaterBridgeClient | null = null;
+let theaterBridgeInitialized = false;
+let theaterCharacterRevision = 0;
+let theaterCharacterUpdatedAt = 0;
+let theaterCharacterPublishChain = Promise.resolve();
+let theaterLastCharacterSnapshot: ChatCharactersSnapshotPayload | null = null;
+let theaterLastCharacterSnapshotSignature = '';
+let theaterGrantedPermissions = new Set<string>();
+let theaterPublishedContext = '';
 
 const isOwnerOrAdmin = computed(() => {
   const worldId = chat.currentWorldId;
@@ -129,6 +166,245 @@ const postToParent = (payload: any) => {
   } catch (e) {
     console.warn('[embed] postMessage failed', e);
   }
+};
+
+const stopTheaterBridge = () => {
+  theaterBridgeInitialized = false;
+  theaterGrantedPermissions = new Set();
+  theaterLastCharacterSnapshot = null;
+  theaterLastCharacterSnapshotSignature = '';
+  theaterPublishedContext = '';
+  theaterBridgeClient?.disconnect();
+  theaterBridgeClient = null;
+};
+
+const publishTheaterContext = () => {
+  if (!theaterMode.value || !theaterSessionId.value) return;
+  const worldId = String(chat.currentWorldId || '').trim();
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!worldId || !channelId) return;
+  const signature = `${worldId}:${channelId}`;
+  if (signature === theaterPublishedContext) return;
+  theaterPublishedContext = signature;
+  postToParent({
+    type: 'sealchat.theater.context',
+    sessionId: theaterSessionId.value,
+    worldId,
+    channelId,
+  });
+};
+
+const handleTheaterChannelSwitch = () => {
+  publishTheaterContext();
+};
+
+const buildTheaterCharacterSnapshot = async (): Promise<ChatCharactersSnapshotPayload> => {
+  const handler = chatViewRef.value?.getCharactersForTheater;
+  if (typeof handler !== 'function') {
+    throw new Error('聊天角色快照流程尚未就绪');
+  }
+  const revision = theaterCharacterRevision + 1;
+  const updatedAt = Math.max(Date.now(), theaterCharacterUpdatedAt + 1);
+  theaterCharacterRevision = revision;
+  theaterCharacterUpdatedAt = updatedAt;
+  const characters = await handler({ revision, updatedAt });
+  const activeIdentityId = characters.find((character: { isActive?: boolean }) => character.isActive)?.identityId || null;
+  return { revision, updatedAt, activeIdentityId, characters };
+};
+
+const queueTheaterCharacterPublish = (
+  event: 'updated' | 'selected' | 'appearance' | 'variant',
+  identityId?: string | null,
+  variantId?: string | null,
+) => {
+  const task = theaterCharacterPublishChain.then(async () => {
+    const client = theaterBridgeClient;
+    if (!client || !theaterBridgeInitialized) return null;
+    const snapshot = await buildTheaterCharacterSnapshot();
+    const signature = getCharacterSnapshotContentSignature(snapshot);
+    if (signature === theaterLastCharacterSnapshotSignature && theaterLastCharacterSnapshot) {
+      return theaterLastCharacterSnapshot;
+    }
+    theaterLastCharacterSnapshot = snapshot;
+    theaterLastCharacterSnapshotSignature = signature;
+    if (event === 'selected' && identityId) {
+      client.emit('stage', 'chat.character.selected', { ...snapshot, identityId });
+    } else if (event === 'variant' && identityId) {
+      client.emit('stage', 'chat.character.variant.selected', {
+        ...snapshot,
+        identityId,
+        variantId: variantId || null,
+      });
+    } else if (event === 'appearance') {
+      client.emit('stage', 'chat.character.appearance.updated', {
+        ...snapshot,
+        identityId: identityId || null,
+      });
+    } else {
+      client.emit('stage', 'chat.character.updated', snapshot);
+    }
+    return snapshot;
+  }).catch((error) => {
+    if (import.meta.env.DEV || route.query.bridgeDebug === '1') {
+      console.warn('[theater-bridge:chat] character publish failed', error);
+    }
+    return null;
+  });
+  theaterCharacterPublishChain = task.then(() => undefined);
+  return task;
+};
+
+const startTheaterBridge = async () => {
+  if (!theaterMode.value || theaterBridgeClient) return;
+  const worldId = initialWorldId.value.trim();
+  const channelId = initialChannelId.value.trim();
+  const sessionId = theaterSessionId.value;
+  if (!worldId || !channelId || !sessionId || window.parent === window) return;
+  if (chat.currentWorldId !== worldId || String(chat.curChannel?.id || '') !== channelId) {
+    console.warn('[theater-bridge] chat context does not match iframe context');
+    return;
+  }
+
+  const debug = import.meta.env.DEV || route.query.bridgeDebug === '1';
+  const transport = new PostMessageTransport({
+    receiveWindow: window,
+    targetWindow: () => window.parent,
+    expectedSource: () => window.parent,
+    targetOrigin: window.location.origin,
+    expectedOrigin: window.location.origin,
+    onRejected: (reason, error) => {
+      if (debug) console.warn('[theater-bridge:chat] rejected', reason, error || '');
+    },
+  });
+  const client = new TheaterBridgeClient({
+    endpoint: 'chat',
+    context: { worldId, channelId, sessionId },
+    transport,
+    capabilities: THEATER_CHAT_CAPABILITIES,
+    debug,
+  });
+  client.onSystem<InitializePayload>('system.initialize', (payload, message) => {
+    if (
+      message.source !== 'host'
+      || message.target !== 'chat'
+      || payload.selectedVersion !== THEATER_BRIDGE_VERSION
+      || payload.worldId !== worldId
+      || payload.channelId !== channelId
+    ) return;
+    theaterGrantedPermissions = new Set(payload.permissions);
+    client.setRemoteCapabilities('stage', payload.capabilities);
+    client.sendSystem('host', 'system.initialized', {
+      endpoint: 'chat',
+      selectedVersion: THEATER_BRIDGE_VERSION,
+      capabilities: [...THEATER_CHAT_CAPABILITIES],
+    });
+    theaterBridgeInitialized = true;
+    queueTheaterCharacterPublish('updated');
+    window.setTimeout(() => {
+      void client.request<Record<string, never>, StageSceneReadResult>('stage', 'stage.scene.read', {})
+        .then((result) => {
+          if (debug && result.ok) console.debug('[theater-bridge:chat] stage scene ready', result.state.activeSceneId);
+        })
+        .catch((error) => {
+          if (debug) console.warn('[theater-bridge:chat] stage.scene.read failed', error);
+        });
+    }, 0);
+  });
+  client.onEvent<SceneAppliedPayload>('stage.scene.applied', (payload) => {
+    if (debug) console.debug('[theater-bridge:chat] stage.scene.applied', payload);
+  });
+  client.onCommand<ChatMessageSendPayload, ChatMessageSendResult>('chat.message.send', async (payload, bridgeMessage) => {
+    if (bridgeMessage.source !== 'stage' || bridgeMessage.target !== 'chat') {
+      return { ok: false, error: { code: 'INVALID_SOURCE', message: 'chat.message.send 仅接受舞台端命令' } };
+    }
+    if (payload.channelId && payload.channelId !== channelId) {
+      return { ok: false, error: { code: 'CHANNEL_MISMATCH', message: '消息频道与小剧场上下文不一致' } };
+    }
+    if (String(chat.curChannel?.id || '') !== channelId || chat.currentWorldId !== worldId) {
+      return { ok: false, error: { code: 'CONTEXT_CHANGED', message: '聊天已离开小剧场绑定频道' } };
+    }
+    const handler = chatViewRef.value?.sendMessageForTheater;
+    if (typeof handler !== 'function') {
+      return { ok: false, error: { code: 'CHAT_UNAVAILABLE', message: '聊天发送流程尚未就绪' } };
+    }
+    return handler({ ...payload, channelId });
+  });
+  client.onCommand<ChatComposerInsertPayload, ChatComposerInsertResult>('chat.composer.insert', (payload, bridgeMessage) => {
+    if (bridgeMessage.source !== 'stage' || bridgeMessage.target !== 'chat') {
+      return { ok: false, error: { code: 'INVALID_SOURCE', message: 'chat.composer.insert 仅接受舞台端命令' } };
+    }
+    if (String(chat.curChannel?.id || '') !== channelId || chat.currentWorldId !== worldId) {
+      return { ok: false, error: { code: 'CONTEXT_CHANGED', message: '聊天已离开小剧场绑定频道' } };
+    }
+    const handler = chatViewRef.value?.insertComposerForTheater;
+    if (typeof handler !== 'function') {
+      return { ok: false, error: { code: 'CHAT_UNAVAILABLE', message: '聊天输入流程尚未就绪' } };
+    }
+    return handler(payload);
+  });
+  client.onCommand<Record<string, never>, ChatCharacterReadResult>('chat.character.read', async (_payload, bridgeMessage) => {
+    if (bridgeMessage.source !== 'stage' || bridgeMessage.target !== 'chat') {
+      return { ok: false, error: { code: 'INVALID_SOURCE', message: 'chat.character.read 仅接受舞台端命令' } };
+    }
+    if (!theaterGrantedPermissions.has('chat.character.read')) {
+      return { ok: false, error: { code: 'PERMISSION_DENIED', message: '缺少权限: chat.character.read' } };
+    }
+    if (String(chat.curChannel?.id || '') !== channelId || chat.currentWorldId !== worldId) {
+      return { ok: false, error: { code: 'CONTEXT_CHANGED', message: '聊天已离开小剧场绑定频道' } };
+    }
+    return { ok: true, snapshot: await buildTheaterCharacterSnapshot() };
+  });
+  client.onCommand<SelectCharacterPayload, SelectCharacterResult>('chat.character.select', async (payload, bridgeMessage) => {
+    if (bridgeMessage.source !== 'stage' || bridgeMessage.target !== 'chat') {
+      return { ok: false, error: { code: 'INVALID_SOURCE', message: 'chat.character.select 仅接受舞台端命令' } };
+    }
+    if (!theaterGrantedPermissions.has('chat.character.select')) {
+      return { ok: false, error: { code: 'PERMISSION_DENIED', message: '缺少权限: chat.character.select' } };
+    }
+    if (String(chat.curChannel?.id || '') !== channelId || chat.currentWorldId !== worldId) {
+      return { ok: false, error: { code: 'CONTEXT_CHANGED', message: '聊天已离开小剧场绑定频道' } };
+    }
+    const handler = chatViewRef.value?.selectCharacterForTheater;
+    if (typeof handler !== 'function') {
+      return { ok: false, error: { code: 'CHAT_UNAVAILABLE', message: '聊天角色选择流程尚未就绪' } };
+    }
+    const result = await handler(payload);
+    if (!result.ok) return result;
+    const snapshot = await queueTheaterCharacterPublish('selected', payload.identityId);
+    if (!snapshot) {
+      return { ok: false, error: { code: 'SNAPSHOT_UNAVAILABLE', message: '角色已切换，但角色快照生成失败' } };
+    }
+    return { ok: true, snapshot };
+  });
+  client.onCommand<SelectCharacterVariantPayload, SelectCharacterResult>('chat.character.variant.select', async (payload, bridgeMessage) => {
+    if (bridgeMessage.source !== 'stage' || bridgeMessage.target !== 'chat') {
+      return { ok: false, error: { code: 'INVALID_SOURCE', message: 'chat.character.variant.select 仅接受舞台端命令' } };
+    }
+    if (!theaterGrantedPermissions.has('chat.character.variant.select')) {
+      return { ok: false, error: { code: 'PERMISSION_DENIED', message: '缺少权限: chat.character.variant.select' } };
+    }
+    if (String(chat.curChannel?.id || '') !== channelId || chat.currentWorldId !== worldId) {
+      return { ok: false, error: { code: 'CONTEXT_CHANGED', message: '聊天已离开小剧场绑定频道' } };
+    }
+    const handler = chatViewRef.value?.selectCharacterVariantForTheater;
+    if (typeof handler !== 'function') {
+      return { ok: false, error: { code: 'CHAT_UNAVAILABLE', message: '聊天差分选择流程尚未就绪' } };
+    }
+    const result = await handler(payload);
+    if (!result.ok) return result;
+    const snapshot = await queueTheaterCharacterPublish('variant', payload.identityId, payload.variantId);
+    if (!snapshot) {
+      return { ok: false, error: { code: 'SNAPSHOT_UNAVAILABLE', message: '差分已切换，但角色快照生成失败' } };
+    }
+    return { ok: true, snapshot };
+  });
+  await client.connect();
+  theaterBridgeClient = client;
+  client.sendSystem('host', 'system.ready', {
+    endpoint: 'chat',
+    supportedVersions: [THEATER_BRIDGE_VERSION],
+    capabilities: [...THEATER_CHAT_CAPABILITIES],
+  });
 };
 
 const normalizeWorldOptions = (options: any): Array<{ value: string; label: string }> => {
@@ -582,9 +858,31 @@ watch(
 
 watch(
   () => [currentIdentityId.value, currentIdentityVariantId.value] as const,
-  () => {
+  ([identityId, variantId], previous) => {
     if (restoringSession.value) return;
     postStateThrottled('sealchat.embed.state');
+    if (!theaterMode.value || !theaterBridgeInitialized) return;
+    const [previousIdentityId, previousVariantId] = previous || ['', ''];
+    if (identityId !== previousIdentityId && identityId) {
+      queueTheaterCharacterPublish('selected', identityId, variantId);
+    } else if (identityId && variantId !== previousVariantId) {
+      queueTheaterCharacterPublish('variant', identityId, variantId);
+    }
+  },
+);
+
+watch(
+  () => {
+    const channelId = String(chat.curChannel?.id || '').trim();
+    if (!channelId) return '';
+    return JSON.stringify({
+      identities: toRaw(chat.channelIdentities[channelId] || []),
+      variants: toRaw(chat.channelIdentityVariants[channelId] || {}),
+    });
+  },
+  () => {
+    if (!theaterMode.value || !theaterBridgeInitialized) return;
+    queueTheaterCharacterPublish('appearance', currentIdentityId.value || null);
   },
 );
 
@@ -666,14 +964,23 @@ watch(
   { immediate: true },
 );
 
-onMounted(() => {
-  initialize();
+onMounted(async () => {
+  (chatEvent as any).on('channel-switch-to', handleTheaterChannelSwitch);
   window.addEventListener('message', handleMessage);
   document.addEventListener('pointerdown', handleInteraction, { capture: true });
   document.addEventListener('keydown', handleInteraction, { capture: true });
+  await initialize();
+  try {
+    await startTheaterBridge();
+  } catch (error) {
+    console.warn('[theater-bridge] chat startup failed', error);
+    stopTheaterBridge();
+  }
 });
 
 onBeforeUnmount(() => {
+  (chatEvent as any).off('channel-switch-to', handleTheaterChannelSwitch);
+  stopTheaterBridge();
   chat.setChannelSessionRestoreFilterOverride('all');
   window.removeEventListener('message', handleMessage);
   document.removeEventListener('pointerdown', handleInteraction, { capture: true } as any);
@@ -683,15 +990,47 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="sc-embed-root">
-    <Chat ref="chatViewRef" @drawer-show="handleDrawerShow" />
+    <ChatHeader
+      v-if="theaterMode"
+      :sidebar-collapsed="true"
+      @toggle-sidebar="handleTheaterHeaderSidebarToggle"
+    />
+    <Chat ref="chatViewRef" class="sc-embed-chat" @drawer-show="handleDrawerShow" />
     <AudioDrawer />
+    <n-drawer v-model:show="theaterSidebarVisible" placement="left" :width="'min(360px, 88vw)'">
+      <n-drawer-content closable body-content-style="padding: 0">
+        <template #header>频道选择</template>
+        <ChatSidebar />
+      </n-drawer-content>
+    </n-drawer>
   </div>
 </template>
 
 <style scoped>
 .sc-embed-root {
   height: 100vh;
-  width: 100vw;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--sc-bg-page);
+}
+
+:global(html),
+:global(body),
+:global(#app) {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--sc-bg-page);
+}
+
+.sc-embed-chat {
+  min-height: 0;
+  flex: 1;
+  height: auto !important;
 }
 </style>

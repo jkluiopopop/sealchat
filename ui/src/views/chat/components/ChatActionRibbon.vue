@@ -9,6 +9,7 @@ import {
   Heartbeat as BridgeStatusIcon,
   Link as LinkIcon,
   LayoutBoardSplit as SplitIcon,
+  Presentation as TheaterIcon,
   MoodSmile as EmojiIcon,
   Palette,
   Photo as PhotoIcon,
@@ -49,6 +50,8 @@ interface Props {
   importActive?: boolean
   splitEnabled?: boolean
   splitActive?: boolean
+  theaterEnabled?: boolean
+  theaterActive?: boolean
   icOocSplitEnabled?: boolean
   icOocSplitActive?: boolean
   stickyNoteEnabled?: boolean
@@ -75,6 +78,7 @@ interface Emits {
   (e: 'open-channel-images'): void
   (e: 'open-battle-summary'): void
   (e: 'open-split'): void
+  (e: 'open-theater'): void
   (e: 'open-ic-ooc-split', side: 'left' | 'right'): void
   (e: 'toggle-sticky-note'): void
   (e: 'open-webhook'): void
@@ -105,6 +109,7 @@ interface ActionButton {
   activeKey: keyof Props
   template?: 'default' | 'split-dual'
   disabled?: () => boolean
+  disabledReason?: string
 }
 
 const SPLIT_DUAL_MORE_LEFT_KEY = 'ic-ooc-split:left'
@@ -140,7 +145,19 @@ const allActionButtons = computed<ActionButton[]>(() => {
   // 消息归档 always at the end
   buttons.push({ key: 'archive', label: '消息归档', icon: ArchiveIcon, emitEvent: 'open-archive', activeKey: 'archiveActive' })
 
-  // 分屏入口（置于“消息归档”之后）
+  // 小剧场入口紧邻且位于分屏之前
+  if (props.theaterEnabled !== undefined) {
+    buttons.push({
+      key: 'theater',
+      label: '小剧场',
+      icon: TheaterIcon,
+      emitEvent: 'open-theater',
+      activeKey: 'theaterActive',
+      disabled: () => props.theaterEnabled === false,
+      disabledReason: '请先进入频道',
+    })
+  }
+
   if (props.splitEnabled !== false) {
     buttons.push({ key: 'split', label: '分屏', icon: SplitIcon, emitEvent: 'open-split', activeKey: 'splitActive' })
   }
@@ -533,6 +550,7 @@ const cycleIcFilter = () => {
               class="ribbon-action-button"
               :class="{ 'is-active': props[button.activeKey] }"
               :disabled="button.disabled?.() === true"
+              :title="button.disabled?.() === true ? button.disabledReason : undefined"
               @click="handleButtonClick(button)"
             >
               <template #icon>

@@ -529,7 +529,9 @@ const handleWorldSelect = async (value: string) => {
   if (!value) return;
   try {
     await chat.switchWorld(value, { force: true });
-    router.push({ name: 'home' });
+    if (router.currentRoute.value.query.mode !== 'theater') {
+      router.push({ name: 'home' });
+    }
     // 检查是否需要显示编辑通知弹窗
     checkEditNoticeForWorld(value);
   } catch (error) {

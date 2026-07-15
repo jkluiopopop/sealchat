@@ -1575,7 +1575,7 @@ export const useChatStore = defineStore({
               this.connectReady(epoch);
             } else if (msg.op === 0) {
               // Opcode.EVENT
-              const e = msg as Event;
+              const e = (msg.body || msg) as Event;
               this.eventDispatch(e);
             } else if (msg.op === 2) {
               this.handlePong();

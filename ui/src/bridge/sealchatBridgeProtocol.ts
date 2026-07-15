@@ -35,6 +35,46 @@ export interface BridgeRoleSnapshot {
   activeVariantDisplayName?: string
   activeVariantColor?: string
   activeVariantAvatarUrl?: string
+  isActive: boolean
+  revision: number
+  updatedAt: number
+  baseAppearance: BridgeCharacterAppearance
+  variants: BridgeCharacterVariant[]
+  resolvedAppearance: BridgeCharacterAppearance
+  extensions: Record<string, unknown>
+}
+
+export interface BridgeImageRef {
+  resourceId: string
+  url: string
+  alt?: string
+}
+
+export interface BridgeCharacterDecoration {
+  id: string
+  resource: BridgeImageRef
+  enabled: boolean
+  zIndex: number
+  settings: Record<string, unknown>
+  extensions: Record<string, unknown>
+}
+
+export interface BridgeCharacterAppearance {
+  displayName: string
+  color: string
+  avatar: BridgeImageRef | null
+  decorations: BridgeCharacterDecoration[]
+  extensions: Record<string, unknown>
+}
+
+export interface BridgeCharacterVariant {
+  variantId: string
+  keyword: string
+  selectorEmoji: string
+  note: string
+  enabled: boolean
+  appearancePatch: Partial<BridgeCharacterAppearance>
+  extensions: Record<string, unknown>
 }
 
 export interface SealChatBridgeRolesSnapshot {

@@ -145,6 +145,8 @@ import MessageImageEditor from '@/components/chat/MessageImageEditor.vue';
 import { ensurePinyinLoaded, matchKeywords, matchText, type KeywordMatchResult } from '@/utils/pinyinMatch';
 import { generateIFormEmbedLink } from '@/utils/iformEmbedLink';
 import { buildMessageCursor } from '@/utils/messageCursor';
+import { buildRoleSnapshot } from '@/bridge/sealchatBridgeSerializer';
+import type { BridgeRoleSnapshot } from '@/bridge/sealchatBridgeProtocol';
 import { resolveDeletedChannelFallbackId } from '@/stores/chatChannelSelection';
 import {
   buildInputHistorySignature,
@@ -158,6 +160,12 @@ import { shouldMergeNeighborMessages } from './messageMerge';
 import { useRobustInfiniteScroll } from '@/composables/useRobustInfiniteScroll';
 import { shouldResetMentionOptionsOnSearchStart, sortMentionableMembersByMode } from './mentionOptionOrdering';
 import { resolveInterjectTargetMode, shouldAllowInterject } from './interjectFlow';
+import {
+  hasTheaterComposerDraft,
+  shouldResolveTheaterIdentityShortcut,
+  validateTheaterCharacter,
+  validateTheaterVariant,
+} from './theater-chat-guards';
 
 const EmojiPickerModal = defineAsyncComponent(() => import('./components/EmojiPickerModal.vue'));
 
@@ -192,7 +200,12 @@ const isEditingCurrentChannel = computed(() => {
 });
 
 const isEmbedMode = computed(() => route.path === '/embed');
+const isTheaterEmbedMode = computed(() => isEmbedMode.value && route.query.mode === 'theater');
 const splitEntryEnabled = computed(() => route.path !== '/embed');
+const theaterEntryEnabled = computed(() => {
+  if (['/embed', '/split', '/theater'].includes(route.path)) return false;
+  return !!chat.currentWorldId && !!chat.curChannel?.id;
+});
 
 let stRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 const ST_REFRESH_DELAY = 1000;
@@ -244,6 +257,19 @@ const openSplitView = async () => {
   const currentChannelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
   const worldId = chat.currentWorldId ? String(chat.currentWorldId) : '';
   await openSplitRoute(worldId, worldId, currentChannelId, '');
+};
+
+const openTheaterView = async () => {
+  const worldId = chat.currentWorldId ? String(chat.currentWorldId) : '';
+  const channelId = chat.curChannel?.id ? String(chat.curChannel.id) : '';
+  if (!worldId || !channelId) {
+    message.warning('请先进入频道');
+    return;
+  }
+  await router.push({
+    name: 'theater',
+    query: { worldId, channelId },
+  });
 };
 
 const openIcOocSplitView = async (side: 'left' | 'right') => {
@@ -480,6 +506,147 @@ const refreshPresenceForShell = async (silent = true) => {
   }
 };
 
+interface TheaterMessageSendRequest {
+  content: string;
+  channelId?: string;
+  characterId?: string;
+}
+
+interface TheaterComposerInsertRequest {
+  content: string;
+}
+
+interface TheaterCharacterSnapshotRequest {
+  revision: number;
+  updatedAt: number;
+}
+
+interface TheaterCharacterSelectRequest {
+  identityId: string;
+}
+
+interface TheaterCharacterVariantSelectRequest {
+  identityId: string;
+  variantId: string | null;
+}
+
+const sendMessageForTheater = async (payload: TheaterMessageSendRequest) => {
+  const currentChannelId = String(chat.curChannel?.id || '').trim();
+  if (!currentChannelId || (payload.channelId && payload.channelId !== currentChannelId)) {
+    return { ok: false as const, error: { code: 'CHANNEL_MISMATCH', message: '聊天频道与小剧场上下文不一致' } };
+  }
+  if (spectatorInputDisabled.value) {
+    return { ok: false as const, error: { code: 'PERMISSION_DENIED', message: '当前频道不允许发送消息' } };
+  }
+  if (isEditing.value) {
+    return { ok: false as const, error: { code: 'COMPOSER_BUSY', message: '正在编辑消息，无法执行舞台发送' } };
+  }
+  if (chat.connectState !== 'connected') {
+    return { ok: false as const, error: { code: 'CHAT_DISCONNECTED', message: '聊天尚未连接' } };
+  }
+  if (hasTheaterComposerDraft({
+    meaningfulText: isContentMeaningful(inputMode.value, textToSend.value),
+    inlineImageCount: inlineImages.size,
+  })) {
+    return { ok: false as const, error: { code: 'COMPOSER_BUSY', message: '输入框已有草稿，未覆盖现有内容' } };
+  }
+
+  let identityIdOverride: string | undefined;
+  if (payload.characterId) {
+    const identities = await chat.loadChannelIdentities(currentChannelId, false);
+    const characterError = validateTheaterCharacter(identities, payload.characterId);
+    if (characterError) return characterError;
+    identityIdOverride = payload.characterId;
+  }
+
+  inputMode.value = 'plain';
+  textToSend.value = payload.content;
+  const outcome = await performSend({ identityIdOverride });
+  return outcome || {
+    ok: false as const,
+    error: { code: 'MESSAGE_SEND_REJECTED', message: '聊天发送流程拒绝了消息' },
+  };
+};
+
+const insertComposerForTheater = (payload: TheaterComposerInsertRequest) => {
+  if (spectatorInputDisabled.value) {
+    return { ok: false as const, error: { code: 'PERMISSION_DENIED', message: '当前频道不允许编辑消息草稿' } };
+  }
+  insertComposerText(payload.content);
+  return { ok: true as const };
+};
+
+const getCharactersForTheater = async (
+  request: TheaterCharacterSnapshotRequest,
+): Promise<BridgeRoleSnapshot[]> => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  if (!channelId) return [];
+  const identities = await chat.loadChannelIdentities(channelId, false);
+  await chat.loadChannelIdentityVariants(channelId, false);
+  const activeIdentityId = chat.getActiveIdentityId(channelId);
+  return identities.map((identity) => {
+    const selectedVariant = chat.getActiveIdentityVariant(channelId, identity.id);
+    const activeVariant = selectedVariant?.enabled === false ? null : selectedVariant;
+    return buildRoleSnapshot({
+      identity,
+      variant: activeVariant,
+      variants: chat.getIdentityVariants(channelId, identity.id),
+      resolvedAppearance: resolveIdentityAppearancePreview(identity, activeVariant),
+      isActive: identity.id === activeIdentityId,
+      revision: request.revision,
+      updatedAt: request.updatedAt,
+      resolveAttachmentUrl,
+    });
+  });
+};
+
+const selectCharacterForTheater = async (payload: TheaterCharacterSelectRequest) => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  const identityId = String(payload.identityId || '').trim();
+  if (!channelId) {
+    return { ok: false as const, error: { code: 'INVALID_CHARACTER', message: '角色参数无效' } };
+  }
+  const identities = await chat.loadChannelIdentities(channelId, false);
+  const characterError = validateTheaterCharacter(identities, identityId);
+  if (characterError) return characterError;
+  try {
+    const syncResult = await characterCardStore.syncCardForIdentity(channelId, identityId, { preserveWhenUnbound: true });
+    if (!syncResult.ok) {
+      return { ok: false as const, error: { code: 'CHARACTER_CARD_SYNC_FAILED', message: '角色卡同步失败，未切换聊天角色' } };
+    }
+  } catch (error) {
+    console.warn('[theater-bridge] character card sync failed', error);
+    return { ok: false as const, error: { code: 'CHARACTER_CARD_SYNC_FAILED', message: '角色卡同步失败，未切换聊天角色' } };
+  }
+  chat.setActiveIdentity(channelId, identityId);
+  emitTypingPreview();
+  return { ok: true as const };
+};
+
+const selectCharacterVariantForTheater = async (payload: TheaterCharacterVariantSelectRequest) => {
+  const channelId = String(chat.curChannel?.id || '').trim();
+  const identityId = String(payload.identityId || '').trim();
+  const variantId = String(payload.variantId || '').trim();
+  if (!channelId) {
+    return { ok: false as const, error: { code: 'INVALID_CHARACTER', message: '角色参数无效' } };
+  }
+  const identities = await chat.loadChannelIdentities(channelId, false);
+  const characterError = validateTheaterCharacter(identities, identityId);
+  if (characterError) return characterError;
+  const variantsByIdentity = await chat.loadChannelIdentityVariants(channelId, false);
+  const variants = variantsByIdentity[identityId] || [];
+  const variantError = validateTheaterVariant({
+    activeIdentityId: chat.getActiveIdentityId(channelId),
+    identityId,
+    variantId,
+    variants,
+  });
+  if (variantError) return variantError;
+  chat.setActiveIdentityVariant(channelId, identityId, variantId);
+  emitTypingPreview();
+  return { ok: true as const };
+};
+
 defineExpose({
   openPanelForShell,
   refreshPresenceForShell,
@@ -489,6 +656,11 @@ defineExpose({
   setCharacterCardVisible,
   getStickyNoteVisible,
   getCharacterCardVisible,
+  sendMessageForTheater,
+  insertComposerForTheater,
+  getCharactersForTheater,
+  selectCharacterForTheater,
+  selectCharacterVariantForTheater,
 });
 // 编辑模式下也允许使用上方功能区，只在个别操作需要限制时单独判断
 const inputIcMode = computed<'ic' | 'ooc'>({
@@ -603,9 +775,10 @@ const diceFeatureUpdating = ref(false);
 const botOptions = ref<UserInfo[]>([]);
 const botOptionsLoading = ref(false);
 const botOptionsFetched = ref(false);
-const isMobileUa = typeof navigator !== 'undefined'
+const isMobileUa = (typeof navigator !== 'undefined'
   ? /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
-  : false;
+  : false)
+  || (route.path === '/embed' && route.query.viewport === 'mobile');
 const hasTouchPoints = typeof navigator !== 'undefined'
   ? (navigator.maxTouchPoints || 0) > 0
   : false;
@@ -1345,7 +1518,7 @@ watch(
 );
 
 // 新增状态
-const showActionRibbon = ref(false);
+const showActionRibbon = ref(isTheaterEmbedMode.value);
 const archiveDrawerVisible = ref(false);
 const exportManagerVisible = ref(false);
 const exportDialogVisible = ref(false);
@@ -10807,6 +10980,27 @@ const insertDiceExpression = (expr: string) => {
   });
 };
 
+const insertComposerText = (content: string) => {
+  if (!content) return;
+  if (inputMode.value === 'rich') {
+    const editor = textInputRef.value?.getEditor?.();
+    if (editor) {
+      const { from, to } = editor.state.selection;
+      editor.view.dispatch(editor.state.tr.insertText(content, from, to).scrollIntoView());
+      editor.chain().focus().run();
+      return;
+    }
+  }
+  const selection = getInputSelection();
+  const draft = textToSend.value;
+  textToSend.value = draft.slice(0, selection.start) + content + draft.slice(selection.end);
+  const cursor = selection.start + content.length;
+  nextTick(() => {
+    setInputSelection(cursor, cursor);
+    ensureInputFocus();
+  });
+};
+
 const moveInputCursorToEnd = () => {
   if (textInputRef.value?.moveCursorToEnd) {
     textInputRef.value.moveCursorToEnd();
@@ -12376,7 +12570,7 @@ const retrySendMessage = async (target?: Message) => {
   }
 };
 
-const send = throttle(async () => {
+const performSend = async (options?: { identityIdOverride?: string; identityVariantIdOverride?: string }) => {
   if (spectatorInputDisabled.value) {
     message.warning('旁观者仅可查看频道内容，无法发送消息');
     return;
@@ -12392,8 +12586,8 @@ const send = throttle(async () => {
   const sendMode = inputMode.value;
   const sendIcMode: 'ic' | 'ooc' = inputIcMode.value === 'ooc' ? 'ooc' : 'ic';
   let draft = textToSend.value;
-  let identityIdOverride: string | undefined;
-  let identityVariantIdOverride: string | undefined;
+  let identityIdOverride = options?.identityIdOverride;
+  let identityVariantIdOverride = options?.identityVariantIdOverride;
   const activeReeditSource = (() => {
     const source = reeditRevokedSource.value;
     if (!source) {
@@ -12406,18 +12600,25 @@ const send = throttle(async () => {
   })();
 
   const identityQuickSwitchTrigger = display.settings.identityQuickSwitchTrigger || '/';
+  const identityQuickSwitchChannelId = String(chat.curChannel?.id || '');
 
   // 仅纯文本模式支持 `触发字符 + 角色名` 或 `触发字符 + 角色名 内容` 快捷切换
-  if (inputMode.value === 'plain' && chat.curChannel?.id && draft.startsWith(identityQuickSwitchTrigger)) {
-    const identities = chat.channelIdentities[chat.curChannel.id] || [];
+  if (shouldResolveTheaterIdentityShortcut({
+    identityIdOverride,
+    inputMode: inputMode.value,
+    channelId: identityQuickSwitchChannelId,
+    draft,
+    trigger: identityQuickSwitchTrigger,
+  })) {
+    const identities = chat.channelIdentities[identityQuickSwitchChannelId] || [];
     const shortcutResult = resolveIdentityShortcutMatch(draft, identities, identityQuickSwitchTrigger);
     if (shortcutResult?.ambiguous) {
       message.warning('匹配到多个同长度角色，请输入更长名称');
       return;
     }
     if (shortcutResult?.matched) {
-      chat.setActiveIdentity(chat.curChannel.id, shortcutResult.matched.id);
-      await characterCardStore.syncCardForIdentity(chat.curChannel.id, shortcutResult.matched.id, {
+      chat.setActiveIdentity(identityQuickSwitchChannelId, shortcutResult.matched.id);
+      await characterCardStore.syncCardForIdentity(identityQuickSwitchChannelId, shortcutResult.matched.id, {
         preserveWhenUnbound: true,
       });
       draft = shortcutResult.restContent;
@@ -12580,6 +12781,9 @@ const send = throttle(async () => {
   rows.value.push(tmpMsg);
   sortRowsByDisplayOrder();
   instantMessages.add(tmpMsg);
+  let sendOutcome:
+    | { ok: true; messageId: string }
+    | { ok: false; error: { code: string; message: string } };
 
   try {
     let finalContent: string;
@@ -12687,6 +12891,7 @@ const send = throttle(async () => {
       ensureInputFocus();
     }
     handleInterjectSendSuccess(tmpMsg, interjectFirstEditSnapshot);
+    sendOutcome = { ok: true, messageId: String(tmpMsg.id || clientId) };
   } catch (e) {
     const reason = resolveMessageSendFailureReason(e);
     message.error(`发送失败：${reason}`);
@@ -12703,12 +12908,16 @@ const send = throttle(async () => {
       setMessageSendStatus(tmpMsg as any, 'failed', reason);
     }
     handleInterjectSendFailure();
+    sendOutcome = { ok: false, error: { code: 'MESSAGE_SEND_FAILED', message: reason } };
   }
 
   if (wasAtBottom && !insertPlacement) {
     toBottom();
   }
-}, 500);
+  return sendOutcome;
+};
+
+const send = throttle(() => performSend(), 500);
 
 const handleDiceInsert = (expr: string) => {
   insertDiceExpression(expr.trim() ? `${expr.trim()} ` : expr);
@@ -15343,7 +15552,7 @@ onBeforeUnmount(() => {
     <div v-if="channelBackgroundOverlayStyle" class="channel-background-overlay" :style="channelBackgroundOverlayStyle"></div>
     <!-- 功能面板 -->
     <transition name="slide-down">
-      <div v-if="showActionRibbon && !isEmbedMode" class="chat-top-toolbar-stack">
+      <div v-if="showActionRibbon && (!isEmbedMode || isTheaterEmbedMode)" class="chat-top-toolbar-stack">
         <ChatActionRibbon
           :filters="chat.filterState"
           :roles="ribbonRoleOptions"
@@ -15361,6 +15570,8 @@ onBeforeUnmount(() => {
           :import-active="importDialogVisible"
           :split-enabled="splitEntryEnabled"
           :split-active="false"
+          :theater-enabled="theaterEntryEnabled"
+          :theater-active="false"
           :ic-ooc-split-enabled="splitEntryEnabled"
           :ic-ooc-split-active="false"
           :sticky-note-enabled="true"
@@ -15384,6 +15595,7 @@ onBeforeUnmount(() => {
           @open-channel-images="openChannelImagesPanel"
           @open-battle-summary="openBattleSummary"
           @open-split="openSplitView"
+          @open-theater="openTheaterView"
           @open-ic-ooc-split="openIcOocSplitView"
           @toggle-sticky-note="toggleStickyNotes"
           @open-webhook="webhookDrawerVisible = true"

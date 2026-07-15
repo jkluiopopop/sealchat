@@ -1,8 +1,22 @@
 import type {
+  BridgeCharacterAppearance,
+  BridgeCharacterDecoration,
+  BridgeCharacterVariant,
+  BridgeImageRef,
   BridgeRoleSnapshot,
   SealChatBridgeMessageEvent,
   SealChatBridgeMessagePayload,
 } from './sealchatBridgeProtocol'
+import { isSafeStageImageUrl } from '../views/theater/shared/stage-types'
+
+type AvatarDecorationLike = {
+  id?: string
+  enabled: boolean
+  decorationId?: string
+  resourceAttachmentId?: string
+  fallbackAttachmentId?: string
+  settings?: object
+}
 
 const inlineImageTokenPattern = /\[\[(?:图片:[^\]]+|img:[^\]]+)\]\]/gi
 const botStateWidgetPrefix = '[[STATE_WIDGET]]'
@@ -27,13 +41,28 @@ type IdentityLike = {
   avatarAttachment?: string
   isTemporary?: boolean
   icOocOnActivate?: '' | 'ic' | 'ooc'
+  avatarDecoration?: AvatarDecorationLike | null
+  avatarDecorations?: AvatarDecorationLike[] | null
 }
 
 type VariantLike = {
   id?: string
+  keyword?: string
+  selectorEmoji?: string
+  note?: string
+  enabled?: boolean
   displayName?: string
   color?: string
   avatarAttachmentId?: string
+  appearance?: Record<string, unknown>
+  updatedAt?: string
+}
+
+type ResolvedAppearanceLike = {
+  displayName?: string
+  color?: string
+  avatarAttachmentId?: string
+  avatarDecorations?: AvatarDecorationLike[] | null
 }
 
 type BridgeMessageLike = {
@@ -129,37 +158,189 @@ const resolveAvatarUrl = (
 
   for (const token of tokens) {
     if (typeof token === 'string' && token.trim()) {
-      return normalizeAbsoluteUrl(resolveAttachmentUrl(token))
+      const resolved = normalizeAbsoluteUrl(resolveAttachmentUrl(token))
+      if (resolved && isSafeStageImageUrl(resolved)) return resolved
     }
   }
   return ''
 }
 
+const buildImageRef = (
+  token: string | undefined,
+  resolveAttachmentUrl: (token?: string) => string,
+  alt?: string,
+): BridgeImageRef | null => {
+  const resourceId = String(token || '').trim()
+  if (!resourceId) return null
+  const url = resolveAvatarUrl(resolveAttachmentUrl, resourceId)
+  if (!url) return null
+  return { resourceId, url, ...(alt ? { alt } : {}) }
+}
+
+const buildFirstImageRef = (
+  tokens: Array<string | undefined>,
+  resolveAttachmentUrl: (token?: string) => string,
+  alt?: string,
+): BridgeImageRef | null => {
+  for (const token of tokens) {
+    const image = buildImageRef(token, resolveAttachmentUrl, alt)
+    if (image) return image
+  }
+  return null
+}
+
+const buildDecorations = (
+  decorations: AvatarDecorationLike[] | null | undefined,
+  resolveAttachmentUrl: (token?: string) => string,
+): BridgeCharacterDecoration[] => (Array.isArray(decorations) ? decorations : [])
+  .map((decoration, index) => {
+    const primaryToken = String(decoration.resourceAttachmentId || '').trim()
+    const fallbackToken = String(decoration.fallbackAttachmentId || '').trim()
+    const resource = buildFirstImageRef([primaryToken, fallbackToken], resolveAttachmentUrl)
+    if (!resource) return null
+    const fallbackResource = fallbackToken && fallbackToken !== resource.resourceId
+      ? buildImageRef(fallbackToken, resolveAttachmentUrl)
+      : null
+    return {
+      id: String(decoration.id || decoration.decorationId || `decoration-${index}`).trim(),
+      resource,
+      enabled: decoration.enabled === true,
+      zIndex: Number.isFinite((decoration.settings as { zIndex?: number } | undefined)?.zIndex)
+        ? Number((decoration.settings as { zIndex?: number }).zIndex)
+        : 1,
+      settings: { ...(decoration.settings || {}) },
+      extensions: {
+        ...(decoration.decorationId ? { decorationId: decoration.decorationId } : {}),
+        ...(fallbackResource ? { fallbackResource } : {}),
+      },
+    } satisfies BridgeCharacterDecoration
+  })
+  .filter((item): item is BridgeCharacterDecoration => Boolean(item))
+
+const buildAppearance = ({
+  displayName,
+  color,
+  avatarAttachmentId,
+  avatarFallbackAttachmentIds,
+  decorations,
+  resolveAttachmentUrl,
+}: {
+  displayName?: string
+  color?: string
+  avatarAttachmentId?: string
+  avatarFallbackAttachmentIds?: Array<string | undefined>
+  decorations?: AvatarDecorationLike[] | null
+  resolveAttachmentUrl: (token?: string) => string
+}): BridgeCharacterAppearance => ({
+  displayName: String(displayName || ''),
+  color: String(color || ''),
+  avatar: buildFirstImageRef(
+    [avatarAttachmentId, ...(avatarFallbackAttachmentIds || [])],
+    resolveAttachmentUrl,
+    displayName,
+  ),
+  decorations: buildDecorations(decorations, resolveAttachmentUrl),
+  extensions: {},
+})
+
+const clonePublicRecord = (value: Record<string, unknown>): Record<string, unknown> => {
+  try {
+    return JSON.parse(JSON.stringify(value)) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+const buildVariantSnapshot = (
+  variant: VariantLike,
+  resolveAttachmentUrl: (token?: string) => string,
+): BridgeCharacterVariant => {
+  const avatar = buildImageRef(variant.avatarAttachmentId, resolveAttachmentUrl, variant.displayName)
+  return {
+    variantId: String(variant.id || ''),
+    keyword: String(variant.keyword || ''),
+    selectorEmoji: String(variant.selectorEmoji || ''),
+    note: String(variant.note || ''),
+    enabled: variant.enabled !== false,
+    appearancePatch: {
+      ...(variant.displayName ? { displayName: variant.displayName } : {}),
+      ...(variant.color ? { color: variant.color } : {}),
+      ...(avatar ? { avatar } : {}),
+    },
+    extensions: {
+      ...(variant.appearance ? { appearance: clonePublicRecord(variant.appearance) } : {}),
+      ...(variant.updatedAt ? { updatedAt: variant.updatedAt } : {}),
+    },
+  }
+}
+
 export const buildRoleSnapshot = ({
   identity,
   variant,
+  variants = [],
+  resolvedAppearance,
+  isActive = false,
+  revision = 0,
+  updatedAt = Date.now(),
   resolveAttachmentUrl,
 }: {
   identity: IdentityLike
   variant?: VariantLike | null
+  variants?: VariantLike[]
+  resolvedAppearance?: ResolvedAppearanceLike | null
+  isActive?: boolean
+  revision?: number
+  updatedAt?: number
   resolveAttachmentUrl: (token?: string) => string
-}): BridgeRoleSnapshot => ({
-  identityId: String(identity.id || ''),
-  displayName: variant?.displayName || identity.displayName || '',
-  color: variant?.color || identity.color || '',
-  avatarUrl: resolveAvatarUrl(
+}): BridgeRoleSnapshot => {
+  const identityDecorations = identity.avatarDecorations
+    || (identity.avatarDecoration ? [identity.avatarDecoration] : [])
+  const resolvedDisplayName = resolvedAppearance?.displayName || variant?.displayName || identity.displayName || ''
+  const resolvedColor = resolvedAppearance?.color || variant?.color || identity.color || ''
+  const resolvedAvatarAttachmentId = resolvedAppearance?.avatarAttachmentId
+    || variant?.avatarAttachmentId
+    || identity.avatarAttachmentId
+    || identity.avatarAttachment
+  const resolvedDecorations = resolvedAppearance?.avatarDecorations || identityDecorations
+  const baseAppearance = buildAppearance({
+    displayName: identity.displayName,
+    color: identity.color,
+    avatarAttachmentId: identity.avatarAttachmentId || identity.avatarAttachment,
+    decorations: identityDecorations,
     resolveAttachmentUrl,
-    variant?.avatarAttachmentId,
-    identity.avatarAttachmentId,
-    identity.avatarAttachment,
-  ),
-  isTemporary: Boolean(identity.isTemporary),
-  icOocOnActivate: identity.icOocOnActivate || '',
-  activeVariantId: variant?.id || null,
-  activeVariantDisplayName: variant?.displayName || '',
-  activeVariantColor: variant?.color || '',
-  activeVariantAvatarUrl: resolveAvatarUrl(resolveAttachmentUrl, variant?.avatarAttachmentId),
-})
+  })
+  const finalAppearance = buildAppearance({
+    displayName: resolvedDisplayName,
+    color: resolvedColor,
+    avatarAttachmentId: resolvedAvatarAttachmentId,
+    avatarFallbackAttachmentIds: [
+      variant?.avatarAttachmentId,
+      identity.avatarAttachmentId,
+      identity.avatarAttachment,
+    ],
+    decorations: resolvedDecorations,
+    resolveAttachmentUrl,
+  })
+  return {
+    identityId: String(identity.id || ''),
+    displayName: resolvedDisplayName,
+    color: resolvedColor,
+    avatarUrl: finalAppearance.avatar?.url || '',
+    isTemporary: Boolean(identity.isTemporary),
+    icOocOnActivate: identity.icOocOnActivate || '',
+    activeVariantId: variant?.id || null,
+    activeVariantDisplayName: variant?.displayName || '',
+    activeVariantColor: variant?.color || '',
+    activeVariantAvatarUrl: buildImageRef(variant?.avatarAttachmentId, resolveAttachmentUrl)?.url || '',
+    isActive,
+    revision,
+    updatedAt,
+    baseAppearance,
+    variants: variants.map((item) => buildVariantSnapshot(item, resolveAttachmentUrl)),
+    resolvedAppearance: finalAppearance,
+    extensions: {},
+  }
+}
 
 export const buildBridgeMessagePayload = ({
   event,
