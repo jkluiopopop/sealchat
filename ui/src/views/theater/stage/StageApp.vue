@@ -54,6 +54,8 @@ import {
 import { stageActionSchema, type ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import { syncStageObjectHierarchy } from './stage-layering'
 import StageDrawingToolbar, { type StageCanvasTool } from './StageDrawingToolbar.vue'
+import StageTextEditor, { type StageTextEditorMode } from './StageTextEditor.vue'
+import StageTextOverlay from './StageTextOverlay.vue'
 import type { TheaterStageStore } from './StageStore'
 
 const props = defineProps<{
@@ -78,6 +80,7 @@ const emit = defineEmits<{
 
 const containerRef = ref<HTMLDivElement | null>(null)
 const viewportRef = ref<HTMLDivElement | null>(null)
+const viewportSize = ref({ width: 1, height: 1 })
 const imageInputRef = ref<HTMLInputElement | null>(null)
 const resourceError = ref('')
 const resourceUploading = ref(false)
@@ -533,6 +536,7 @@ const selectedObject = computed(() => {
   const id = props.store.state.selectedObjectId
   return id ? props.store.activeObjects.value[id] || null : null
 })
+const stageObjects = props.store.activeObjects
 const selectedObjects = props.store.selectedObjects
 const selectedIdSet = computed(() => new Set(props.store.selection.selectedIds))
 const isBatchSelection = computed(() => props.store.selection.bulkMode && selectedObjects.value.length > 1)
@@ -542,6 +546,22 @@ const toggleSelectedDrawingFill = (checked: boolean) => {
   const drawing = selectedObject.value?.drawing
   if (!drawing) return
   drawing.style.fill = checked ? drawing.style.fill || drawing.style.stroke : null
+}
+
+const selectedTextMode = computed<StageTextEditorMode>(() => (
+  selectedObject.value?.metadata?.textEditorMode === 'rich' ? 'rich' : 'plain'
+))
+
+const updateSelectedText = (value: string) => {
+  const object = selectedObject.value
+  if (!object || object.type !== 'text') return
+  object.text = value
+}
+
+const updateSelectedTextMode = (mode: StageTextEditorMode) => {
+  const object = selectedObject.value
+  if (!object || object.type !== 'text') return
+  object.metadata = { ...object.metadata, textEditorMode: mode }
 }
 
 type BatchBooleanKey = 'visible' | 'interactive' | 'editable' | 'locked' | 'aspectRatioLocked'
@@ -1357,16 +1377,12 @@ const rebuildObjectContent = (wrapper: Konva.Group, object: StageObject) => {
     return
   }
   if (object.type === 'text') {
-    wrapper.add(new Konva.Text({
+    wrapper.add(new Konva.Rect({
       name: 'theater-object-content',
-      text: object.text || object.name,
       width,
       height,
-      fontSize: 28,
-      fontStyle: 'bold',
-      fill: object.fill,
-      padding: 10,
-      verticalAlign: 'middle',
+      fill: 'rgba(0, 0, 0, 0.001)',
+      strokeEnabled: false,
     }))
     return
   }
@@ -1734,11 +1750,9 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
   if (object.type === 'drawing') {
     return
   } else if (object.type === 'text') {
-    wrapper.findOne<Konva.Text>('.theater-object-content')?.setAttrs({
-      text: object.text || object.name,
+    wrapper.findOne<Konva.Rect>('.theater-object-content')?.setAttrs({
       width,
       height,
-      fill: object.fill,
     })
   } else if (object.type === 'image') {
     syncObjectImage(wrapper, object, width, height)
@@ -1819,7 +1833,8 @@ const resizeStage = () => {
   const element = viewportRef.value
   if (!stage || !element) return
   const rect = element.getBoundingClientRect()
-  stage.size({ width: Math.max(1, rect.width), height: Math.max(1, rect.height) })
+  viewportSize.value = { width: Math.max(1, rect.width), height: Math.max(1, rect.height) }
+  stage.size(viewportSize.value)
   clampOpenPanels()
   applyCamera()
 }
@@ -2293,6 +2308,12 @@ onMounted(() => {
   foregroundLayer.add(foregroundCameraGroup)
   interactionLayer.add(selectionRect, quickDeleteOutline, transformer)
   stage.add(backgroundLayer, worldLayer, foregroundLayer, interactionLayer)
+  backgroundLayer.getCanvas()._canvas.style.zIndex = '0'
+  worldLayer.getCanvas()._canvas.style.zIndex = '1'
+  foregroundLayer.getCanvas()._canvas.style.zIndex = '3'
+  interactionLayer.getCanvas()._canvas.style.zIndex = '4'
+  foregroundLayer.getCanvas()._canvas.style.pointerEvents = 'none'
+  interactionLayer.getCanvas()._canvas.style.pointerEvents = 'none'
   stage.on('wheel', handleWheel)
   stage.on('pointerdown', startPan)
   stage.on('pointermove', movePan)
@@ -2545,6 +2566,12 @@ onBeforeUnmount(() => {
         @drop.prevent="handleCanvasDrop"
       >
         <div ref="containerRef" class="theater-stage-canvas" />
+        <StageTextOverlay
+          :objects="stageObjects"
+          :camera="store.state.camera"
+          :viewport-width="viewportSize.width"
+          :viewport-height="viewportSize.height"
+        />
       </div>
 
       <aside v-if="scenePanelOpen" class="theater-floating-panel theater-scene-rail" data-panel-id="scene" :style="panelStyle('scene')">
@@ -2636,7 +2663,17 @@ onBeforeUnmount(() => {
           >
             <label>名称</label>
             <n-input v-model:value="selectedObject.name" size="small" />
-            <template v-if="selectedObject.type === 'text' || selectedObject.type === 'button'">
+            <template v-if="selectedObject.type === 'text'">
+              <label>内容</label>
+              <StageTextEditor
+                :model-value="selectedObject.text || ''"
+                :mode="selectedTextMode"
+                :can-upload-images="canUploadResources"
+                @update:model-value="updateSelectedText"
+                @update:mode="updateSelectedTextMode"
+              />
+            </template>
+            <template v-else-if="selectedObject.type === 'button'">
               <label>内容</label>
               <n-input v-model:value="selectedObject.text" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" />
             </template>
@@ -2702,7 +2739,7 @@ onBeforeUnmount(() => {
                 <n-input-number v-model:value="selectedObject.drawing.sides" :min="5" :max="12" />
               </template>
             </template>
-            <template v-if="selectedObject.type !== 'image' && selectedObject.type !== 'group' && selectedObject.type !== 'drawing'">
+            <template v-if="!['text', 'image', 'group', 'drawing'].includes(selectedObject.type)">
               <label>颜色</label>
               <n-input v-model:value="selectedObject.fill" />
             </template>

@@ -114,6 +114,7 @@ declare module 'vue' {
     OnboardingTutorialHub: typeof import('./src/components/onboarding/OnboardingTutorialHub.vue')['default']
     OnboardingWelcome: typeof import('./src/components/onboarding/OnboardingWelcome.vue')['default']
     QuickLoginApprovalHost: typeof import('./src/components/auth/QuickLoginApprovalHost.vue')['default']
+    RichTextContent: typeof import('./src/components/rich-text/RichTextContent.vue')['default']
     RichTextEditor: typeof import('./src/components/rich-text/RichTextEditor.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

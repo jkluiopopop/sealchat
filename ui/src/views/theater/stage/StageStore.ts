@@ -38,6 +38,15 @@ const uid = (prefix: string) => {
 
 const clone = <T>(value: T): T => structuredClone(toRaw(value))
 
+const isRichTextValue = (value: unknown) => {
+  if (typeof value !== 'string' || !value.trim()) return false
+  try {
+    return JSON.parse(value)?.type === 'doc'
+  } catch {
+    return false
+  }
+}
+
 const createImageRef = (
   url: string,
   alt?: string,
@@ -82,9 +91,9 @@ const makeObject = (
   aspectRatioLocked: true,
   interactive: true,
   editable: false,
-  fill: palette[order % palette.length],
+  fill: type === 'text' ? '#ffffff' : palette[order % palette.length],
   text: type === 'text' ? name : undefined,
-  metadata: {},
+  metadata: type === 'text' ? { textEditorMode: 'plain' } : {},
   actions: [],
   ...overrides,
 })
@@ -229,6 +238,7 @@ const normalizeObject = (input: StageObject): StageObject | null => {
   const normalizeScale = (value: number | undefined) => Number.isFinite(value) && (value || 0) > 0
     ? Math.min(100, Math.max(0.01, value!))
     : legacyScale
+  const metadata = input.metadata && typeof input.metadata === 'object' ? input.metadata : {}
   return {
     ...input,
     transform: {
@@ -243,12 +253,17 @@ const normalizeObject = (input: StageObject): StageObject | null => {
     aspectRatioLocked: input.aspectRatioLocked !== false,
     interactive: input.interactive !== false,
     editable: input.editable === true,
-    fill: typeof input.fill === 'string' ? input.fill : '#60a5fa',
+    fill: input.type === 'text' ? '#ffffff' : typeof input.fill === 'string' ? input.fill : '#60a5fa',
     drawing,
     image: normalizeImageRef(input.image) || undefined,
     content: input.content && typeof input.content === 'object' ? input.content : {},
     actions: normalizeActions(input.actions),
-    metadata: input.metadata && typeof input.metadata === 'object' ? input.metadata : {},
+    metadata: input.type === 'text'
+      ? {
+          ...metadata,
+          textEditorMode: metadata.textEditorMode === 'rich' || isRichTextValue(input.text) ? 'rich' : 'plain',
+        }
+      : metadata,
   }
 }
 
