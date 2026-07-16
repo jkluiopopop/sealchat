@@ -350,6 +350,7 @@ onBeforeUnmount(() => {
           :src="iframeSrc"
           frameborder="0"
           allow="autoplay; clipboard-read; clipboard-write"
+          @load="theaterBridge?.handleChatFrameLoad()"
         />
       </section>
     </div>
