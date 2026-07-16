@@ -300,6 +300,7 @@ export interface TheaterStageStore {
   setSelectedObjectIds: (objectIds: string[], primaryId?: string | null) => void
   clearSelection: () => void
   patchSelectedObjects: (patch: StageObjectBatchPatch) => number
+  setObjectFlag: (objectId: string, key: StageObjectQuickFlag, value: boolean) => boolean
   selectScene: (sceneId: string) => void
   addScene: () => void
   duplicateScene: () => void
@@ -353,6 +354,8 @@ export interface TheaterStageSelectionState {
 export type StageObjectBatchPatch = Partial<Pick<StageObject,
   'visible' | 'interactive' | 'editable' | 'locked' | 'aspectRatioLocked' | 'fill'
 >>
+
+export type StageObjectQuickFlag = 'visible' | 'editable' | 'locked'
 
 export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore => {
   const state = reactive<StageWorkspaceState>(createInitialTheaterStageState())
@@ -482,6 +485,13 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       if (objectChanged) changed += 1
     })
     return changed
+  })
+
+  const setObjectFlag = (objectId: string, key: StageObjectQuickFlag, value: boolean) => runObjectEdit('快速修改对象', () => {
+    const object = activeObjects.value[objectId]
+    if (!object || object[key] === value) return false
+    object[key] = value
+    return true
   })
 
   const saveLiveState = () => {
@@ -882,6 +892,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     setSelectedObjectIds,
     clearSelection,
     patchSelectedObjects,
+    setObjectFlag,
     selectScene,
     addScene,
     duplicateScene,

@@ -13,14 +13,19 @@ import {
   Copy,
   Cut,
   Edit,
+  Eye,
+  EyeOff,
   FolderPlus,
   Focus,
   GripVertical,
   LayoutSidebarLeftExpand,
   LetterT,
+  Lock,
+  LockOpen,
   Message,
   Photo,
   Pin,
+  Pencil,
   Plus,
   Refresh,
   Select,
@@ -265,7 +270,7 @@ const panelLayoutStorageKey = 'sealchat:theater-panel-layout:v1'
 const panelMinimums: Record<PanelId, { width: number, height: number }> = {
   scene: { width: 140, height: 180 },
   inspector: { width: 240, height: 240 },
-  layer: { width: 180, height: 220 },
+  layer: { width: 280, height: 220 },
 }
 const readPanelLayouts = (): Partial<Record<PanelId, PanelLayout>> => {
   try {
@@ -283,7 +288,7 @@ const panelDefaultLayout = (id: PanelId): PanelLayout => {
   const workspace = workspaceRef.value
   const workspaceWidth = workspace?.clientWidth || 960
   const workspaceHeight = workspace?.clientHeight || 640
-  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : 220
+  const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : 300
   const height = Math.max(panelMinimums[id].height, workspaceHeight - 24)
   return {
     x: id === 'scene' ? 12 : Math.max(12, workspaceWidth - width - 12),
@@ -626,6 +631,24 @@ const layerRows = computed<LayerRow[]>(() => {
   append(null, 0)
   return rows
 })
+
+const layerPreviewUrl = (object: StageObject) => {
+  if (object.type !== 'image' || !object.image || object.image.mimeType?.startsWith('video/')) return null
+  return resolveStageImageUrl(object.image.url)
+}
+
+const layerPreviewIcon = (object: StageObject) => {
+  if (object.type === 'group') return Components
+  if (object.type === 'drawing') return Pencil
+  if (object.type === 'text') return LetterT
+  if (object.type === 'button') return Bolt
+  return Photo
+}
+
+const toggleLayerObjectFlag = (object: StageObject, key: 'visible' | 'editable' | 'locked') => {
+  if (!canEditAllObjects.value) return
+  props.store.setObjectFlag(object.id, key, !object[key])
+}
 
 const getObject = (objectId: string) => props.store.activeObjects.value[objectId]
 
@@ -2801,31 +2824,99 @@ onBeforeUnmount(() => {
           >
             根层级
           </button>
-          <button
+          <div
             v-for="row in layerRows"
             :key="row.object.id"
             class="theater-layer-row"
             :class="{
               'is-active': store.selection.selectedIds.includes(row.object.id),
+              'is-hidden': !row.object.visible,
+              'is-disabled': !canEditObject(row.object),
               'is-drop-before': layerDropTarget?.id === row.object.id && layerDropTarget.placement === 'before',
               'is-drop-inside': layerDropTarget?.id === row.object.id && layerDropTarget.placement === 'inside',
               'is-drop-after': layerDropTarget?.id === row.object.id && layerDropTarget.placement === 'after',
             }"
             :style="{ paddingLeft: `${10 + row.depth * 15}px` }"
-            :disabled="!canEditObject(row.object)"
-            :draggable="canEditAllObjects"
-            @click="selectObject(row.object.id, store.selection.bulkMode && ($event.shiftKey || $event.ctrlKey || $event.metaKey))"
-            @dragstart="startLayerDrag($event, row.object.id)"
-            @dragend="finishLayerDrag"
             @dragover.prevent="handleLayerDragOver($event, row.object.id)"
             @dragleave="handleLayerDragLeave($event, row.object.id)"
             @drop.prevent="handleLayerDrop($event, row.object.id)"
           >
-            <n-icon class="theater-layer-row__grip"><GripVertical /></n-icon>
-            <span class="theater-layer-row__type">{{ row.object.type === 'group' ? '组' : row.object.type === 'drawing' ? '绘' : row.object.type === 'text' ? '字' : row.object.type === 'image' ? '图' : row.object.type === 'button' ? '钮' : '物' }}</span>
-            <span class="theater-layer-row__name">{{ row.object.name }}</span>
-            <small v-if="store.isPersistentObject(row.object.id)">持久</small>
-          </button>
+            <span
+              class="theater-layer-row__grip"
+              :draggable="canEditAllObjects"
+              @dragstart.stop="startLayerDrag($event, row.object.id)"
+              @dragend.stop="finishLayerDrag"
+            >
+              <n-icon><GripVertical /></n-icon>
+            </span>
+            <button
+              type="button"
+              class="theater-layer-row__select"
+              :disabled="!canEditObject(row.object)"
+              @click="selectObject(row.object.id, store.selection.bulkMode && ($event.shiftKey || $event.ctrlKey || $event.metaKey))"
+              @dblclick.stop="openObjectInspector(row.object.id)"
+            >
+              <span class="theater-layer-row__preview" :style="{ '--layer-preview-color': row.object.fill }">
+                <img
+                  v-if="layerPreviewUrl(row.object)"
+                  :src="layerPreviewUrl(row.object)!"
+                  :alt="`${row.object.name} 预览`"
+                  draggable="false"
+                  loading="lazy"
+                >
+                <n-icon v-else :component="layerPreviewIcon(row.object)" />
+              </span>
+              <span class="theater-layer-row__name">{{ row.object.name }}</span>
+              <small v-if="store.isPersistentObject(row.object.id)">持久</small>
+            </button>
+            <div v-if="canEditAllObjects" class="theater-layer-row__actions" @pointerdown.stop>
+              <n-tooltip trigger="hover">
+                <template #trigger>
+                  <button
+                    type="button"
+                    class="theater-layer-row__action"
+                    :class="{ 'is-enabled': row.object.visible }"
+                    :aria-pressed="row.object.visible"
+                    :aria-label="row.object.visible ? `隐藏 ${row.object.name}` : `显示 ${row.object.name}`"
+                    @click.stop="toggleLayerObjectFlag(row.object, 'visible')"
+                  >
+                    <n-icon :component="row.object.visible ? Eye : EyeOff" />
+                  </button>
+                </template>
+                {{ row.object.visible ? '隐藏组件' : '显示组件' }}
+              </n-tooltip>
+              <n-tooltip trigger="hover">
+                <template #trigger>
+                  <button
+                    type="button"
+                    class="theater-layer-row__action"
+                    :class="{ 'is-enabled': row.object.editable }"
+                    :aria-pressed="row.object.editable"
+                    :aria-label="row.object.editable ? `禁止授权用户编辑 ${row.object.name}` : `允许授权用户编辑 ${row.object.name}`"
+                    @click.stop="toggleLayerObjectFlag(row.object, 'editable')"
+                  >
+                    <n-icon><Edit /></n-icon>
+                  </button>
+                </template>
+                {{ row.object.editable ? '禁止授权用户编辑' : '允许授权用户编辑' }}
+              </n-tooltip>
+              <n-tooltip trigger="hover">
+                <template #trigger>
+                  <button
+                    type="button"
+                    class="theater-layer-row__action"
+                    :class="{ 'is-enabled': row.object.locked }"
+                    :aria-pressed="row.object.locked"
+                    :aria-label="row.object.locked ? `解锁 ${row.object.name} 的位置` : `锁定 ${row.object.name} 的位置`"
+                    @click.stop="toggleLayerObjectFlag(row.object, 'locked')"
+                  >
+                    <n-icon :component="row.object.locked ? Lock : LockOpen" />
+                  </button>
+                </template>
+                {{ row.object.locked ? '解锁位置' : '锁定位置' }}
+              </n-tooltip>
+            </div>
+          </div>
         </div>
       </aside>
     </div>
@@ -2898,7 +2989,7 @@ onBeforeUnmount(() => {
 @keyframes theater-panel-in { from { opacity: 0; transform: translateY(-4px); } }
 .theater-scene-rail { min-width: min(124px, 100%); min-height: min(160px, 100%); gap: 6px; padding: 6px; overflow-y: auto; }
 .theater-object-inspector { min-width: min(240px, 100%); min-height: min(240px, 100%); overflow-y: auto; }
-.theater-layer-panel { min-width: min(180px, 100%); min-height: min(220px, 100%); }
+.theater-layer-panel { min-width: min(280px, 100%); min-height: min(220px, 100%); }
 .theater-panel-heading {
   height: 32px; flex: 0 0 32px; display: flex; align-items: center; justify-content: space-between; padding: 0 8px;
   color: var(--sc-text-secondary, #b5b5c5); font-size: 11px; font-weight: 700; cursor: move; user-select: none; touch-action: none;
@@ -2953,23 +3044,47 @@ onBeforeUnmount(() => {
 }
 .theater-layer-root-drop.is-drop-target { border-color: #38bdf8; color: #7dd3fc; background: rgba(56, 189, 248, .1); }
 .theater-layer-row {
-  position: relative; width: 100%; height: 31px; display: flex; align-items: center; gap: 7px; border: 0;
-  color: var(--sc-text-primary, #f4f4f5); background: transparent; font-size: 12px; text-align: left; cursor: pointer;
+  position: relative; box-sizing: border-box; width: 100%; height: 38px; display: flex; align-items: center; gap: 5px;
+  color: var(--sc-text-primary, #f4f4f5); background: transparent; font-size: 12px; text-align: left;
   transition: color .14s ease, background .14s ease;
 }
 .theater-layer-row:hover { background: var(--sc-sidebar-hover, rgba(255, 255, 255, .08)); }
-.theater-layer-row:active { cursor: grabbing; }
 .theater-layer-row.is-active { color: var(--sc-text-primary, #f4f4f5); background: color-mix(in srgb, var(--theater-accent) 18%, transparent); }
+.theater-layer-row.is-disabled .theater-layer-row__select { cursor: default; }
+.theater-layer-row.is-hidden .theater-layer-row__preview,
+.theater-layer-row.is-hidden .theater-layer-row__name { opacity: .46; }
 .theater-layer-row.is-drop-inside { outline: 1px solid #38bdf8; outline-offset: -2px; background: rgba(56, 189, 248, .12); }
 .theater-layer-row.is-drop-before::before, .theater-layer-row.is-drop-after::after {
   position: absolute; right: 5px; left: 5px; height: 2px; border-radius: 1px; background: #38bdf8; content: '';
 }
 .theater-layer-row.is-drop-before::before { top: 0; }
 .theater-layer-row.is-drop-after::after { bottom: 0; }
-.theater-layer-row__grip { flex: 0 0 auto; color: var(--sc-fg-muted, #71717a); font-size: 14px; cursor: grab; }
-.theater-layer-row__type { width: 22px; color: var(--sc-fg-muted, #71717a); font-size: 10px; }
+.theater-layer-row__grip { width: 16px; height: 100%; flex: 0 0 16px; display: grid; place-items: center; color: var(--sc-fg-muted, #71717a); font-size: 14px; cursor: grab; }
+.theater-layer-row__grip:active { cursor: grabbing; }
+.theater-layer-row__select {
+  min-width: 0; height: 100%; flex: 1; display: flex; align-items: center; gap: 7px; padding: 0; border: 0;
+  color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer;
+}
+.theater-layer-row__select:focus-visible { outline: 2px solid var(--theater-accent); outline-offset: -2px; }
+.theater-layer-row__preview {
+  --layer-preview-color: var(--sc-bg-input, #3f3f46);
+  width: 26px; height: 26px; flex: 0 0 26px; display: grid; place-items: center; overflow: hidden;
+  border: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .12)); border-radius: 4px;
+  color: var(--sc-text-secondary, #b5b5c5); background: color-mix(in srgb, var(--layer-preview-color) 38%, var(--sc-bg-input, #3f3f46));
+  font-size: 15px; transition: opacity .14s ease;
+}
+.theater-layer-row__preview img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .theater-layer-row__name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.theater-layer-row small { color: #eab308; font-size: 9px; }
+.theater-layer-row small { flex: 0 0 auto; color: #eab308; font-size: 9px; }
+.theater-layer-row__actions { height: 100%; flex: 0 0 auto; display: flex; align-items: center; gap: 1px; padding-right: 5px; }
+.theater-layer-row__action {
+  width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px;
+  color: var(--sc-fg-muted, #71717a); background: transparent; font-size: 14px; cursor: pointer;
+  transition: color .14s ease, background .14s ease;
+}
+.theater-layer-row__action:hover { color: var(--sc-text-primary, #f4f4f5); background: color-mix(in srgb, var(--sc-text-primary, #f4f4f5) 9%, transparent); }
+.theater-layer-row__action.is-enabled { color: var(--sc-text-primary, #f4f4f5); }
+.theater-layer-row__action:focus-visible { outline: 2px solid var(--theater-accent); outline-offset: 1px; }
 .theater-inspector { display: grid; gap: 8px; padding: 10px; border-top: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08)); }
 .theater-drawing-inspector-row { display: grid; grid-template-columns: minmax(0, 1fr) 42px; align-items: center; gap: 8px; }
 .theater-drawing-inspector-row span { color: var(--sc-fg-muted, #71717a); font-size: 10px; text-align: right; }
