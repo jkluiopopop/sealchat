@@ -84,7 +84,20 @@ const resourceUploading = ref(false)
 const scenePanelOpen = ref(false)
 const inspectorPanelOpen = ref(false)
 const layerPanelOpen = ref(false)
+const toolbarColorsVisible = ref(false)
 const MessageImageEditor = defineAsyncComponent(() => import('@/components/chat/MessageImageEditor.vue'))
+const theaterPopoverThemeOverrides = {
+  color: 'color-mix(in srgb, var(--sc-bg-surface, #262626) 48%, transparent)',
+  boxShadow: '0 14px 34px rgba(0, 0, 0, .2)',
+}
+
+const revealToolbarColors = () => { toolbarColorsVisible.value = true }
+const hideToolbarColors = () => { toolbarColorsVisible.value = false }
+const handleToolbarFocusOut = (event: FocusEvent) => {
+  const toolbar = event.currentTarget as HTMLElement | null
+  if (event.relatedTarget instanceof Node && toolbar?.contains(event.relatedTarget)) return
+  hideToolbarColors()
+}
 
 type ImageTarget =
   | { kind: 'scene', target: 'background' | 'foreground' }
@@ -267,6 +280,7 @@ interface PanelLayout {
 }
 
 const panelLayoutStorageKey = 'sealchat:theater-panel-layout:v1'
+const panelTopInset = 58
 const panelMinimums: Record<PanelId, { width: number, height: number }> = {
   scene: { width: 140, height: 180 },
   inspector: { width: 240, height: 240 },
@@ -289,10 +303,10 @@ const panelDefaultLayout = (id: PanelId): PanelLayout => {
   const workspaceWidth = workspace?.clientWidth || 960
   const workspaceHeight = workspace?.clientHeight || 640
   const width = id === 'scene' ? 168 : id === 'inspector' ? 280 : 300
-  const height = Math.max(panelMinimums[id].height, workspaceHeight - 24)
+  const height = Math.max(panelMinimums[id].height, workspaceHeight - panelTopInset - 12)
   return {
     x: id === 'scene' ? 12 : Math.max(12, workspaceWidth - width - 12),
-    y: 12,
+    y: panelTopInset,
     width,
     height,
   }
@@ -303,10 +317,13 @@ const clampPanelLayout = (id: PanelId, layout: PanelLayout): PanelLayout => {
   const workspaceHeight = Math.max(1, workspaceRef.value?.clientHeight || 640)
   const minimum = panelMinimums[id]
   const width = Math.min(workspaceWidth, Math.max(minimum.width, Number(layout.width) || minimum.width))
-  const height = Math.min(workspaceHeight, Math.max(minimum.height, Number(layout.height) || minimum.height))
+  const availableHeight = Math.max(1, workspaceHeight - panelTopInset)
+  const height = Math.min(availableHeight, Math.max(minimum.height, Number(layout.height) || minimum.height))
+  const minimumY = Math.min(panelTopInset, Math.max(0, workspaceHeight - height))
+  const maximumY = Math.max(minimumY, workspaceHeight - height)
   return {
     x: Math.min(Math.max(0, Number(layout.x) || 0), Math.max(0, workspaceWidth - width)),
-    y: Math.min(Math.max(0, Number(layout.y) || 0), Math.max(0, workspaceHeight - height)),
+    y: Math.min(Math.max(minimumY, Number(layout.y) || minimumY), maximumY),
     width,
     height,
   }
@@ -2355,7 +2372,14 @@ onBeforeUnmount(() => {
 <template>
   <section class="theater-stage-app">
     <input ref="imageInputRef" class="theater-image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/webm,.webm" @change="handleImageInput">
-    <header class="theater-stage-toolbar">
+    <header
+      class="theater-stage-toolbar"
+      :class="{ 'is-controls-visible': toolbarColorsVisible }"
+      @pointerenter="revealToolbarColors"
+      @pointerleave="hideToolbarColors"
+      @focusin="revealToolbarColors"
+      @focusout="handleToolbarFocusOut"
+    >
       <n-tooltip trigger="hover">
         <template #trigger>
           <n-button class="theater-toolbar-exit" quaternary size="small" aria-label="退出小剧场" @click="emit('exitTheater')">
@@ -2764,7 +2788,7 @@ onBeforeUnmount(() => {
             <div class="theater-image-actions">
               <n-button size="tiny" :disabled="!canUploadResources" :loading="resourceUploading" @click="requestImageUpload({ kind: 'scene', target: surface.target })"><template #icon><n-icon><Photo /></n-icon></template>上传</n-button>
               <n-button size="tiny" quaternary :disabled="!canUploadResources || !store.state.liveState[surface.target] || store.state.liveState[surface.target]?.animated" :aria-label="`编辑${surface.label}`" @click="openImageEditor({ kind: 'scene', target: surface.target })"><template #icon><n-icon><Edit /></n-icon></template></n-button>
-              <n-popover trigger="click" placement="right-start" :width="300" :show-arrow="false">
+              <n-popover :theme-overrides="theaterPopoverThemeOverrides" trigger="click" placement="right-start" :width="300" :show-arrow="false">
                 <template #trigger>
                   <n-button size="tiny" quaternary :aria-label="`设置${surface.label}`"><template #icon><n-icon><Settings /></n-icon></template></n-button>
                 </template>
@@ -2935,19 +2959,59 @@ onBeforeUnmount(() => {
 <style scoped>
 .theater-stage-app {
   --theater-accent: #3b82f6;
-  --theater-panel: color-mix(in srgb, var(--sc-bg-surface, #262626) 96%, transparent);
-  --theater-panel-muted: color-mix(in srgb, var(--sc-bg-layer, #3f3f46) 76%, transparent);
+  --theater-panel: color-mix(in srgb, var(--sc-bg-surface, #262626) 48%, transparent);
+  --theater-panel-muted: color-mix(in srgb, var(--sc-bg-layer, #3f3f46) 56%, transparent);
   --theater-border: var(--sc-border-strong, rgba(255, 255, 255, .16));
-  height: 100%; min-width: 0; display: flex; flex-direction: column;
+  position: relative; height: 100%; min-width: 0; display: flex; flex-direction: column;
   color: var(--sc-text-primary, #f4f4f5); background: var(--sc-bg-page, #141418);
+}
+:global(.theater-secondary-surface) {
+  border: 1px solid var(--sc-border-strong, rgba(255, 255, 255, .16)) !important;
+  color: var(--sc-text-primary, #f4f4f5);
+  background: color-mix(in srgb, var(--sc-bg-surface, #262626) 48%, transparent) !important;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .2) !important;
+  backdrop-filter: blur(8px) saturate(110%);
+  -webkit-backdrop-filter: blur(8px) saturate(110%);
 }
 .theater-image-input { display: none; }
 .theater-stage-toolbar {
-  height: 46px; flex: 0 0 46px; display: flex; align-items: center; gap: 7px; padding: 0 8px;
-  overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid var(--sc-border-mute, rgba(255, 255, 255, .08));
-  background: var(--sc-bg-header, #262626); scrollbar-width: none;
+  position: absolute; z-index: 20; top: 0; right: 0; left: 0; box-sizing: border-box;
+  height: 46px; display: flex; align-items: center; gap: 7px; padding: 0 8px;
+  overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid transparent;
+  background: transparent; box-shadow: none; scrollbar-width: none;
+  transition: background-color .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.theater-stage-toolbar.is-controls-visible {
+  border-bottom-color: var(--sc-border-mute, rgba(255, 255, 255, .08));
+  background: color-mix(in srgb, var(--sc-bg-header, #262626) 92%, transparent);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, .2);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
 .theater-stage-toolbar::-webkit-scrollbar { display: none; }
+.theater-stage-toolbar :deep(.n-button) {
+  transition: color .18s ease, background-color .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.theater-stage-toolbar:not(.is-controls-visible) :deep(.n-button:not(:disabled)) {
+  --n-color: transparent !important;
+  --n-color-hover: transparent !important;
+  --n-color-pressed: transparent !important;
+  --n-color-focus: transparent !important;
+  --n-border: 1px solid transparent !important;
+  --n-border-hover: 1px solid transparent !important;
+  --n-border-pressed: 1px solid transparent !important;
+  --n-border-focus: 1px solid transparent !important;
+  --n-text-color: rgba(255, 255, 255, .92) !important;
+  --n-text-color-hover: #fff !important;
+  --n-text-color-pressed: #fff !important;
+  --n-text-color-focus: #fff !important;
+  color: rgba(255, 255, 255, .92) !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .72));
+}
+.theater-stage-toolbar:not(.is-controls-visible) :deep(.n-button.is-active:not(:disabled)) {
+  box-shadow: inset 0 -2px rgba(255, 255, 255, .82) !important;
+}
 .theater-toolbar-exit, .theater-bulk-select-tool, .theater-quick-delete-tool, .theater-panel-switches, .theater-stage-object-actions { flex: 0 0 auto; }
 .theater-stage-title {
   width: 8em; flex: 0 0 8em; overflow: hidden; color: var(--sc-text-primary, #f4f4f5);
@@ -2983,7 +3047,7 @@ onBeforeUnmount(() => {
 .theater-floating-panel {
   position: absolute; z-index: 10; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
   border: 1px solid var(--theater-border); border-radius: 7px; background: var(--theater-panel);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, .24); backdrop-filter: blur(12px);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .2); backdrop-filter: blur(8px) saturate(110%); -webkit-backdrop-filter: blur(8px) saturate(110%);
   resize: both; max-width: 100%; max-height: 100%; animation: theater-panel-in .16s ease-out;
 }
 @keyframes theater-panel-in { from { opacity: 0; transform: translateY(-4px); } }
@@ -3098,5 +3162,9 @@ onBeforeUnmount(() => {
 @media (max-width: 720px) {
   .theater-stage-title { width: 6em; flex-basis: 6em; }
   .theater-stage-reset-camera { width: 34px; padding: 0; font-size: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .theater-stage-toolbar, .theater-stage-toolbar :deep(.n-button), .theater-floating-panel { transition: none; }
+  .theater-floating-panel { animation: none; }
 }
 </style>

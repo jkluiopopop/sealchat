@@ -112,7 +112,7 @@ const handlePrimaryClick = () => {
       </n-button>
       </template>
 
-      <div class="theater-drawing-palette">
+      <div class="theater-drawing-palette theater-secondary-surface">
       <section>
         <div class="theater-drawing-palette__heading">画笔</div>
         <div class="theater-drawing-tool-grid is-brush-grid">
@@ -268,11 +268,7 @@ const handlePrimaryClick = () => {
   display: grid;
   gap: 13px;
   padding: 12px;
-  border: 1px solid var(--sc-border-strong, rgba(255, 255, 255, .16));
   border-radius: 7px;
-  color: var(--sc-text-primary, #f4f4f5);
-  background: color-mix(in srgb, var(--sc-bg-surface, #262626) 98%, transparent);
-  box-shadow: 0 18px 42px rgba(0, 0, 0, .34);
 }
 .theater-drawing-palette section { display: grid; gap: 7px; }
 .theater-drawing-palette__heading {
