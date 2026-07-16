@@ -556,9 +556,9 @@ const updateSelectedScale = (dimension: 'scaleX' | 'scaleY', value: number | nul
   }
 }
 
-const selectedMovementRootIds = () => {
-  const selected = selectedIdSet.value
-  return props.store.selection.selectedIds.filter((id) => {
+const rootObjectIds = (objectIds: string[]) => {
+  const selected = new Set(objectIds)
+  return objectIds.filter((id) => {
     let parentId = getObject(id)?.parentId || null
     while (parentId) {
       if (selected.has(parentId)) return false
@@ -567,6 +567,8 @@ const selectedMovementRootIds = () => {
     return true
   })
 }
+
+const selectedMovementRootIds = () => rootObjectIds(props.store.selection.selectedIds)
 
 const parentOptions = computed(() => Object.values(props.store.activeObjects.value)
   .filter((object) => object.type === 'group'
@@ -605,6 +607,35 @@ const objectIsDescendantOf = (objectId: string, ancestorId: string) => {
     parentId = getObject(parentId)?.parentId || null
   }
   return false
+}
+
+interface MarqueeBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+const marqueeContains = (outer: MarqueeBounds, inner: MarqueeBounds) => {
+  const epsilon = 0.01
+  return inner.width > 0
+    && inner.height > 0
+    && inner.x >= outer.x - epsilon
+    && inner.y >= outer.y - epsilon
+    && inner.x + inner.width <= outer.x + outer.width + epsilon
+    && inner.y + inner.height <= outer.y + outer.height + epsilon
+}
+
+const marqueeObjectBounds = (object: StageObject, node: Konva.Group, relativeTo: Konva.Stage) => {
+  const target = object.type === 'group'
+    ? node.findOne<Konva.Rect>('.theater-object-group-control-bounds')
+    : node
+  if (!target?.isVisible()) return null
+  return target.getClientRect({
+    relativeTo,
+    skipShadow: true,
+    skipStroke: object.type === 'group',
+  })
 }
 
 const canvasSelectionTarget = (objectId: string) => {
@@ -1752,22 +1783,41 @@ const stopPan = (event?: Konva.KonvaEventObject<PointerEvent>) => {
   }
   panning = false
   if (!marqueeStart || !selectionRect || !stage) return
-  const box = selectionRect.getClientRect({ relativeTo: stage })
-  const hits = Object.values(props.store.activeObjects.value)
-    .filter((object) => object.visible && canEditObject(object))
-    .filter((object) => {
-      const node = objectNodes.get(object.id)
-      return node && Konva.Util.haveIntersection(box, node.getClientRect({ relativeTo: stage! }))
-    })
-    .map((object) => object.id)
-  const next = marqueeAdditive
-    ? [...props.store.selection.selectedIds, ...hits]
-    : hits
-  props.store.setSelectedObjectIds(next, hits[hits.length - 1])
+  const additive = marqueeAdditive
+  const box = {
+    x: selectionRect.x(),
+    y: selectionRect.y(),
+    width: selectionRect.width(),
+    height: selectionRect.height(),
+  }
   marqueeStart = null
   marqueeAdditive = false
   selectionRect.visible(false)
   interactionLayer?.batchDraw()
+  if (event?.type === 'pointercancel') return
+  if (Math.hypot(box.width, box.height) < 4) {
+    if (!additive) props.store.clearSelection()
+    return
+  }
+  const hits = Object.values(props.store.activeObjects.value)
+    .filter((object) => object.visible && canEditObject(object))
+    .filter((object) => {
+      const node = objectNodes.get(object.id)
+      if (!node?.isVisible()) return false
+      const bounds = marqueeObjectBounds(object, node, stage!)
+      return bounds ? marqueeContains(box, bounds) : false
+    })
+    .map((object) => object.id)
+  const rootHits = rootObjectIds(hits)
+  const next = rootObjectIds(additive
+    ? [...props.store.selection.selectedIds, ...rootHits]
+    : rootHits)
+  const primaryHit = [...rootHits].reverse().find((id) => next.includes(id))
+  const currentPrimary = props.store.state.selectedObjectId
+  props.store.setSelectedObjectIds(
+    next,
+    primaryHit || (additive && currentPrimary && next.includes(currentPrimary) ? currentPrimary : null),
+  )
 }
 
 const targetImageRef = (target: ImageTarget) => target.kind === 'scene'
