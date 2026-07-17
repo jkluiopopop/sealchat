@@ -11,6 +11,7 @@ interface Props {
   visible: boolean;
   channelId?: string;
   refreshVersion?: number;
+  revealLatestTaskVersion?: number;
 }
 
 interface Emits {
@@ -379,6 +380,18 @@ watch(
     if (!props.visible || !props.channelId) {
       return;
     }
+    fetchTasks();
+  },
+);
+
+watch(
+  () => props.revealLatestTaskVersion,
+  () => {
+    if (!props.visible || !props.channelId) {
+      return;
+    }
+    statusFilter.value = 'all';
+    page.value = 1;
     fetchTasks();
   },
 );

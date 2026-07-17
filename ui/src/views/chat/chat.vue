@@ -1538,6 +1538,7 @@ const archiveDrawerVisible = ref(false);
 const exportManagerVisible = ref(false);
 const exportDialogVisible = ref(false);
 const exportManagerRefreshVersion = ref(0);
+const exportManagerRevealVersion = ref(0);
 const battleReportDrawerVisible = ref(false);
 const channelFavoritesVisible = ref(false);
 const importDialogVisible = ref(false);
@@ -6108,6 +6109,13 @@ const showCloudUploadDialog = (payload: CloudUploadResult) => {
   });
 };
 
+const refreshExportManager = (opts?: { revealLatestTask?: boolean }) => {
+  exportManagerRefreshVersion.value += 1;
+  if (opts?.revealLatestTask) {
+    exportManagerRevealVersion.value += 1;
+  }
+};
+
 const pollExportTask = async (taskId: string, opts?: { autoUpload?: boolean; format?: string }) => {
   const maxAttempts = 30;
   const interval = 2000;
@@ -6115,6 +6123,7 @@ const pollExportTask = async (taskId: string, opts?: { autoUpload?: boolean; for
     try {
       const status = await chat.getExportTaskStatus(taskId);
       if (status.status === 'done') {
+        refreshExportManager();
         message.success('导出完成，正在下载文件');
         const { blob, fileName } = await chat.downloadExportResult(taskId, status.file_name);
         triggerBlobDownload(blob, fileName);
@@ -6134,6 +6143,7 @@ const pollExportTask = async (taskId: string, opts?: { autoUpload?: boolean; for
         return;
       }
       if (status.status === 'failed') {
+        refreshExportManager();
         message.error(status.message || '导出任务失败');
         return;
       }
@@ -6223,7 +6233,7 @@ const handleExportMessages = async (params: {
     };
     const result = await chat.createExportTask(payload);
     message.info(`导出任务已创建（#${result.task_id}），正在生成文件…`);
-    exportManagerRefreshVersion.value += 1;
+    refreshExportManager({ revealLatestTask: true });
     exportDialogVisible.value = false;
     const shouldAutoUpload = Boolean(params.autoUpload && params.format === 'json' && canUseCloudUpload.value);
     void pollExportTask(result.task_id, { autoUpload: shouldAutoUpload, format: params.format });
@@ -18676,6 +18686,7 @@ onBeforeUnmount(() => {
     v-model:visible="exportManagerVisible"
     :channel-id="chat.curChannel?.id"
     :refresh-version="exportManagerRefreshVersion"
+    :reveal-latest-task-version="exportManagerRevealVersion"
     @request-export="exportDialogVisible = true"
   />
   <ExportDialog
