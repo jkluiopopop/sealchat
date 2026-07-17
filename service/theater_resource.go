@@ -260,7 +260,7 @@ func GetTheaterResource(ctx context.Context, actorID, worldID, channelID, resour
 }
 
 func GetTheaterResourceForObserver(ctx context.Context, observerWorldID, channelID, resourceID string) (*TheaterResourcePublic, error) {
-	if _, err := CanObserverAccessChannel(channelID, observerWorldID); err != nil {
+	if err := canObserverAccessTheaterScope(channelID, observerWorldID); err != nil {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "没有 Theater 旁观权限", 403, nil)
 	}
 	room, err := model.TheaterRoomCreateIfMissing(observerWorldID, channelID, "observer")

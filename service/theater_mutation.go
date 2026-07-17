@@ -48,7 +48,7 @@ func ApplyTheaterMutation(ctx context.Context, actorID string, command TheaterMu
 		RecordTheaterMetric("theater_permission_denied_total", map[string]string{"permission": permission}, 1)
 		return nil, err
 	}
-	if channel.Status != "" && channel.Status != model.ChannelStatusActive {
+	if channel != nil && channel.Status != "" && channel.Status != model.ChannelStatusActive {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "归档频道不可写 Theater", 403, nil)
 	}
 	payloadHash := theaterJSONHash(normalizedPayload)

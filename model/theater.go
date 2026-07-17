@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -10,10 +11,16 @@ import (
 
 const TheaterSchemaVersion = 1
 
+const (
+	TheaterScopeChannel = "channel"
+	TheaterScopeWorld   = "world"
+)
+
 type TheaterRoomModel struct {
 	StringPKBaseModel
 	WorldID       string `json:"worldId" gorm:"size:100;not null;uniqueIndex:udx_theater_room_world_channel,priority:1"`
 	ChannelID     string `json:"channelId" gorm:"size:100;not null;uniqueIndex:udx_theater_room_world_channel,priority:2"`
+	ScopeType     string `json:"scopeType" gorm:"size:16;not null;default:channel;index"`
 	Revision      int64  `json:"revision" gorm:"not null;default:0"`
 	SchemaVersion int    `json:"schemaVersion" gorm:"not null;default:1"`
 	ActiveSceneID string `json:"activeSceneId,omitempty" gorm:"size:100;index"`
@@ -224,10 +231,16 @@ func autoMigrateTheaterModels(conn *gorm.DB) error {
 	if err := conn.AutoMigrate(theaterModels()...); err != nil {
 		return err
 	}
+	if err := conn.Exec("UPDATE theater_rooms SET scope_type = ? WHERE scope_type IS NULL OR scope_type = ''", TheaterScopeChannel).Error; err != nil {
+		return err
+	}
 	return conn.Exec("UPDATE theater_objects SET scale_x = scale, scale_y = scale WHERE scale <> 1 AND scale_x = 1 AND scale_y = 1").Error
 }
 
 func TheaterRoomFindByScope(worldID, channelID string) (*TheaterRoomModel, error) {
+	if strings.TrimSpace(channelID) == "" {
+		return TheaterRoomFindByWorld(worldID)
+	}
 	var room TheaterRoomModel
 	err := GetDB().Where("world_id = ? AND channel_id = ?", worldID, channelID).First(&room).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -237,6 +250,9 @@ func TheaterRoomFindByScope(worldID, channelID string) (*TheaterRoomModel, error
 }
 
 func TheaterRoomCreateIfMissing(worldID, channelID, actorID string) (*TheaterRoomModel, error) {
+	if strings.TrimSpace(channelID) == "" {
+		return TheaterRoomCreateWorldIfMissing(worldID, actorID)
+	}
 	room, err := TheaterRoomFindByScope(worldID, channelID)
 	if err != nil || room != nil {
 		return room, err
@@ -244,6 +260,7 @@ func TheaterRoomCreateIfMissing(worldID, channelID, actorID string) (*TheaterRoo
 	room = &TheaterRoomModel{
 		WorldID:       worldID,
 		ChannelID:     channelID,
+		ScopeType:     TheaterScopeChannel,
 		SchemaVersion: TheaterSchemaVersion,
 		Status:        "active",
 		StateJSON:     "{}",
@@ -254,6 +271,42 @@ func TheaterRoomCreateIfMissing(worldID, channelID, actorID string) (*TheaterRoo
 		return nil, err
 	}
 	return TheaterRoomFindByScope(worldID, channelID)
+}
+
+func TheaterRoomFindByWorld(worldID string) (*TheaterRoomModel, error) {
+	var room TheaterRoomModel
+	err := GetDB().Where("world_id = ? AND channel_id = ?", worldID, "").First(&room).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &room, err
+}
+
+func TheaterRoomCreateWorldIfMissing(worldID, actorID string) (*TheaterRoomModel, error) {
+	room, err := TheaterRoomFindByWorld(worldID)
+	if err != nil || room != nil {
+		return room, err
+	}
+	room = &TheaterRoomModel{
+		WorldID:       worldID,
+		ChannelID:     "",
+		ScopeType:     TheaterScopeWorld,
+		SchemaVersion: TheaterSchemaVersion,
+		Status:        "active",
+		StateJSON:     "{}",
+		CreatedBy:     actorID,
+		UpdatedBy:     actorID,
+	}
+	if err := GetDB().Clauses(clause.OnConflict{DoNothing: true}).Create(room).Error; err != nil {
+		return nil, err
+	}
+	return TheaterRoomFindByWorld(worldID)
+}
+
+func TheaterRoomListByWorld(worldID string) ([]TheaterRoomModel, error) {
+	var rooms []TheaterRoomModel
+	err := GetDB().Where("world_id = ? AND channel_id <> ?", worldID, "").Order("updated_at DESC, id ASC").Find(&rooms).Error
+	return rooms, err
 }
 
 func TheaterMutationFindByID(roomID, mutationID string) (*TheaterMutationModel, error) {

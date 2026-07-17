@@ -78,7 +78,11 @@ func TriggerTheaterAction(ctx context.Context, actorID string, command TheaterAc
 	case "chat.insert":
 		return &TheaterActionResult{Kind: "local", Descriptor: selected.Payload}, nil
 	case "chat.send":
-		chat, err := sendTheaterChat(ctx, actorID, command.WorldID, command.ChannelID, mutationID, selected.Payload)
+		inputChannelID := strings.TrimSpace(command.InputChannelID)
+		if inputChannelID == "" {
+			inputChannelID = strings.TrimSpace(command.ChannelID)
+		}
+		chat, err := sendTheaterChat(ctx, actorID, command.WorldID, inputChannelID, mutationID, selected.Payload)
 		if err != nil {
 			return nil, err
 		}

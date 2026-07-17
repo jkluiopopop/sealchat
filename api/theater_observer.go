@@ -11,6 +11,13 @@ import (
 )
 
 func BindTheaterObserverRoutes(router fiber.Router) {
+	worldBase := "/public/ob/:slug/theater"
+	router.Get(worldBase, TheaterObserverSnapshotGet)
+	router.Get(worldBase+"/events", TheaterObserverEventsGet)
+	router.Get(worldBase+"/resources/:resourceId/variants/:variant/content", TheaterObserverResourceVariantContent)
+	router.Get(worldBase+"/resources/:resourceId/content", TheaterObserverResourceContent)
+	router.Get(worldBase+"/resources/:resourceId", TheaterObserverResourceGet)
+
 	base := "/public/ob/channels/:channelId/theater"
 	router.Get(base, TheaterObserverSnapshotGet)
 	router.Get(base+"/events", TheaterObserverEventsGet)
@@ -98,7 +105,10 @@ func theaterObserverResourceContent(c *fiber.Ctx, variant string) error {
 }
 
 func resolveTheaterObserverWorld(c *fiber.Ctx) (string, error) {
-	slug := strings.TrimSpace(c.Query("ob_slug"))
+	slug := strings.TrimSpace(c.Params("slug"))
+	if slug == "" {
+		slug = strings.TrimSpace(c.Query("ob_slug"))
+	}
 	if slug == "" {
 		slug = strings.TrimSpace(c.Get("X-Observer-Slug"))
 	}

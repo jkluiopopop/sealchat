@@ -66,6 +66,7 @@ const props = defineProps<{
   store: TheaterStageStore
   worldId: string
   channelId: string
+  scopeType?: 'channel' | 'world'
   characterSnapshot: ChatCharactersSnapshotPayload
   chatBridgeOnline: boolean
   chatVisible: boolean
@@ -2009,7 +2010,9 @@ const applyImageUrl = (target: ImageTarget, url: string, resourceId?: string, mi
 }
 
 const theaterResourcePath = (resourceId = '') => {
-  const base = `api/v1/worlds/${encodeURIComponent(props.worldId)}/channels/${encodeURIComponent(props.channelId)}/theater/resources`
+  const base = props.scopeType === 'world'
+    ? `api/v1/worlds/${encodeURIComponent(props.worldId)}/theater/resources`
+    : `api/v1/worlds/${encodeURIComponent(props.worldId)}/channels/${encodeURIComponent(props.channelId)}/theater/resources`
   return resourceId ? `${base}/${encodeURIComponent(resourceId)}` : base
 }
 
@@ -2550,7 +2553,7 @@ onBeforeUnmount(() => {
           :viewport-width="viewportSize.width"
           :viewport-height="viewportSize.height"
         />
-        <TheaterDialogueOverlay :runtime="dialogueRuntime" :character-snapshot="characterSnapshot" :channel-id="channelId" />
+        <TheaterDialogueOverlay :runtime="dialogueRuntime" :character-snapshot="characterSnapshot" :world-id="worldId" :channel-id="channelId" />
         <div v-if="appearancePreview" class="theater-appearance-preview-layer">
           <TheaterPresentationPreview
             :draft="appearancePreview.draft"

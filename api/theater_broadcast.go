@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -166,6 +167,12 @@ func theaterSnapshotEventWithURL(worldID, channelID, roomID string, revision int
 }
 
 func theaterSnapshotURL(worldID, channelID, observerSlug string) string {
+	if strings.TrimSpace(channelID) == "" && observerSlug != "" {
+		return "/api/v1/public/ob/" + url.PathEscape(observerSlug) + "/theater"
+	}
+	if strings.TrimSpace(channelID) == "" {
+		return "/api/v1/worlds/" + url.PathEscape(worldID) + "/theater"
+	}
 	if observerSlug != "" {
 		return "/api/v1/public/ob/channels/" + url.PathEscape(channelID) + "/theater?ob_slug=" + url.QueryEscape(observerSlug)
 	}
@@ -362,6 +369,9 @@ func canConnectionViewTheater(userID string, info *ConnInfo, worldID, channelID 
 	world, _, err := service.ResolveWorldObserverLink(info.ObserverSlug)
 	if err != nil || world == nil || world.ID != worldID {
 		return false
+	}
+	if strings.TrimSpace(channelID) == "" {
+		return true
 	}
 	_, err = service.CanObserverAccessChannel(channelID, worldID)
 	return err == nil

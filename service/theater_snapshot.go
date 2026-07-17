@@ -22,7 +22,7 @@ func GetTheaterSnapshot(_ context.Context, actorID, worldID, channelID string, o
 }
 
 func GetTheaterSnapshotForObserver(_ context.Context, observerWorldID, channelID string, options TheaterSnapshotOptions) (*TheaterSnapshotResult, error) {
-	if _, err := CanObserverAccessChannel(channelID, observerWorldID); err != nil {
+	if err := canObserverAccessTheaterScope(channelID, observerWorldID); err != nil {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "没有 Theater 旁观权限", 403, nil)
 	}
 	return getTheaterSnapshot("observer", observerWorldID, channelID, options, []string{TheaterPermissionView})
@@ -475,7 +475,7 @@ func ListTheaterEvents(_ context.Context, actorID, worldID, channelID string, af
 }
 
 func ListTheaterEventsForObserver(_ context.Context, observerWorldID, channelID string, afterRevision int64, limit int) (*TheaterEventsResult, error) {
-	if _, err := CanObserverAccessChannel(channelID, observerWorldID); err != nil {
+	if err := canObserverAccessTheaterScope(channelID, observerWorldID); err != nil {
 		return nil, newTheaterError(TheaterErrorPermissionDenied, "没有 Theater 旁观权限", 403, nil)
 	}
 	return listTheaterEvents("observer", observerWorldID, channelID, afterRevision, limit, false)

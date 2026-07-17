@@ -73,6 +73,8 @@ interface TheaterMutation {
 interface TheaterSyncOptions {
   worldId: string
   channelId: string
+  inputChannelId?: string
+  scopeType?: 'channel' | 'world'
   store: TheaterStageStore
   sendGatewayAPI: (apiName: string, data: Record<string, unknown>) => Promise<any>
   onPermissionsChange?: (permissions: string[]) => void
@@ -557,9 +559,16 @@ export class TheaterSyncClient {
   private actionQueue: Promise<void> = Promise.resolve()
   private consecutiveConflicts = 0
 
+  private theaterBase() {
+    if (this.options.scopeType === 'world' || !this.options.channelId) {
+      return `api/v1/worlds/${encodeURIComponent(this.options.worldId)}/theater`
+    }
+    return `api/v1/worlds/${encodeURIComponent(this.options.worldId)}/channels/${encodeURIComponent(this.options.channelId)}/theater`
+  }
+
   private readonly onGatewayEvent = (event: any) => {
     const theater = event?.theater
-    if (!theater || theater.worldId !== this.options.worldId || theater.channelId !== this.options.channelId) return
+    if (!theater || theater.worldId !== this.options.worldId || (this.options.scopeType !== 'world' && theater.channelId !== this.options.channelId)) return
     const revision = finite(theater.revision, 0)
     if (revision <= this.revision) return
     if (this.saving) {
@@ -650,10 +659,11 @@ export class TheaterSyncClient {
   }
 
   private postAction(payload: StageActionTriggeredPayload) {
-    return api.post(`api/v1/worlds/${encodeURIComponent(this.options.worldId)}/channels/${encodeURIComponent(this.options.channelId)}/theater/actions/trigger`, {
+    return api.post(`${this.theaterBase()}/actions/trigger`, {
       actionRequestId: mutationId('action'),
       objectId: payload.objectId,
       actionId: payload.actionId,
+      inputChannelId: this.options.inputChannelId || this.options.channelId,
       expectedRevision: this.revision,
     })
   }
@@ -669,7 +679,7 @@ export class TheaterSyncClient {
   private async reload(force = false, localChange?: { base: TheaterDocument, desired: TheaterDocument }) {
     if (!this.started) return
     try {
-      const response = await api.get<TheaterSnapshotResponse>(`api/v1/worlds/${encodeURIComponent(this.options.worldId)}/channels/${encodeURIComponent(this.options.channelId)}/theater`)
+      const response = await api.get<TheaterSnapshotResponse>(this.theaterBase())
       const data = response.data
       const nextRevision = finite(data.revision, 0)
       this.schemaVersion = finite(data.schemaVersion, 1)
@@ -717,7 +727,7 @@ export class TheaterSyncClient {
     try {
       await this.options.sendGatewayAPI('theater.subscribe', {
         worldId: this.options.worldId,
-        channelId: this.options.channelId,
+        channelId: this.options.scopeType === 'world' ? '' : this.options.channelId,
         knownRevision: this.revision,
       })
     } catch (error) {
@@ -763,10 +773,10 @@ export class TheaterSyncClient {
     this.options.onSyncingChange?.(true)
     try {
       for (const mutation of mutations) {
-        const response = await api.post(`api/v1/worlds/${encodeURIComponent(this.options.worldId)}/channels/${encodeURIComponent(this.options.channelId)}/theater/mutations`, {
+        const response = await api.post(`${this.theaterBase()}/mutations`, {
           mutationId: mutationId('mutation'),
           worldId: this.options.worldId,
-          channelId: this.options.channelId,
+          channelId: this.options.scopeType === 'world' ? '' : this.options.channelId,
           expectedRevision: this.revision,
           type: mutation.type,
           payload: mutation.payload,

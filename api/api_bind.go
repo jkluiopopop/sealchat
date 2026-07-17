@@ -532,7 +532,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Put("/channel-identities/:id", ChannelIdentityUpdate)
 	v1Auth.Post("/channel-identities/:id/replace-temporary", ChannelIdentityReplaceTemporary)
 	v1Auth.Delete("/channel-identities/:id", ChannelIdentityDelete)
-	v1Auth.Post("/channels/:channelId/theater-presentations/resolve", TheaterPresentationsResolve)
+	v1Auth.Post("/worlds/:worldId/theater-presentations/resolve", WorldTheaterPresentationsResolve)
 	v1Auth.Post("/channels/:channelId/channel-identity-avatar-reissue", ChannelIdentityAvatarReissue)
 	v1Auth.Post("/channels/:channelId/theater-appearance-assets", TheaterAppearanceAssetUpload)
 	v1Auth.Post("/channels/:channelId/theater-appearance-assets/import", TheaterAppearanceAssetImport)
@@ -598,7 +598,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 
 	// Sticky Note routes
 	BindStickyNoteRoutes(v1Auth)
-	BindTheaterRoutes(v1Auth)
+	BindWorldTheaterRoutes(v1Auth)
 
 	// Channel webhook integrations (admin-only in channel)
 	webhookIntegrations := v1Auth.Group("/channels/:channelId/webhook-integrations")

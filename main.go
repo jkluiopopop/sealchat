@@ -171,6 +171,9 @@ func main() {
 	defer cancel()
 
 	model.DBInit(config)
+	if err := service.MergeAllTheaterRoomsToWorld(); err != nil {
+		log.Printf("合并世界级 Theater 数据失败: %v", err)
+	}
 	if configInit.ShouldSync {
 		syncConfigToDB(config, configInit.SyncSource)
 	}

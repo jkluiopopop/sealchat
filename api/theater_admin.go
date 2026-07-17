@@ -57,6 +57,14 @@ func TheaterAdminReplace(c *fiber.Ctx) error {
 
 func BindTheaterRoutes(router fiber.Router) {
 	base := "/worlds/:worldId/channels/:channelId/theater"
+	bindTheaterRoutes(router, base)
+}
+
+func BindWorldTheaterRoutes(router fiber.Router) {
+	bindTheaterRoutes(router, "/worlds/:worldId/theater")
+}
+
+func bindTheaterRoutes(router fiber.Router, base string) {
 	router.Get(base, TheaterSnapshotGet)
 	router.Post(base+"/mutations", TheaterMutationPost)
 	router.Get(base+"/events", TheaterEventsGet)

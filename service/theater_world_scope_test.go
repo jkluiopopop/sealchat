@@ -1,0 +1,233 @@
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"testing"
+	"time"
+
+	"sealchat/model"
+	"sealchat/pm"
+	"sealchat/utils"
+)
+
+func initWorldTheaterServiceTest(t *testing.T) (string, string, string) {
+	t.Helper()
+	model.DBInit(&utils.AppConfig{
+		DSN: fmt.Sprintf("file:service-world-theater-%s?mode=memory&cache=shared", utils.NewID()),
+		SQLite: utils.SQLiteConfig{
+			EnableWAL:       false,
+			TxLockImmediate: true,
+			ReadConnections: 1,
+			OptimizeOnInit:  false,
+		},
+	})
+	pm.Init()
+	actorID := "owner-" + utils.NewIDWithLength(8)
+	worldID := "world-" + utils.NewIDWithLength(8)
+	channelID := "channel-" + utils.NewIDWithLength(8)
+	if err := model.GetDB().Create(&model.WorldModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: worldID},
+		Name:              "World Theater", OwnerID: actorID, InviteSlug: utils.NewIDWithLength(12), Status: "active",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := model.GetDB().Create(&model.WorldMemberModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: utils.NewID()},
+		WorldID:           worldID, UserID: actorID, Role: model.WorldRoleOwner, JoinedAt: time.Now(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := model.GetDB().Create(&model.ChannelModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: channelID},
+		WorldID:           worldID, Name: "Stage", Status: model.ChannelStatusActive,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	return actorID, worldID, channelID
+}
+
+func worldTheaterPayload(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func worldTheaterRoom(t *testing.T, worldID, channelID string) *model.TheaterRoomModel {
+	t.Helper()
+	room, err := model.TheaterRoomFindByScope(worldID, channelID)
+	if err != nil || room == nil {
+		t.Fatalf("theater room: %#v, %v", room, err)
+	}
+	return room
+}
+
+type worldTheaterChatSenderFunc func(context.Context, TheaterChatSendRequest) (*TheaterChatSendResult, error)
+
+func (function worldTheaterChatSenderFunc) SendTheaterChat(ctx context.Context, request TheaterChatSendRequest) (*TheaterChatSendResult, error) {
+	return function(ctx, request)
+}
+
+func TestWorldTheaterActionChatSendUsesInputChannel(t *testing.T) {
+	actorID, worldID, inputChannelID := initWorldTheaterServiceTest(t)
+	if _, err := ApplyTheaterMutation(nil, actorID, TheaterMutationCommand{
+		MutationID: "world-scene", WorldID: worldID, Type: TheaterMutationSceneCreate,
+		Payload: worldTheaterPayload(t, map[string]any{"sceneId": "world-scene", "name": "World", "order": 1, "state": map[string]any{}}),
+	}, TheaterRequestMeta{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyTheaterMutation(nil, actorID, TheaterMutationCommand{
+		MutationID: "world-object", WorldID: worldID, ExpectedRevision: 1, Type: TheaterMutationObjectCreate,
+		Payload: worldTheaterPayload(t, map[string]any{"sceneId": "world-scene", "object": map[string]any{
+			"id": "world-button", "kind": "button", "name": "Send", "x": 0, "y": 0, "width": 10, "height": 10,
+			"rotation": 0, "z": 0, "orderKey": "a", "visible": true, "interactive": true,
+			"content": map[string]any{}, "metadata": map[string]any{},
+			"actions": []map[string]any{{"id": "send", "type": "chat.send", "payload": map[string]any{"content": "World hello"}}},
+		}}),
+	}, TheaterRequestMeta{}); err != nil {
+		t.Fatal(err)
+	}
+	var received TheaterChatSendRequest
+	SetTheaterChatSender(worldTheaterChatSenderFunc(func(_ context.Context, request TheaterChatSendRequest) (*TheaterChatSendResult, error) {
+		received = request
+		return &TheaterChatSendResult{MessageID: "message"}, nil
+	}))
+	t.Cleanup(func() { SetTheaterChatSender(nil) })
+	if _, err := TriggerTheaterAction(context.Background(), actorID, TheaterActionCommand{
+		ActionRequestID: "world-action", WorldID: worldID, InputChannelID: inputChannelID,
+		ObjectID: "world-button", ActionID: "send", ExpectedRevision: 2,
+	}, TheaterRequestMeta{}); err != nil {
+		t.Fatal(err)
+	}
+	if received.ChannelID != inputChannelID {
+		t.Fatalf("chat channel = %q", received.ChannelID)
+	}
+}
+
+func TestMergeTheaterRoomsToWorld(t *testing.T) {
+	actorID, worldID, firstChannelID := initWorldTheaterServiceTest(t)
+	secondChannelID := "channel-" + utils.NewIDWithLength(8)
+	if err := model.GetDB().Create(&model.ChannelModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: secondChannelID},
+		WorldID:           worldID,
+		Name:              "Second Stage",
+		Status:            model.ChannelStatusActive,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	createStage := func(channelID, sceneID, objectID string) *model.TheaterRoomModel {
+		t.Helper()
+		if _, err := ApplyTheaterMutation(nil, actorID, TheaterMutationCommand{
+			MutationID: "scene-" + sceneID, WorldID: worldID, ChannelID: channelID,
+			Type: TheaterMutationSceneCreate,
+			Payload: worldTheaterPayload(t, map[string]any{
+				"sceneId": sceneID, "name": sceneID, "order": 20, "state": map[string]any{},
+			}),
+		}, TheaterRequestMeta{}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ApplyTheaterMutation(nil, actorID, TheaterMutationCommand{
+			MutationID: "object-" + objectID, WorldID: worldID, ChannelID: channelID,
+			ExpectedRevision: 1, Type: TheaterMutationObjectCreate,
+			Payload: worldTheaterPayload(t, map[string]any{
+				"sceneId": sceneID,
+				"object": map[string]any{
+					"id": objectID, "kind": "button", "name": objectID,
+					"x": 0, "y": 0, "width": 10, "height": 10, "rotation": 0,
+					"z": 0, "orderKey": objectID, "visible": true, "interactive": true,
+					"content": map[string]any{}, "metadata": map[string]any{},
+					"actions": []map[string]any{{
+						"id": "apply", "type": TheaterMutationSceneApply,
+						"payload": map[string]any{"sceneId": sceneID},
+					}},
+				},
+			}),
+		}, TheaterRequestMeta{}); err != nil {
+			t.Fatal(err)
+		}
+		return worldTheaterRoom(t, worldID, channelID)
+	}
+
+	firstRoom := createStage(firstChannelID, "scene-first", "object-first")
+	secondRoom := createStage(secondChannelID, "scene-second", "object-second")
+	attachment := model.AttachmentModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: "attachment-" + utils.NewIDWithLength(8)},
+		Filename:          "stage.png",
+		MimeType:          "image/png",
+		RootID:            firstRoom.ID,
+		RootIDType:        "theater_resource",
+	}
+	if err := model.GetDB().Create(&attachment).Error; err != nil {
+		t.Fatal(err)
+	}
+	readyResource := model.TheaterResourceModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: "resource-ready-" + utils.NewIDWithLength(8)},
+		RoomID:            firstRoom.ID, AttachmentID: attachment.ID, Kind: "static_image",
+		MimeType: "image/png", Status: "ready", CreatedBy: actorID,
+	}
+	pendingResource := model.TheaterResourceModel{
+		StringPKBaseModel: model.StringPKBaseModel{ID: "resource-pending-" + utils.NewIDWithLength(8)},
+		RoomID:            secondRoom.ID, AttachmentID: attachment.ID, Kind: "static_image",
+		MimeType: "image/png", Status: "pending", CreatedBy: actorID,
+	}
+	if err := model.GetDB().Create(&readyResource).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := model.GetDB().Create(&pendingResource).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MergeTheaterRoomsToWorld(worldID); err != nil {
+		t.Fatal(err)
+	}
+	worldRoom, err := model.TheaterRoomFindByWorld(worldID)
+	if err != nil || worldRoom == nil {
+		t.Fatalf("world room: %#v, %v", worldRoom, err)
+	}
+	if worldRoom.ScopeType != model.TheaterScopeWorld || worldRoom.ChannelID != "" || worldRoom.Revision != 0 {
+		t.Fatalf("world room = %#v", worldRoom)
+	}
+	snapshot, err := GetTheaterSnapshot(nil, actorID, worldID, "", TheaterSnapshotOptions{IncludeResources: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Snapshot.Scenes) != 2 || len(snapshot.Snapshot.Resources) != 2 {
+		t.Fatalf("merged snapshot = %#v", snapshot.Snapshot)
+	}
+	if snapshot.Snapshot.Scenes["scene-first"].Order == snapshot.Snapshot.Scenes["scene-second"].Order {
+		t.Fatal("merged scene order must be unique")
+	}
+	for _, resourceID := range []string{readyResource.ID, pendingResource.ID} {
+		var resource model.TheaterResourceModel
+		if err := model.GetDB().Where("id = ?", resourceID).First(&resource).Error; err != nil {
+			t.Fatal(err)
+		}
+		if resource.RoomID != worldRoom.ID {
+			t.Fatalf("resource %s room = %s", resourceID, resource.RoomID)
+		}
+	}
+	var movedAttachment model.AttachmentModel
+	if err := model.GetDB().Where("id = ?", attachment.ID).First(&movedAttachment).Error; err != nil {
+		t.Fatal(err)
+	}
+	if movedAttachment.RootID != worldRoom.ID {
+		t.Fatalf("attachment root = %s", movedAttachment.RootID)
+	}
+	oldRooms, err := model.TheaterRoomListByWorld(worldID)
+	if err != nil || len(oldRooms) != 0 {
+		t.Fatalf("old rooms = %#v, %v", oldRooms, err)
+	}
+
+	if err := MergeTheaterRoomsToWorld(worldID); err != nil {
+		t.Fatal(err)
+	}
+	again, err := model.TheaterRoomFindByWorld(worldID)
+	if err != nil || again == nil || again.ID != worldRoom.ID {
+		t.Fatalf("idempotent room = %#v, %v", again, err)
+	}
+}

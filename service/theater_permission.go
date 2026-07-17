@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/mikespook/gorbac"
@@ -8,6 +9,26 @@ import (
 	"sealchat/model"
 	"sealchat/pm"
 )
+
+func canObserverAccessTheaterScope(channelID, observerWorldID string) error {
+	channelID = strings.TrimSpace(channelID)
+	observerWorldID = strings.TrimSpace(observerWorldID)
+	if channelID != "" {
+		_, err := CanObserverAccessChannel(channelID, observerWorldID)
+		return err
+	}
+	if observerWorldID == "" {
+		return errors.New("OB 旁观范围无效")
+	}
+	world, err := GetWorldByID(observerWorldID)
+	if err != nil {
+		return err
+	}
+	if world == nil || strings.TrimSpace(world.ID) == "" || !strings.EqualFold(strings.TrimSpace(world.Status), "active") {
+		return errors.New("世界不可访问")
+	}
+	return nil
+}
 
 var theaterPermissionMap = map[string]gorbac.Permission{
 	TheaterPermissionView:                pm.PermFuncChannelTheaterView,
@@ -24,8 +45,8 @@ var theaterPermissionMap = map[string]gorbac.Permission{
 func resolveTheaterScope(worldID, channelID string) (*model.WorldModel, *model.ChannelModel, error) {
 	worldID = strings.TrimSpace(worldID)
 	channelID = strings.TrimSpace(channelID)
-	if worldID == "" || channelID == "" {
-		return nil, nil, newTheaterError(TheaterErrorChannelWorldMismatch, "worldId 和 channelId 必填", 400, nil)
+	if worldID == "" {
+		return nil, nil, newTheaterError(TheaterErrorChannelWorldMismatch, "worldId 必填", 400, nil)
 	}
 	world, err := GetWorldByID(worldID)
 	if err != nil {
@@ -33,6 +54,9 @@ func resolveTheaterScope(worldID, channelID string) (*model.WorldModel, *model.C
 	}
 	if world == nil || world.ID == "" {
 		return nil, nil, newTheaterError(TheaterErrorWorldNotFound, "世界不存在", 404, nil)
+	}
+	if channelID == "" {
+		return world, nil, nil
 	}
 	channel, err := model.ChannelGet(channelID)
 	if err != nil {
@@ -55,7 +79,22 @@ func requireTheaterPermission(actorID, worldID, channelID, permission string) (*
 	if err != nil {
 		return nil, nil, err
 	}
-	if pm.CanWithSystemRole(actorID, pm.PermModAdmin) || world.OwnerID == actorID || IsWorldAdmin(worldID, actorID) {
+	admin := pm.CanWithSystemRole(actorID, pm.PermModAdmin) || world.OwnerID == actorID || IsWorldAdmin(worldID, actorID)
+	if channelID == "" {
+		if admin {
+			return world, nil, nil
+		}
+		if !IsWorldMember(worldID, actorID) {
+			return nil, nil, newTheaterError(TheaterErrorPermissionDenied, "没有 World Theater 权限", 403, map[string]any{"permission": permission})
+		}
+		switch permission {
+		case TheaterPermissionView, TheaterPermissionObjectEditDelegated, TheaterPermissionActionTrigger:
+			return world, nil, nil
+		default:
+			return nil, nil, newTheaterError(TheaterErrorPermissionDenied, "没有 World Theater 权限", 403, map[string]any{"permission": permission})
+		}
+	}
+	if admin {
 		return world, channel, nil
 	}
 	permissionObject, ok := theaterPermissionMap[permission]
@@ -107,6 +146,19 @@ func listTheaterPermissions(actorID, worldID, channelID string) []string {
 		return result
 	}
 	admin := pm.CanWithSystemRole(actorID, pm.PermModAdmin) || world.OwnerID == actorID || IsWorldAdmin(worldID, actorID)
+	if channelID == "" {
+		if !IsWorldMember(worldID, actorID) && !admin {
+			return result
+		}
+		if admin {
+			for _, name := range []string{TheaterPermissionView, TheaterPermissionSceneSwitch, TheaterPermissionObjectEdit, TheaterPermissionObjectEditDelegated, TheaterPermissionCharacterEdit, TheaterPermissionResourceUpload, TheaterPermissionResourceDelete, TheaterPermissionActionTrigger, TheaterPermissionAdminRestore} {
+				result = append(result, name)
+			}
+		} else {
+			result = append(result, TheaterPermissionView, TheaterPermissionObjectEditDelegated, TheaterPermissionActionTrigger)
+		}
+		return result
+	}
 	order := []string{TheaterPermissionView, TheaterPermissionSceneSwitch, TheaterPermissionObjectEdit, TheaterPermissionObjectEditDelegated, TheaterPermissionCharacterEdit, TheaterPermissionResourceUpload, TheaterPermissionResourceDelete, TheaterPermissionActionTrigger, TheaterPermissionAdminRestore}
 	for _, name := range order {
 		if admin || pm.CanWithChannelRole(actorID, channelID, theaterPermissionMap[name]) {

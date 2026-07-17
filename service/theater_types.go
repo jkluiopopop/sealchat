@@ -182,6 +182,7 @@ type TheaterActionCommand struct {
 	ActionRequestID  string `json:"actionRequestId"`
 	WorldID          string `json:"worldId"`
 	ChannelID        string `json:"channelId"`
+	InputChannelID   string `json:"inputChannelId"`
 	ObjectID         string `json:"objectId"`
 	ActionID         string `json:"actionId"`
 	ExpectedRevision int64  `json:"expectedRevision"`

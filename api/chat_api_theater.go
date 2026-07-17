@@ -40,10 +40,10 @@ func prepareTheaterSubscription(ctx *ChatContext, request theaterSubscribeReques
 	}
 	request.WorldID = strings.TrimSpace(request.WorldID)
 	request.ChannelID = strings.TrimSpace(request.ChannelID)
-	if request.WorldID == "" || request.ChannelID == "" || request.KnownRevision < 0 {
+	if request.WorldID == "" || request.KnownRevision < 0 {
 		return nil, errors.New("invalid theater subscription scope")
 	}
-	if ctx.ConnInfo.ChannelId != request.ChannelID {
+	if request.ChannelID != "" && ctx.ConnInfo.ChannelId != request.ChannelID {
 		return nil, errors.New("theater subscription channel does not match active channel")
 	}
 	if ctx.IsObserver() && ctx.ObserverWorldID() != request.WorldID {

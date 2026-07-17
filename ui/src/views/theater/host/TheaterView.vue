@@ -231,7 +231,9 @@ const startTheaterSync = async () => {
   }
   const client = new TheaterSyncClient({
     worldId: worldId.value,
-    channelId: channelId.value,
+    channelId: '',
+    inputChannelId: channelId.value,
+    scopeType: 'world',
     store: stageStore,
     sendGatewayAPI: (apiName, data) => chat.sendAPI(apiName, data),
     onPermissionsChange: (permissions) => {
@@ -363,6 +365,7 @@ onBeforeUnmount(() => {
           :store="stageStore"
           :world-id="worldId"
           :channel-id="channelId"
+          scope-type="world"
           :character-snapshot="characterSnapshot"
           :chat-bridge-online="chatBridgeOnline"
           :chat-visible="chatVisible"

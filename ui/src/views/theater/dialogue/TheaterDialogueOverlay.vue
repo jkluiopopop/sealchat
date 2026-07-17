@@ -20,6 +20,7 @@ import { useTheaterAppearanceCache } from '@/composables/useTheaterAppearanceCac
 const props = defineProps<{
   runtime: TheaterDialogueRuntime
   characterSnapshot: ChatCharactersSnapshotPayload
+  worldId: string
   channelId: string
 }>()
 
@@ -115,11 +116,11 @@ onMounted(() => {
   invalidateAppearance = (event: Event) => {
     const detail = (event as CustomEvent<{ channelId?: string }>).detail
     if (String(detail?.channelId || '').trim() !== String(props.channelId).trim()) return
-    appearanceCache.invalidate(props.channelId)
+    appearanceCache.invalidate(props.worldId, props.channelId)
     const actor = message.value?.actor
     if (!actor?.identityId) return
     livePresentation.value = null
-    void appearanceCache.resolve(props.channelId, {
+    void appearanceCache.resolve(props.worldId, props.channelId, {
       identityId: actor.identityId,
       variantId: actor.variantId,
     }).then((resolved) => {
@@ -135,13 +136,13 @@ onMounted(() => {
 })
 
 watch(
-  () => [props.channelId, message.value?.actor.identityId, message.value?.actor.variantId, message.value?.messageId] as const,
+  () => [props.worldId, props.channelId, message.value?.actor.identityId, message.value?.actor.variantId, message.value?.messageId] as const,
   async () => {
     livePresentation.value = null
     const actor = message.value?.actor
     if (!actor?.identityId) return
     try {
-      const resolved = await appearanceCache.resolve(props.channelId, {
+      const resolved = await appearanceCache.resolve(props.worldId, props.channelId, {
         identityId: actor.identityId,
         variantId: actor.variantId,
       })

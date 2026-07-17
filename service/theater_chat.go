@@ -45,6 +45,7 @@ func getTheaterChatSender() TheaterChatSender {
 
 type theaterChatSendPayload struct {
 	Content           string `json:"content"`
+	ChannelID         string `json:"channelId"`
 	IdentityID        string `json:"identityId"`
 	IdentityVariantID string `json:"identityVariantId"`
 	ICMode            string `json:"icMode"`
@@ -52,6 +53,7 @@ type theaterChatSendPayload struct {
 
 func normalizeTheaterChatSendPayload(payload theaterChatSendPayload) (theaterChatSendPayload, error) {
 	payload.Content = strings.TrimSpace(payload.Content)
+	payload.ChannelID = strings.TrimSpace(payload.ChannelID)
 	payload.IdentityID = strings.TrimSpace(payload.IdentityID)
 	payload.IdentityVariantID = strings.TrimSpace(payload.IdentityVariantID)
 	payload.ICMode = strings.ToLower(strings.TrimSpace(payload.ICMode))
@@ -77,6 +79,16 @@ func sendTheaterChat(ctx context.Context, actorID, worldID, channelID, actionReq
 	}
 	payload, err := normalizeTheaterChatSendPayload(payload)
 	if err != nil {
+		return nil, err
+	}
+	if payload.ChannelID != "" {
+		channelID = payload.ChannelID
+	}
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return nil, theaterPayloadError("chat.send 缺少 inputChannelId")
+	}
+	if _, _, err := resolveTheaterScope(worldID, channelID); err != nil {
 		return nil, err
 	}
 	sender := getTheaterChatSender()
