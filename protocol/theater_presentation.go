@@ -97,6 +97,17 @@ type TheaterSpacing struct {
 type TheaterTextLayer struct {
 	Enabled   bool             `json:"enabled"`
 	Transform TheaterTransform `json:"transform"`
+	FontScale float64          `json:"fontScale"`
+}
+
+func (layer *TheaterTextLayer) UnmarshalJSON(data []byte) error {
+	type theaterTextLayer TheaterTextLayer
+	value := theaterTextLayer{FontScale: 1}
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	*layer = TheaterTextLayer(value)
+	return nil
 }
 
 type TheaterDialogueStyle struct {
@@ -170,10 +181,12 @@ func DefaultTheaterDialogueStyle() TheaterDialogueStyle {
 		Speaker: TheaterTextLayer{
 			Enabled:   true,
 			Transform: TheaterTransform{X: 0.08, Y: 0.12, Width: 0.34, Height: 0.12, Opacity: 1, ZIndex: 2},
+			FontScale: 1,
 		},
 		Content: TheaterTextLayer{
 			Enabled:   true,
 			Transform: TheaterTransform{X: 0.08, Y: 0.30, Width: 0.84, Height: 0.56, Opacity: 1, ZIndex: 2},
+			FontScale: 1,
 		},
 		Padding:   TheaterSpacing{Top: 0.16, Right: 0.08, Bottom: 0.12, Left: 0.08},
 		NameGap:   0.04,
@@ -341,6 +354,12 @@ func validateTheaterDialogue(dialogue TheaterDialogueStyle) error {
 	problems = appendError(problems, validateTheaterTransform(dialogue.Transform, "dialogue.transform"))
 	problems = appendError(problems, validateTheaterTransform(dialogue.Speaker.Transform, "dialogue.speaker.transform"))
 	problems = appendError(problems, validateTheaterTransform(dialogue.Content.Transform, "dialogue.content.transform"))
+	if !finiteInRange(dialogue.Speaker.FontScale, 0.25, 4) {
+		problems = append(problems, errors.New("dialogue.speaker.fontScale must be finite and between 0.25 and 4"))
+	}
+	if !finiteInRange(dialogue.Content.FontScale, 0.25, 4) {
+		problems = append(problems, errors.New("dialogue.content.fontScale must be finite and between 0.25 and 4"))
+	}
 	if dialogue.Frame != nil {
 		problems = appendError(problems, validateTheaterLayer(*dialogue.Frame, TheaterLayerSpaceDialogue, "dialogue.frame"))
 	}
