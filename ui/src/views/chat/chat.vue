@@ -5240,12 +5240,29 @@ const openIdentityVariantTheaterPresentationEditor = () => {
   theaterPresentationEditorVisible.value = true;
 };
 
-const handleTheaterPresentationApply = (value: TheaterPresentation | TheaterPresentationPatch) => {
+const handleTheaterPresentationApply = async (value: TheaterPresentation | TheaterPresentationPatch) => {
   if (theaterPresentationEditorMode.value === 'variant') {
     identityVariantForm.theaterPresentation = cloneChannelIdentityTheaterPresentationPatch(value as TheaterPresentationPatch);
+    if (identityVariantDialogMode.value === 'edit' && editingIdentityVariant.value?.id) {
+      await submitIdentityVariantForm({ closeDialog: false, successMessage: false });
+    }
     return;
   }
   identityForm.theaterPresentation = cloneChannelIdentityTheaterPresentation(value as TheaterPresentation);
+  await submitIdentityForm({ closeDialog: false, successMessage: false });
+};
+
+const handleIdentityDecorationEditorShow = async (show: boolean) => {
+  if (show) {
+    identityDecorationEditorVisible.value = true;
+    return;
+  }
+  if (!identityDecorationEditorVisible.value || identitySubmitting.value) {
+    return;
+  }
+  if (await submitIdentityForm({ closeDialog: false, successMessage: false })) {
+    identityDecorationEditorVisible.value = false;
+  }
 };
 
 const setTemporaryIdentityActivateMode = (mode: 'ic' | 'ooc') => {
@@ -5477,10 +5494,14 @@ const handleIdentityVariantSelectorEmoji = (emoji: string) => {
   identityVariantEmojiPickerVisible.value = false;
 };
 
-const submitIdentityVariantForm = async () => {
+const submitIdentityVariantForm = async (options: { closeDialog?: boolean; successMessage?: boolean } = {}) => {
+  const { closeDialog = true, successMessage = true } = options;
+  if (identityVariantSubmitting.value) {
+    return false;
+  }
   if (!chat.curChannel?.id || !editingIdentity.value?.id) {
     message.warning('请先选择频道角色');
-    return;
+    return false;
   }
   const selectorEmoji = String(identityVariantForm.selectorEmoji || '').trim();
   const keyword = String(identityVariantForm.keyword || '').trim();
@@ -5489,14 +5510,14 @@ const submitIdentityVariantForm = async () => {
   const normalizedColor = rawColor ? normalizeHexColor(rawColor) : '';
   if (!selectorEmoji) {
     message.warning('请选择差分表情');
-    return;
+    return false;
   }
   if (!keyword) {
     message.warning('请输入切换关键词');
-    return;
+    return false;
   }
   if (!commitIdentityVariantColorDraft(true)) {
-    return;
+    return false;
   }
   identityVariantSubmitting.value = true;
   try {
@@ -5526,17 +5547,31 @@ const submitIdentityVariantForm = async () => {
       theaterPresentation: cloneChannelIdentityTheaterPresentationPatch(identityVariantForm.theaterPresentation),
       enabled: identityVariantForm.enabled,
     };
+    let savedVariant: ChannelIdentityVariant | null = null;
     if (identityVariantDialogMode.value === 'create') {
-      await chat.channelIdentityVariantCreate(payload);
-      message.success('头像差分已创建');
+      savedVariant = await chat.channelIdentityVariantCreate(payload);
+      if (successMessage) {
+        message.success('头像差分已创建');
+      }
     } else if (editingIdentityVariant.value?.id) {
-      await chat.channelIdentityVariantUpdate(editingIdentityVariant.value.id, payload);
-      message.success('头像差分已更新');
+      savedVariant = await chat.channelIdentityVariantUpdate(editingIdentityVariant.value.id, payload);
+      if (successMessage) {
+        message.success('头像差分已更新');
+      }
     }
-    identityVariantDialogVisible.value = false;
+    if (!closeDialog && savedVariant) {
+      editingIdentityVariant.value = savedVariant;
+      identityVariantDialogMode.value = 'edit';
+      resetIdentityVariantForm(savedVariant);
+    }
+    if (closeDialog) {
+      identityVariantDialogVisible.value = false;
+    }
+    return true;
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || error?.message || '保存差分失败，请稍后重试';
     message.error(errMsg);
+    return false;
   } finally {
     identityVariantSubmitting.value = false;
   }
@@ -5566,17 +5601,21 @@ const deleteIdentityVariant = async (variant: ChannelIdentityVariant) => {
   }
 };
 
-const submitIdentityForm = async () => {
+const submitIdentityForm = async (options: { closeDialog?: boolean; successMessage?: boolean } = {}) => {
+  const { closeDialog = true, successMessage = true } = options;
+  if (identitySubmitting.value) {
+    return false;
+  }
   if (!chat.curChannel?.id) {
     message.warning('请先选择频道');
-    return;
+    return false;
   }
   if (!identityForm.displayName.trim()) {
     message.warning('频道昵称不能为空');
-    return;
+    return false;
   }
   if (!commitIdentityColorDraft(true)) {
-    return;
+    return false;
   }
   const normalizedColor = identityForm.color;
   identitySubmitting.value = true;
@@ -5633,8 +5672,10 @@ const submitIdentityForm = async () => {
       payload.avatarAttachmentId = identityForm.avatarAttachmentId;
       identityAvatarPreview.value = resolveAttachmentUrl(fileToken);
     }
+    let savedIdentity: ChannelIdentity | null = null;
     if (identityDialogMode.value === 'create') {
       const createdIdentity = await chat.channelIdentityCreate(payload);
+      savedIdentity = createdIdentity;
       // Handle character card binding for new identity
       if (createdIdentity?.id && chat.curChannel?.id) {
         if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
@@ -5651,10 +5692,13 @@ const submitIdentityForm = async () => {
           }
         }
       }
-      message.success('频道角色已创建');
+      if (successMessage) {
+        message.success('频道角色已创建');
+      }
     } else if (editingIdentity.value) {
       if (editingIdentity.value.isTemporary) {
         const replacedIdentity = await chat.channelIdentityReplaceTemporary(editingIdentity.value.id, payload);
+        savedIdentity = replacedIdentity;
         if (replacedIdentity?.id && chat.curChannel?.id) {
           if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
             message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
@@ -5670,9 +5714,11 @@ const submitIdentityForm = async () => {
             }
           }
         }
-        message.success('临时频道角色已替换，新身份已生效');
+        if (successMessage) {
+          message.success('临时频道角色已替换，新身份已生效');
+        }
       } else {
-        await chat.channelIdentityUpdate(editingIdentity.value.id, payload);
+        savedIdentity = await chat.channelIdentityUpdate(editingIdentity.value.id, payload);
         // Handle character card binding changes for existing identity
         if (chat.curChannel?.id && identityForm.characterCardId !== identityOriginalCardId.value) {
           if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
@@ -5689,11 +5735,20 @@ const submitIdentityForm = async () => {
             }
           }
         }
-        message.success('频道角色已更新');
+        if (successMessage) {
+          message.success('频道角色已更新');
+        }
       }
     }
     await chat.loadChannelIdentities(chat.curChannel.id, true, currentIdentityTargetUserId.value);
-    identityDialogVisible.value = false;
+    if (!closeDialog && savedIdentity) {
+      editingIdentity.value = savedIdentity;
+      identityDialogMode.value = 'edit';
+      resetIdentityForm(savedIdentity);
+    }
+    if (closeDialog) {
+      identityDialogVisible.value = false;
+    }
 
     // After creating second role, auto-open IC/OOC config panel if auto-switch is enabled
     if (wasCreating && display.settings.autoSwitchRoleOnIcOocToggle) {
@@ -5705,9 +5760,11 @@ const submitIdentityForm = async () => {
         }, 300);
       }
     }
+    return true;
   } catch (error: any) {
     const errMsg = error?.response?.data?.error || '保存失败，请稍后重试';
     message.error(errMsg);
+    return false;
   } finally {
     identitySubmitting.value = false;
   }
@@ -18067,7 +18124,8 @@ onBeforeUnmount(() => {
     </template>
   </n-modal>
   <n-modal
-    v-model:show="identityDecorationEditorVisible"
+    :show="identityDecorationEditorVisible"
+    @update:show="handleIdentityDecorationEditorShow"
     preset="card"
     title="编辑频道角色头像装饰"
     style="max-width: 760px;"
@@ -18082,7 +18140,7 @@ onBeforeUnmount(() => {
     />
     <template #footer>
       <n-space justify="end">
-        <n-button @click="identityDecorationEditorVisible = false">完成</n-button>
+        <n-button :loading="identitySubmitting" @click="handleIdentityDecorationEditorShow(false)">完成</n-button>
       </n-space>
     </template>
   </n-modal>
