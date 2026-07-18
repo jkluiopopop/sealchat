@@ -41,7 +41,7 @@ assert.equal(defaults.dialogue.content.enabled, true)
 assert.equal(defaults.dialogue.speaker.fontScale, 0.85)
 assert.equal(defaults.dialogue.content.fontScale, 1.2)
 assert.equal(defaults.dialogue.contentColor, '#F4F4F5')
-assert.equal(defaults.dialogue.charactersPerSecond, 6)
+assert.equal(defaults.dialogue.charactersPerSecond, 10)
 assert.deepEqual(defaults.narration, { enabled: false, backdropColor: '#000000', backdropOpacity: 1 })
 assert.deepEqual(normalizeTheaterPresentation({ schemaVersion: 1 }), defaults)
 

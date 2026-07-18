@@ -16,7 +16,7 @@ import {
   type TheaterDialogueQueueState,
 } from '../bridge/theater-dialogue-queue'
 
-export const THEATER_DIALOGUE_DEFAULT_CHARACTERS_PER_SECOND = 6
+export const THEATER_DIALOGUE_DEFAULT_CHARACTERS_PER_SECOND = 10
 export const THEATER_DIALOGUE_HOLD_MS = 900
 
 export type TheaterDialoguePlaybackPhase = 'idle' | 'typing' | 'hold'

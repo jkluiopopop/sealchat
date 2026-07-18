@@ -86,7 +86,7 @@ export const theaterDialogueStyleSchema = z.strictObject({
   nameGap: z.number().finite().min(0).max(1),
   textAlign: z.enum(['left', 'center', 'right']),
   contentColor: theaterColorSchema.default('#F4F4F5'),
-  charactersPerSecond: z.number().finite().min(1).max(60).default(6),
+  charactersPerSecond: z.number().finite().min(1).max(60).default(10),
 }).superRefine((dialogue, context) => {
   if (dialogue.frame && dialogue.frame.space !== 'dialogue') {
     context.addIssue({ code: 'custom', path: ['frame', 'space'], message: 'dialogue frame must use dialogue space' })
@@ -183,7 +183,7 @@ export const createDefaultTheaterDialogueStyle = (): TheaterDialogueStyle => ({
   nameGap: 0.04,
   textAlign: 'left',
   contentColor: '#F4F4F5',
-  charactersPerSecond: 6,
+  charactersPerSecond: 10,
 })
 
 export const createDefaultTheaterNarrationStyle = (): TheaterNarrationStyle => ({
