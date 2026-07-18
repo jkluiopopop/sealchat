@@ -5701,7 +5701,7 @@ const submitIdentityForm = async (options: { closeDialog?: boolean; successMessa
       if (editingIdentity.value.isTemporary) {
         const replacedIdentity = await chat.channelIdentityReplaceTemporary(editingIdentity.value.id, payload);
         savedIdentity = replacedIdentity;
-        if (replacedIdentity?.id && chat.curChannel?.id) {
+        if (replacedIdentity?.id && chat.curChannel?.id && effectiveBotFeatureEnabled.value) {
           if (characterCardStore.isBotCharacterDisabled(chat.curChannel.id)) {
             message.warning(characterCardStore.getCharacterApiDisabledReason(chat.curChannel.id));
           } else {
