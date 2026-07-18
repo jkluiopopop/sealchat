@@ -233,6 +233,7 @@ const importTheaterPackageFile = async (file: File) => {
     })
     packageMessage.info('小剧场导入任务已启动')
     const job = await pollTheaterPackageJob(response.data.job.id)
+    await fetchTheaterAudioAssets()
     const warnings = job.summary?.warnings?.filter(Boolean) || []
     packageMessage.success(`已追加导入 ${job.summary?.scenes ?? 0} 个场景、${job.summary?.objects ?? 0} 个组件`)
     if (warnings.length) packageMessage.warning(warnings.join('；'))
