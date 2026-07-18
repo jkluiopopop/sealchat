@@ -3,6 +3,7 @@ import {
   theaterPresentationSchema,
   type TheaterPresentation,
   type TheaterPresentationPatch,
+  type WorldTheaterPresentationTemplate,
 } from '@/types/theaterPresentation'
 import {
   buildTheaterPresentationPatch,
@@ -21,6 +22,7 @@ export const useTheaterPresentationEditor = (input: {
   presentation?: TheaterPresentation | null
   base?: TheaterPresentation | null
   patch?: TheaterPresentationPatch | null
+  worldTemplate?: WorldTheaterPresentationTemplate | null
 }) => {
   const state = shallowRef(createTheaterPresentationEditorState(input))
   const transaction = ref<TheaterEditorSnapshot | null>(null)

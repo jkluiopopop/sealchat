@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 import { WebSocketSubject, webSocket } from 'rxjs/webSocket';
 import type { User, Opcode, GatewayPayloadStructure, Channel, Event, GuildMember } from '@satorijs/protocol'
 import type { APIChannelCreateResp, APIChannelListResp, APIMessage, AvatarDecoration, BotWhisperForwardConfig, ChannelAddWorldMembersResponse, ChannelIcOocRoleConfig, ChannelIdentity, ChannelIdentityFolder, ChannelIdentityManageCandidate, ChannelIdentityManageCandidatesResponse, ChannelIdentityVariant, ChannelMemberCandidatesResponse, ChannelRoleModel, ExportTaskListResponse, FriendInfo, FriendRequestModel, MessageReaction, MessageReactionEvent, PaginationListResponse, SatoriMessage, SChannel, UserInfo, UserRoleModel } from '@/types';
-import type { TheaterPresentation, TheaterPresentationPatch } from '@/types/theaterPresentation';
+import type { TheaterPresentation, TheaterPresentationPatch, WorldTheaterPresentationTemplate } from '@/types/theaterPresentation';
 import type { AudioPlaybackStatePayload } from '@/types/audio';
 import { nanoid } from 'nanoid'
 import { groupBy } from 'lodash-es';
@@ -2191,6 +2191,18 @@ export const useChatStore = defineStore({
       if (resp.data?.world) {
         this.worldMap[worldId] = resp.data.world;
         this.worldDetailMap[worldId] = resp.data;
+      }
+      return resp.data;
+    },
+
+    async worldTheaterPresentationTemplateSet(worldId: string, template: WorldTheaterPresentationTemplate) {
+      const resp = await api.put(`/api/v1/worlds/${worldId}/theater-presentation-template`, template);
+      if (resp.data?.world) {
+        this.worldMap[worldId] = resp.data.world;
+        this.worldDetailMap[worldId] = {
+          ...(this.worldDetailMap[worldId] || {}),
+          world: resp.data.world,
+        };
       }
       return resp.data;
     },

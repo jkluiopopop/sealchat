@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -12,6 +14,30 @@ import (
 	"sealchat/protocol"
 	"sealchat/service"
 )
+
+func WorldTheaterPresentationTemplateSet(c *fiber.Ctx) error {
+	user := getCurUser(c)
+	if user == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"message": "未登录"})
+	}
+	var template protocol.WorldTheaterPresentationTemplate
+	if err := c.BodyParser(&template); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": "模板参数错误"})
+	}
+	world, err := service.WorldTheaterPresentationTemplateSet(c.Params("worldId"), user.ID, template)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrWorldNotFound):
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"message": "世界不存在"})
+		case errors.Is(err, service.ErrWorldPermission):
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"message": "无权设置世界演出外观模板"})
+		default:
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{"message": err.Error()})
+		}
+	}
+	broadcastWorldUpdated(world)
+	return c.JSON(fiber.Map{"world": world})
+}
 
 type theaterPresentationResolveActor struct {
 	IdentityID string `json:"identityId"`

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ArrowBackUp, ArrowForwardUp, Photo, Plus, X } from '@vicons/tabler'
+import { ArrowBackUp, ArrowForwardUp, Photo, Plus, Template, X } from '@vicons/tabler'
 import { compressImage } from '@/composables/useImageCompressor'
 import { useTheaterPresentationEditor } from '@/composables/useTheaterPresentationEditor'
 import {
@@ -15,6 +15,8 @@ import {
   theaterPresentationSchema,
   type TheaterPresentation,
   type TheaterPresentationPatch,
+  type WorldTheaterPresentationTemplate,
+  type WorldTheaterPresentationTemplateSection,
 } from '@/types/theaterPresentation'
 import {
   createTheaterPresentationEditorState,
@@ -35,6 +37,9 @@ const props = withDefaults(defineProps<{
   variantId?: string
   targetUserId?: string
   previewName?: string
+  worldTemplate?: WorldTheaterPresentationTemplate | null
+  canSetWorldTemplate?: boolean
+  worldTemplateSaving?: boolean
 }>(), {
   presentation: null,
   base: null,
@@ -42,10 +47,14 @@ const props = withDefaults(defineProps<{
   variantId: '',
   targetUserId: '',
   previewName: '角色名',
+  worldTemplate: null,
+  canSetWorldTemplate: false,
+  worldTemplateSaving: false,
 })
 const emit = defineEmits<{
   'update:show': [show: boolean]
   apply: [value: TheaterPresentation | TheaterPresentationPatch]
+  setWorldTemplate: [sections: WorldTheaterPresentationTemplateSection[], presentation: TheaterPresentation]
 }>()
 
 const editor = useTheaterPresentationEditor({
@@ -53,9 +62,12 @@ const editor = useTheaterPresentationEditor({
   presentation: props.presentation,
   base: props.base,
   patch: props.patch,
+  worldTemplate: props.worldTemplate,
 })
 const activeTab = ref<'portrait' | 'speaker' | 'content' | 'decorations' | 'dialogue'>('portrait')
 const previewEnabled = ref(true)
+const templatePopoverVisible = ref(false)
+const templateSections = ref<WorldTheaterPresentationTemplateSection[]>(['portrait', 'speaker', 'content', 'dialogue'])
 const externalPreview = typeof window !== 'undefined'
   && window.parent !== window
   && new URLSearchParams(window.location.hash.split('?')[1] || '').get('mode') === 'theater'
@@ -96,12 +108,20 @@ watch(() => props.show, (show) => {
     presentation: props.presentation,
     base: props.base,
     patch: props.patch,
+    worldTemplate: props.worldTemplate,
   })
   activeTab.value = 'portrait'
   previewEnabled.value = true
   uploadAsset.value = null
   uploadErrorCode.value = ''
 }, { immediate: true })
+
+watch(() => props.worldTemplate, (template) => {
+  editor.state.value = {
+    ...editor.state.value,
+    worldTemplate: JSON.parse(JSON.stringify(template || {})) as WorldTheaterPresentationTemplate,
+  }
+}, { deep: true })
 
 watch(
   () => [props.show, previewEnabled.value, editor.revision.value, props.previewName] as const,
@@ -255,6 +275,11 @@ const apply = () => {
   emit('apply', result)
   close()
 }
+const setWorldTemplate = () => {
+  if (!templateSections.value.length || props.worldTemplateSaving) return
+  emit('setWorldTemplate', [...templateSections.value], theaterPresentationSchema.parse(editor.draft.value))
+  templatePopoverVisible.value = false
+}
 </script>
 
 <template>
@@ -266,6 +291,26 @@ const apply = () => {
           <div class="theater-editor-modal__subtitle">{{ mode === 'variant' ? '差分覆盖' : '频道角色基础外观' }}</div>
         </div>
         <div class="theater-editor-modal__header-actions">
+          <n-popover v-if="canSetWorldTemplate" v-model:show="templatePopoverVisible" trigger="click" placement="bottom-end">
+            <template #trigger>
+              <n-button size="small" secondary :loading="worldTemplateSaving">
+                <template #icon><n-icon><Template /></n-icon></template>
+                覆盖世界默认
+              </n-button>
+            </template>
+            <div class="theater-editor-modal__template-popover">
+              <div class="theater-editor-modal__template-title">选择覆盖部分</div>
+              <n-checkbox-group v-model:value="templateSections">
+                <n-space vertical size="small">
+                  <n-checkbox value="portrait">立绘配置（不含图片）</n-checkbox>
+                  <n-checkbox value="speaker">昵称</n-checkbox>
+                  <n-checkbox value="content">聊天内容</n-checkbox>
+                  <n-checkbox value="dialogue">对话框设定（含图片）</n-checkbox>
+                </n-space>
+              </n-checkbox-group>
+              <n-button type="primary" size="small" :disabled="!templateSections.length" @click="setWorldTemplate">设为世界默认</n-button>
+            </div>
+          </n-popover>
           <n-tooltip><template #trigger><n-switch v-model:value="previewEnabled" size="small" /></template>编辑预览</n-tooltip>
           <n-tooltip><template #trigger><n-button circle quaternary :disabled="!editor.history.value.past.length" @click="editor.undo"><template #icon><n-icon><ArrowBackUp /></n-icon></template></n-button></template>撤销</n-tooltip>
           <n-tooltip><template #trigger><n-button circle quaternary :disabled="!editor.history.value.future.length" @click="editor.redo"><template #icon><n-icon><ArrowForwardUp /></n-icon></template></n-button></template>重做</n-tooltip>
@@ -334,6 +379,8 @@ const apply = () => {
 .theater-editor-modal__title { font-size: 16px; font-weight: 700; }
 .theater-editor-modal__subtitle, .theater-editor-modal__hint { color: var(--sc-text-secondary, #64748b); font-size: 12px; }
 .theater-editor-modal__header-actions, .theater-editor-modal__asset-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.theater-editor-modal__template-popover { display: flex; min-width: 210px; flex-direction: column; gap: 12px; }
+.theater-editor-modal__template-title { font-size: 13px; font-weight: 600; }
 .theater-editor-modal__toolbar :deep(.n-tabs) { width: 100%; }
 .theater-editor-modal__workspace { display: grid; grid-template-columns: minmax(0, 1fr) 290px; min-height: 0; overflow: hidden; }
 .theater-editor-modal.is-external-preview { width: min(460px, calc(100vw - 16px)); height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); }

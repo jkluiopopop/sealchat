@@ -702,6 +702,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	worldGroup.Get("/:worldId/observer-link", WorldObserverLinkGetHandler)
 	worldGroup.Put("/:worldId/observer-link", WorldObserverLinkUpdateHandler)
 	worldGroup.Patch("/:worldId", WorldUpdateHandler)
+	worldGroup.Put("/:worldId/theater-presentation-template", WorldTheaterPresentationTemplateSet)
 	worldGroup.Delete("/:worldId", WorldDeleteHandler)
 	worldGroup.Post("/:worldId/join", WorldJoinHandler)
 	worldGroup.Post("/:worldId/leave", WorldLeaveHandler)

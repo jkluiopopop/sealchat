@@ -3,6 +3,7 @@ import {
   createDefaultTheaterDialogueStyle,
   createDefaultTheaterNarrationStyle,
   createDefaultTheaterPresentation,
+  applyWorldTheaterPresentationTemplate,
   normalizeTheaterPresentation,
   normalizeTheaterTransform,
   resolveTheaterPresentation,
@@ -13,6 +14,7 @@ import {
   type TheaterPresentationPatch,
   type TheaterTransform,
   type TheaterVisualLayer,
+  type WorldTheaterPresentationTemplate,
 } from '@/types/theaterPresentation'
 
 export type TheaterSection = 'portrait' | 'speaker' | 'content' | 'decorations' | 'dialogue' | 'narration'
@@ -53,6 +55,7 @@ export interface TheaterEditorHistory {
 export interface TheaterEditorState extends TheaterEditorSnapshot {
   mode: 'base' | 'variant'
   base: TheaterPresentation
+  worldTemplate: WorldTheaterPresentationTemplate
   revision: number
   history: TheaterEditorHistory
 }
@@ -80,8 +83,10 @@ export const createTheaterPresentationEditorState = (input: {
   presentation?: TheaterPresentation | null
   base?: TheaterPresentation | null
   patch?: TheaterPresentationPatch | null
+  worldTemplate?: WorldTheaterPresentationTemplate | null
 }): TheaterEditorState => {
-  const base = normalizeTheaterPresentation(input.base || input.presentation || createDefaultTheaterPresentation())
+  const worldTemplate = clone(input.worldTemplate || {})
+  const base = normalizeTheaterPresentation(input.base || input.presentation || applyWorldTheaterPresentationTemplate(createDefaultTheaterPresentation(), worldTemplate))
   const sectionModes = input.mode === 'variant'
     ? {
         portrait: inferSectionMode(input.patch, 'portrait'),
@@ -95,6 +100,7 @@ export const createTheaterPresentationEditorState = (input: {
   return {
     mode: input.mode,
     base: clone(base),
+    worldTemplate,
     draft: input.mode === 'variant' ? resolveTheaterPresentation(base, input.patch) : clone(base),
     selection: { kind: 'portrait' },
     sectionModes: { ...sectionModes },
@@ -174,7 +180,18 @@ const applyCommand = (state: TheaterEditorState, command: TheaterEditorCommand):
     if (!current && command.media === null) return false
     if (!current && command.media) {
       const space = command.target.kind === 'portrait' ? 'viewport' : command.target.kind === 'dialogue-frame' ? 'dialogue' : 'portrait'
-      replaceLayer(state.draft, command.target, () => createTheaterVisualLayer(command.media!, space, command.target.kind === 'decoration' ? command.target.id : command.target.kind))
+      const layer = createTheaterVisualLayer(command.media, space, command.target.kind === 'decoration' ? command.target.id : command.target.kind)
+      const style = command.target.kind === 'portrait'
+        ? state.worldTemplate.portrait
+        : null
+      if (style) {
+        layer.enabled = style.enabled
+        layer.transform = clone(style.transform)
+        layer.fit = style.fit
+        layer.playbackRate = style.playbackRate
+        layer.blendMode = style.blendMode
+      }
+      replaceLayer(state.draft, command.target, () => layer)
     } else {
       replaceLayer(state.draft, command.target, (layer) => command.media && layer ? { ...layer, media: clone(command.media) } : null)
     }
@@ -242,11 +259,32 @@ const applyCommand = (state: TheaterEditorState, command: TheaterEditorCommand):
     return true
   }
   if (command.type === 'reset-section') {
-    if (command.section === 'portrait') state.draft.portrait = null
-    if (command.section === 'speaker') state.draft.dialogue.speaker = clone(createDefaultTheaterDialogueStyle().speaker)
-    if (command.section === 'content') state.draft.dialogue.content = clone(createDefaultTheaterDialogueStyle().content)
+    const defaults = applyWorldTheaterPresentationTemplate(createDefaultTheaterPresentation(), state.worldTemplate)
+    if (command.section === 'portrait') {
+      if (!state.worldTemplate.portrait || !state.draft.portrait) {
+        state.draft.portrait = null
+      } else {
+        const style = state.worldTemplate.portrait
+        state.draft.portrait = {
+          ...state.draft.portrait,
+          enabled: style.enabled,
+          transform: clone(style.transform),
+          fit: style.fit,
+          playbackRate: style.playbackRate,
+          blendMode: style.blendMode,
+        }
+      }
+    }
+    if (command.section === 'speaker') state.draft.dialogue.speaker = clone(defaults.dialogue.speaker)
+    if (command.section === 'content') state.draft.dialogue.content = clone(defaults.dialogue.content)
     if (command.section === 'decorations') state.draft.portraitDecorations = []
-    if (command.section === 'dialogue') state.draft.dialogue = createDefaultTheaterDialogueStyle()
+    if (command.section === 'dialogue') {
+      const speaker = state.draft.dialogue.speaker
+      const content = state.draft.dialogue.content
+      state.draft.dialogue = clone(defaults.dialogue)
+      state.draft.dialogue.speaker = speaker
+      state.draft.dialogue.content = content
+    }
     if (command.section === 'narration') state.draft.narration = createDefaultTheaterNarrationStyle()
     markCustom(state, command.section)
     return true

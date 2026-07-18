@@ -50,6 +50,14 @@ export const theaterVisualLayerSchema = z.strictObject({
   blendMode: theaterBlendModeSchema,
 })
 
+export const theaterVisualStyleSchema = z.strictObject({
+  enabled: z.boolean(),
+  transform: theaterTransformSchema,
+  fit: theaterObjectFitSchema,
+  playbackRate: z.number().finite().min(0.25).max(4),
+  blendMode: theaterBlendModeSchema,
+})
+
 export const theaterSpacingSchema = z.strictObject({
   top: z.number().finite().min(0).max(1),
   right: z.number().finite().min(0).max(1),
@@ -91,6 +99,23 @@ export const theaterDialogueStyleSchema = z.strictObject({
   if (dialogue.frame && dialogue.frame.space !== 'dialogue') {
     context.addIssue({ code: 'custom', path: ['frame', 'space'], message: 'dialogue frame must use dialogue space' })
   }
+})
+
+export const theaterDialogueBoxTemplateSchema = z.strictObject({
+  transform: theaterTransformSchema,
+  frame: theaterVisualLayerSchema.nullable(),
+  padding: theaterSpacingSchema,
+  nameGap: z.number().finite().min(0).max(1),
+  textAlign: z.enum(['left', 'center', 'right']),
+  contentColor: theaterColorSchema,
+  charactersPerSecond: z.number().finite().min(1).max(60),
+})
+
+export const worldTheaterPresentationTemplateSchema = z.strictObject({
+  portrait: theaterVisualStyleSchema.optional(),
+  speaker: theaterTextLayerSchema.optional(),
+  content: theaterTextLayerSchema.optional(),
+  dialogue: theaterDialogueBoxTemplateSchema.optional(),
 })
 
 const portraitDecorationsSchema = z.array(theaterVisualLayerSchema)
@@ -141,12 +166,18 @@ export type TheaterLayerSpace = z.infer<typeof theaterLayerSpaceSchema>
 export type TheaterTransform = z.infer<typeof theaterTransformSchema>
 export type TheaterMediaRef = z.infer<typeof theaterMediaRefSchema>
 export type TheaterVisualLayer = z.infer<typeof theaterVisualLayerSchema>
+export type TheaterVisualStyle = z.infer<typeof theaterVisualStyleSchema>
 export type TheaterTextLayer = z.infer<typeof theaterTextLayerSchema>
 export type TheaterNarrationStyle = z.infer<typeof theaterNarrationStyleSchema>
 export type TheaterDialogueStyle = z.infer<typeof theaterDialogueStyleSchema>
 export type TheaterPresentation = z.infer<typeof theaterPresentationSchema>
 export type TheaterPresentationPatch = z.infer<typeof theaterPresentationPatchSchema>
+export type TheaterDialogueBoxTemplate = z.infer<typeof theaterDialogueBoxTemplateSchema>
+export type WorldTheaterPresentationTemplate = z.infer<typeof worldTheaterPresentationTemplateSchema>
+export type WorldTheaterPresentationTemplateSection = 'portrait' | 'speaker' | 'content' | 'dialogue'
 export type ResolvedTheaterPresentation = TheaterPresentation
+
+const cloneTheaterJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 export const createDefaultTheaterTransform = (): TheaterTransform => ({
   x: 0,
@@ -199,6 +230,75 @@ export const createDefaultTheaterPresentation = (): TheaterPresentation => ({
   dialogue: createDefaultTheaterDialogueStyle(),
   narration: createDefaultTheaterNarrationStyle(),
 })
+
+export const theaterVisualStyleFromLayer = (layer: TheaterVisualLayer | null): TheaterVisualStyle | undefined => (
+  layer
+    ? cloneTheaterJson({
+        enabled: layer.enabled,
+        transform: layer.transform,
+        fit: layer.fit,
+        playbackRate: layer.playbackRate,
+        blendMode: layer.blendMode,
+      })
+    : undefined
+)
+
+export const theaterDialogueBoxTemplateFromStyle = (dialogue: TheaterDialogueStyle): TheaterDialogueBoxTemplate => ({
+  transform: cloneTheaterJson(dialogue.transform),
+  frame: cloneTheaterJson(dialogue.frame),
+  padding: cloneTheaterJson(dialogue.padding),
+  nameGap: dialogue.nameGap,
+  textAlign: dialogue.textAlign,
+  contentColor: dialogue.contentColor,
+  charactersPerSecond: dialogue.charactersPerSecond,
+})
+
+const applyTheaterVisualStyle = (layer: TheaterVisualLayer | null, style?: TheaterVisualStyle | null) => {
+  if (!layer || !style) return
+  layer.enabled = style.enabled
+  layer.transform = cloneTheaterJson(style.transform)
+  layer.fit = style.fit
+  layer.playbackRate = style.playbackRate
+  layer.blendMode = style.blendMode
+}
+
+export const applyWorldTheaterPresentationTemplate = (
+  presentation: TheaterPresentation,
+  template?: WorldTheaterPresentationTemplate | null,
+): TheaterPresentation => {
+  const next = normalizeTheaterPresentation(cloneTheaterJson(presentation))
+  if (!template) return next
+  applyTheaterVisualStyle(next.portrait, template.portrait)
+  if (template.speaker) next.dialogue.speaker = cloneTheaterJson(template.speaker)
+  if (template.content) next.dialogue.content = cloneTheaterJson(template.content)
+  if (template.dialogue) {
+    next.dialogue.transform = cloneTheaterJson(template.dialogue.transform)
+    next.dialogue.frame = cloneTheaterJson(template.dialogue.frame)
+    next.dialogue.padding = cloneTheaterJson(template.dialogue.padding)
+    next.dialogue.nameGap = template.dialogue.nameGap
+    next.dialogue.textAlign = template.dialogue.textAlign
+    next.dialogue.contentColor = template.dialogue.contentColor
+    next.dialogue.charactersPerSecond = template.dialogue.charactersPerSecond
+  }
+  return normalizeTheaterPresentation(next)
+}
+
+export const mergeWorldTheaterPresentationTemplate = (
+  current: WorldTheaterPresentationTemplate | null | undefined,
+  presentation: TheaterPresentation,
+  sections: WorldTheaterPresentationTemplateSection[],
+): WorldTheaterPresentationTemplate => {
+  const next = worldTheaterPresentationTemplateSchema.parse(current || {})
+  if (sections.includes('portrait')) {
+    const portrait = theaterVisualStyleFromLayer(presentation.portrait)
+    if (portrait) next.portrait = portrait
+    else delete next.portrait
+  }
+  if (sections.includes('speaker')) next.speaker = cloneTheaterJson(presentation.dialogue.speaker)
+  if (sections.includes('content')) next.content = cloneTheaterJson(presentation.dialogue.content)
+  if (sections.includes('dialogue')) next.dialogue = theaterDialogueBoxTemplateFromStyle(presentation.dialogue)
+  return worldTheaterPresentationTemplateSchema.parse(next)
+}
 
 const matchesTransform = (
   transform: TheaterTransform,

@@ -116,9 +116,14 @@ import AvatarDecorationEditor from '@/components/avatar-decoration/AvatarDecorat
 import TheaterPresentationEditorModal from '@/components/theater-presentation/TheaterPresentationEditorModal.vue'
 import UserAvatarDecoration from '@/components/user-avatar-decoration.vue'
 import {
+  applyWorldTheaterPresentationTemplate,
+  createDefaultTheaterPresentation,
+  mergeWorldTheaterPresentationTemplate,
   resolveTheaterPresentation,
   type TheaterPresentation,
   type TheaterPresentationPatch,
+  type WorldTheaterPresentationTemplate,
+  type WorldTheaterPresentationTemplateSection,
 } from '@/types/theaterPresentation'
 import { normalizeAvatarDecorations, firstAvatarDecoration } from '@/utils/avatarDecorations'
 import {
@@ -3418,6 +3423,20 @@ const identitySubmitting = ref(false);
 const identityDecorationEditorVisible = ref(false);
 const theaterPresentationEditorVisible = ref(false);
 const theaterPresentationEditorMode = ref<'base' | 'variant'>('base');
+const worldTheaterTemplateSaving = ref(false);
+const currentWorldTheaterTemplate = computed<WorldTheaterPresentationTemplate>(() => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (!worldId) return {};
+  return chat.worldDetailMap[worldId]?.world?.theaterPresentationTemplate
+    || chat.worldMap[worldId]?.theaterPresentationTemplate
+    || {};
+});
+const canSetWorldTheaterTemplate = computed(() => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (!worldId) return false;
+  const role = chat.worldDetailMap[worldId]?.memberRole;
+  return role === 'owner' || role === 'admin' || Boolean(user.checkPerm?.('mod_admin'));
+});
 const identityForm = reactive({
   displayName: '',
   color: '',
@@ -5254,6 +5273,24 @@ const handleTheaterPresentationApply = async (value: TheaterPresentation | Theat
   await submitIdentityForm({ closeDialog: false, successMessage: false });
 };
 
+const handleSetWorldTheaterTemplate = async (
+  sections: WorldTheaterPresentationTemplateSection[],
+  presentation: TheaterPresentation,
+) => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (!worldId || !canSetWorldTheaterTemplate.value || worldTheaterTemplateSaving.value) return;
+  worldTheaterTemplateSaving.value = true;
+  try {
+    const template = mergeWorldTheaterPresentationTemplate(currentWorldTheaterTemplate.value, presentation, sections);
+    await chat.worldTheaterPresentationTemplateSet(worldId, template);
+    message.success('世界默认演出外观已更新');
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '更新世界默认演出外观失败');
+  } finally {
+    worldTheaterTemplateSaving.value = false;
+  }
+};
+
 const handleIdentityDecorationEditorShow = async (show: boolean) => {
   if (show) {
     identityDecorationEditorVisible.value = true;
@@ -5291,6 +5328,12 @@ const openIdentityCreate = async () => {
   editingIdentity.value = null;
   identityDialogMode.value = 'create';
   resetIdentityForm(null);
+  if (Object.keys(currentWorldTheaterTemplate.value).length) {
+    identityForm.theaterPresentation = applyWorldTheaterPresentationTemplate(
+      createDefaultTheaterPresentation(),
+      currentWorldTheaterTemplate.value,
+    );
+  }
   if (!identityForm.displayName) {
     identityForm.displayName = chat.curMember?.nick || user.info.nick || user.info.username || '';
   }
@@ -18289,7 +18332,11 @@ onBeforeUnmount(() => {
     :variant-id="theaterPresentationEditorMode === 'variant' ? (editingIdentityVariant?.id || '') : ''"
     :target-user-id="currentIdentityTargetUserId"
     :preview-name="identityForm.displayName || '角色名'"
+    :world-template="currentWorldTheaterTemplate"
+    :can-set-world-template="canSetWorldTheaterTemplate"
+    :world-template-saving="worldTheaterTemplateSaving"
     @apply="handleTheaterPresentationApply"
+    @set-world-template="handleSetWorldTheaterTemplate"
   />
   <EmojiPickerModal
     v-if="identityVariantEmojiPickerVisible"

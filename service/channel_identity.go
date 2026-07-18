@@ -177,6 +177,9 @@ func ChannelIdentityCreate(userID string, input *ChannelIdentityInput) (*model.C
 }
 
 func ChannelIdentityCreateWithAccess(ownerUserID string, operatorUserID string, input *ChannelIdentityInput) (*model.ChannelIdentityModel, error) {
+	if input != nil && input.TheaterPresentation == nil {
+		input.TheaterPresentation = WorldTheaterPresentationDefaultsForChannel(input.ChannelID)
+	}
 	if err := validateIdentityInput(input); err != nil {
 		return nil, err
 	}

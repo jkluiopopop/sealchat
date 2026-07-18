@@ -7,6 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"sealchat/protocol"
 	"sealchat/utils"
 )
 
@@ -44,6 +45,7 @@ type WorldModel struct {
 	ChannelDefaultBotIDsJSON   string  `json:"-" gorm:"type:text"`
 	ChannelDefaultEventBotIDsJSON string `json:"-" gorm:"type:text"`
 	CharacterCardBadgeTemplate string  `json:"characterCardBadgeTemplate" gorm:"size:512"` // 世界徽章模板
+	TheaterPresentationTemplateJSON string `json:"-" gorm:"type:text"`
 	IsSystemDefault            bool    `json:"isSystemDefault" gorm:"default:false;index"` // 系统默认世界标识，仅允许一个
 	OwnerID                    string  `json:"ownerId" gorm:"size:100;index"`
 	DefaultChannelID           string  `json:"defaultChannelId" gorm:"size:100"`
@@ -88,16 +90,29 @@ func (m *WorldModel) GetChannelDefaultEventBotIDs() []string {
 	return parseWorldBotIDs(m.ChannelDefaultEventBotIDsJSON)
 }
 
+func (m *WorldModel) GetTheaterPresentationTemplate() protocol.WorldTheaterPresentationTemplate {
+	var template protocol.WorldTheaterPresentationTemplate
+	if strings.TrimSpace(m.TheaterPresentationTemplateJSON) == "" {
+		return template
+	}
+	if err := json.Unmarshal([]byte(m.TheaterPresentationTemplateJSON), &template); err != nil {
+		return protocol.WorldTheaterPresentationTemplate{}
+	}
+	return template
+}
+
 func (m *WorldModel) MarshalJSON() ([]byte, error) {
 	type worldModelAlias WorldModel
 	return json.Marshal(&struct {
 		*worldModelAlias
-		ChannelDefaultBotIDs      []string `json:"channelDefaultBotIds,omitempty"`
-		ChannelDefaultEventBotIDs []string `json:"channelDefaultEventBotIds,omitempty"`
+		ChannelDefaultBotIDs        []string                                  `json:"channelDefaultBotIds,omitempty"`
+		ChannelDefaultEventBotIDs   []string                                  `json:"channelDefaultEventBotIds,omitempty"`
+		TheaterPresentationTemplate protocol.WorldTheaterPresentationTemplate `json:"theaterPresentationTemplate"`
 	}{
-		worldModelAlias:           (*worldModelAlias)(m),
-		ChannelDefaultBotIDs:      m.GetChannelDefaultBotIDs(),
-		ChannelDefaultEventBotIDs: m.GetChannelDefaultEventBotIDs(),
+		worldModelAlias:             (*worldModelAlias)(m),
+		ChannelDefaultBotIDs:        m.GetChannelDefaultBotIDs(),
+		ChannelDefaultEventBotIDs:   m.GetChannelDefaultEventBotIDs(),
+		TheaterPresentationTemplate: m.GetTheaterPresentationTemplate(),
 	})
 }
 

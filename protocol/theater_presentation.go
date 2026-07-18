@@ -141,6 +141,35 @@ type TheaterPresentation struct {
 	Narration           TheaterNarrationStyle `json:"narration"`
 }
 
+// TheaterVisualStyle stores reusable layer settings without binding a template
+// to one character's media asset.
+type TheaterVisualStyle struct {
+	Enabled      bool             `json:"enabled"`
+	Transform    TheaterTransform `json:"transform"`
+	Fit          TheaterObjectFit `json:"fit"`
+	PlaybackRate float64          `json:"playbackRate"`
+	BlendMode    TheaterBlendMode `json:"blendMode"`
+}
+
+type TheaterDialogueBoxTemplate struct {
+	Transform           TheaterTransform    `json:"transform"`
+	Frame               *TheaterVisualLayer `json:"frame"`
+	Padding             TheaterSpacing      `json:"padding"`
+	NameGap             float64             `json:"nameGap"`
+	TextAlign           TheaterTextAlign    `json:"textAlign"`
+	ContentColor        string              `json:"contentColor"`
+	CharactersPerSecond float64             `json:"charactersPerSecond"`
+}
+
+// WorldTheaterPresentationTemplate contains independently selectable world
+// defaults. Portrait media is excluded; dialogue frame media is reusable.
+type WorldTheaterPresentationTemplate struct {
+	Portrait *TheaterVisualStyle         `json:"portrait,omitempty"`
+	Speaker  *TheaterTextLayer           `json:"speaker,omitempty"`
+	Content  *TheaterTextLayer           `json:"content,omitempty"`
+	Dialogue *TheaterDialogueBoxTemplate `json:"dialogue,omitempty"`
+}
+
 func (presentation *TheaterPresentation) UnmarshalJSON(data []byte) error {
 	type theaterPresentation TheaterPresentation
 	value := theaterPresentation{Narration: DefaultTheaterNarrationStyle()}
@@ -232,6 +261,83 @@ func DefaultTheaterPresentation() TheaterPresentation {
 		Dialogue:            DefaultTheaterDialogueStyle(),
 		Narration:           DefaultTheaterNarrationStyle(),
 	}
+}
+
+func applyTheaterVisualStyle(layer *TheaterVisualLayer, style *TheaterVisualStyle) {
+	if layer == nil || style == nil {
+		return
+	}
+	layer.Enabled = style.Enabled
+	layer.Transform = style.Transform
+	layer.Fit = style.Fit
+	layer.PlaybackRate = style.PlaybackRate
+	layer.BlendMode = style.BlendMode
+}
+
+func ApplyWorldTheaterPresentationTemplate(value TheaterPresentation, template WorldTheaterPresentationTemplate) TheaterPresentation {
+	value = NormalizeTheaterPresentation(value)
+	applyTheaterVisualStyle(value.Portrait, template.Portrait)
+	if template.Speaker != nil {
+		value.Dialogue.Speaker = *template.Speaker
+	}
+	if template.Content != nil {
+		value.Dialogue.Content = *template.Content
+	}
+	if template.Dialogue != nil {
+		box := template.Dialogue
+		value.Dialogue.Transform = box.Transform
+		value.Dialogue.Frame = cloneTheaterLayer(box.Frame)
+		value.Dialogue.Padding = box.Padding
+		value.Dialogue.NameGap = box.NameGap
+		value.Dialogue.TextAlign = box.TextAlign
+		value.Dialogue.ContentColor = box.ContentColor
+		value.Dialogue.CharactersPerSecond = box.CharactersPerSecond
+	}
+	return NormalizeTheaterPresentation(value)
+}
+
+func ValidateWorldTheaterPresentationTemplate(template WorldTheaterPresentationTemplate) error {
+	var problems []error
+	validateStyle := func(style *TheaterVisualStyle, path string) {
+		if style == nil {
+			return
+		}
+		problems = appendError(problems, validateTheaterTransform(style.Transform, path+".transform"))
+		if style.Fit != TheaterObjectFitCover {
+			problems = append(problems, fmt.Errorf("%s.fit is invalid", path))
+		}
+		if style.PlaybackRate < 0.25 || style.PlaybackRate > 4 || math.IsNaN(style.PlaybackRate) || math.IsInf(style.PlaybackRate, 0) {
+			problems = append(problems, fmt.Errorf("%s.playbackRate is invalid", path))
+		}
+		if style.BlendMode != TheaterBlendModeNormal && style.BlendMode != TheaterBlendModeMultiply && style.BlendMode != TheaterBlendModeScreen && style.BlendMode != TheaterBlendModeOverlay {
+			problems = append(problems, fmt.Errorf("%s.blendMode is invalid", path))
+		}
+	}
+	validateStyle(template.Portrait, "portrait")
+	if template.Speaker != nil {
+		problems = appendError(problems, validateTheaterTransform(template.Speaker.Transform, "speaker.transform"))
+		if template.Speaker.FontScale < 0.25 || template.Speaker.FontScale > 4 {
+			problems = append(problems, errors.New("speaker.fontScale is invalid"))
+		}
+	}
+	if template.Content != nil {
+		problems = appendError(problems, validateTheaterTransform(template.Content.Transform, "content.transform"))
+		if template.Content.FontScale < 0.25 || template.Content.FontScale > 4 {
+			problems = append(problems, errors.New("content.fontScale is invalid"))
+		}
+	}
+	if template.Dialogue != nil {
+		dialogue := DefaultTheaterDialogueStyle()
+		dialogue.Transform = template.Dialogue.Transform
+		dialogue.Frame = cloneTheaterLayer(template.Dialogue.Frame)
+		dialogue.Padding = template.Dialogue.Padding
+		dialogue.NameGap = template.Dialogue.NameGap
+		dialogue.TextAlign = template.Dialogue.TextAlign
+		dialogue.ContentColor = template.Dialogue.ContentColor
+		dialogue.CharactersPerSecond = template.Dialogue.CharactersPerSecond
+		problems = appendError(problems, validateTheaterDialogue(dialogue))
+	}
+	return errors.Join(problems...)
 }
 
 func NormalizeTheaterPresentation(value TheaterPresentation) TheaterPresentation {

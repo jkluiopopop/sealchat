@@ -378,7 +378,7 @@ func classifyTheaterAppearanceError(err error) string {
 }
 
 func ValidateTheaterPresentationAppearanceAssets(tx *gorm.DB, channelID, ownerUserID, identityID string, presentation protocol.TheaterPresentation) error {
-	refs := theaterPresentationMediaRefs(presentation)
+	refs := filterWorldTheaterTemplateMediaRefs(tx, channelID, theaterPresentationMediaRefs(presentation))
 	if identityID == "" && len(refs) > 0 {
 		return newTheaterError(TheaterAppearanceAssetErrorScopeMismatch, "新 identity 尚不能引用已有演出资源", 400, nil)
 	}
@@ -406,6 +406,7 @@ func validateTheaterPresentationPatchAppearanceAssets(tx *gorm.DB, channelID, ow
 	if patch.Dialogue.Set && patch.Dialogue.Value != nil && patch.Dialogue.Value.Frame != nil {
 		refs = append(refs, patch.Dialogue.Value.Frame.Media)
 	}
+	refs = filterWorldTheaterTemplateMediaRefs(tx, channelID, refs)
 	if err := validateTheaterAppearanceMediaRefs(tx, channelID, ownerUserID, identityID, refs); err != nil {
 		return err
 	}
@@ -438,6 +439,53 @@ func theaterPresentationMediaRefs(presentation protocol.TheaterPresentation) []p
 	return refs
 }
 
+func theaterMediaRefsEqual(left, right protocol.TheaterMediaRef) bool {
+	if left.AssetID != right.AssetID || left.ResourceAttachmentID != right.ResourceAttachmentID ||
+		left.FallbackAttachmentID != right.FallbackAttachmentID || left.Kind != right.Kind ||
+		left.MIMEType != right.MIMEType || left.Width != right.Width || left.Height != right.Height {
+		return false
+	}
+	if left.DurationMS == nil || right.DurationMS == nil {
+		return left.DurationMS == nil && right.DurationMS == nil
+	}
+	return *left.DurationMS == *right.DurationMS
+}
+
+func filterWorldTheaterTemplateMediaRefs(tx *gorm.DB, channelID string, refs []protocol.TheaterMediaRef) []protocol.TheaterMediaRef {
+	if len(refs) == 0 {
+		return refs
+	}
+	if tx == nil {
+		tx = model.GetDB()
+	}
+	var channel model.ChannelModel
+	if err := tx.Where("id = ?", strings.TrimSpace(channelID)).Limit(1).Find(&channel).Error; err != nil || channel.ID == "" || channel.WorldID == "" {
+		return refs
+	}
+	var world model.WorldModel
+	if err := tx.Where("id = ? AND status = ?", channel.WorldID, "active").Limit(1).Find(&world).Error; err != nil || world.ID == "" {
+		return refs
+	}
+	frame := world.GetTheaterPresentationTemplate().Dialogue
+	if frame == nil || frame.Frame == nil {
+		return refs
+	}
+	templateRef := frame.Frame.Media
+	filtered := make([]protocol.TheaterMediaRef, 0, len(refs))
+	for _, ref := range refs {
+		if !theaterMediaRefsEqual(ref, templateRef) {
+			filtered = append(filtered, ref)
+		}
+	}
+	return filtered
+}
+
+func theaterMediaRefMatchesAsset(ref protocol.TheaterMediaRef, asset model.TheaterAppearanceAssetModel) bool {
+	return ref.ResourceAttachmentID == asset.DisplayAttachmentID && ref.FallbackAttachmentID == asset.FallbackAttachmentID &&
+		string(ref.Kind) == asset.Kind && ref.MIMEType == asset.MimeType && ref.Width == asset.Width && ref.Height == asset.Height &&
+		((ref.DurationMS == nil && asset.DurationMS == 0) || ref.DurationMS != nil && *ref.DurationMS == asset.DurationMS)
+}
+
 func validateTheaterAppearanceMediaRefs(tx *gorm.DB, channelID, ownerUserID, identityID string, refs []protocol.TheaterMediaRef) error {
 	if tx == nil {
 		tx = model.GetDB()
@@ -453,9 +501,7 @@ func validateTheaterAppearanceMediaRefs(tx *gorm.DB, channelID, ownerUserID, ide
 		if asset.Status != "ready" {
 			return newTheaterError(TheaterAppearanceAssetErrorNotReady, "演出资源尚未 ready", 409, nil)
 		}
-		if ref.ResourceAttachmentID != asset.DisplayAttachmentID || ref.FallbackAttachmentID != asset.FallbackAttachmentID ||
-			string(ref.Kind) != asset.Kind || ref.MIMEType != asset.MimeType || ref.Width != asset.Width || ref.Height != asset.Height ||
-			(ref.DurationMS == nil && asset.DurationMS != 0) || ref.DurationMS != nil && *ref.DurationMS != asset.DurationMS {
+		if !theaterMediaRefMatchesAsset(ref, asset) {
 			return newTheaterError(TheaterAppearanceAssetErrorInvalid, "演出资源元数据与服务端记录不一致", 400, nil)
 		}
 	}
@@ -482,6 +528,20 @@ func TheaterAppearanceAssetInUse(tx *gorm.DB, assetID string) (bool, error) {
 		}
 		if json.Unmarshal([]byte(variant.AppearanceJSON), &document) == nil && rawTheaterPresentationReferencesAsset(document.TheaterPresentation, assetID, true) {
 			return true, nil
+		}
+	}
+	if tx.Migrator().HasColumn(&model.WorldModel{}, "theater_presentation_template_json") {
+		var templates []string
+		if err := tx.Model(&model.WorldModel{}).
+			Where("theater_presentation_template_json <> ''").
+			Pluck("theater_presentation_template_json", &templates).Error; err != nil {
+			return false, err
+		}
+		for _, raw := range templates {
+			var template protocol.WorldTheaterPresentationTemplate
+			if json.Unmarshal([]byte(raw), &template) == nil && template.Dialogue != nil && template.Dialogue.Frame != nil && template.Dialogue.Frame.Media.AssetID == assetID {
+				return true, nil
+			}
 		}
 	}
 	checks := []struct {
