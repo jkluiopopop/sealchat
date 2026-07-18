@@ -49,16 +49,16 @@ export const resolveEnterDelay = (mode?: PerformanceEnterMode, speed?: number) =
   return baseDelay;
 };
 
-const TYPEWRITER_LIGHT_PUNCTUATION = new Set(['，', ',', '、', '；', ';', '：', ':']);
-const TYPEWRITER_HEAVY_PUNCTUATION = new Set(['。', '.', '！', '!', '？', '?', '…']);
+const LIGHT_PUNCTUATION = new Set(['，', ',', '、', '；', ';', '：', ':']);
+const HEAVY_PUNCTUATION = new Set(['。', '.', '．', '｡', '！', '!', '？', '?', '…']);
 
-export const resolveTypewriterPauseExtra = (char: string, speed?: number) => {
-  const normalized = Math.max(1, Math.min(9, Number.isFinite(Number(speed)) ? Number(speed) : 5));
-  if (TYPEWRITER_LIGHT_PUNCTUATION.has(char)) {
-    return Math.round(34 + (10 - normalized) * 8);
+export const resolvePunctuationPauseExtra = (char: string, baseDelayMs: number) => {
+  const normalizedDelay = Number.isFinite(baseDelayMs) ? Math.max(0, baseDelayMs) : 0;
+  if (LIGHT_PUNCTUATION.has(char)) {
+    return Math.round(Math.min(180, Math.max(40, normalizedDelay * 0.6)));
   }
-  if (TYPEWRITER_HEAVY_PUNCTUATION.has(char)) {
-    return Math.round(76 + (10 - normalized) * 14);
+  if (HEAVY_PUNCTUATION.has(char)) {
+    return Math.round(Math.max(90, normalizedDelay * 3.0));
   }
   return 0;
 };
@@ -209,9 +209,7 @@ export const createTwinLayerPlayback = (
           options.onChar?.(entry as TwinLayerPlaybackChar);
           if (!fastForward) {
             const baseDelay = characterDelay ?? resolveEnterDelay(mode, entry.effects.enterSpeed);
-            const extraDelay = characterDelay === null && mode === 'typewriter'
-              ? resolveTypewriterPauseExtra(entry.char, entry.effects.enterSpeed)
-              : 0;
+            const extraDelay = resolvePunctuationPauseExtra(entry.char, baseDelay);
             await wait(baseDelay + extraDelay);
           }
           continue;

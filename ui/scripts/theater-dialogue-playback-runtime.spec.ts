@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 
-import { createTwinLayerPlayback } from '../src/components/chat/twinLayerPlayback'
+import {
+  createTwinLayerPlayback,
+  resolvePunctuationPauseExtra,
+} from '../src/components/chat/twinLayerPlayback'
 import { parsePerformanceInstructions } from '../src/utils/tiptap-performance-parser'
 import {
   TheaterDialogueRuntime,
@@ -49,6 +52,11 @@ const message: TheaterDialogueMessage = {
 }
 
 const runTests = async () => {
+  assert.equal(resolvePunctuationPauseExtra('，', 100), 60)
+  assert.equal(resolvePunctuationPauseExtra('.', 100), 300)
+  assert.equal(resolvePunctuationPauseExtra('!', 10), 90)
+  assert.equal(resolvePunctuationPauseExtra('字', 100), 0)
+
   assert.equal(hasTheaterDialoguePerformanceContent(message), true)
   const runtime = new TheaterDialogueRuntime({ reducedMotion: true })
   runtime.created(message)

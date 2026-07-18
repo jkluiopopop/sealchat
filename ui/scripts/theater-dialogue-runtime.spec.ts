@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { reactive } from 'vue'
 
 import { resolveTheaterMediaCandidates } from '../src/components/theater-presentation/theaterPresentationMedia'
-import { resolveCharactersPerSecondDelay } from '../src/components/chat/twinLayerPlayback'
+import { resolveCharactersPerSecondDelay, resolvePunctuationPauseExtra } from '../src/components/chat/twinLayerPlayback'
 import { createDefaultTheaterPresentation } from '../src/types/theaterPresentation'
 import {
   THEATER_DIALOGUE_HOLD_MS,
@@ -66,6 +66,10 @@ assert.equal(getTheaterDialogueTypingDuration(12, 12), 1_000)
 assert.equal(getTheaterDialogueTypingDuration(6, Number.NaN), 1_000)
 assert.equal(resolveCharactersPerSecondDelay(6), 1_000 / 6)
 assert.equal(resolveCharactersPerSecondDelay(undefined), null)
+assert.equal(resolvePunctuationPauseExtra('，', 100), 60)
+assert.equal(resolvePunctuationPauseExtra('。', 100), 300)
+assert.equal(resolvePunctuationPauseExtra('！', 10), 90)
+assert.equal(resolvePunctuationPauseExtra('字', 100), 0)
 
 const scheduler = new FakeScheduler()
 const runtime = new TheaterDialogueRuntime({ scheduler })
@@ -141,6 +145,16 @@ speedScheduler.tick(83)
 assert.equal(speedRuntime.getSnapshot().queue.current?.revealedCharacters, 0)
 speedScheduler.tick(1)
 assert.equal(speedRuntime.getSnapshot().queue.current?.revealedCharacters, 1)
+
+const punctuationScheduler = new FakeScheduler()
+const punctuationRuntime = new TheaterDialogueRuntime({ scheduler: punctuationScheduler })
+punctuationRuntime.created(message('punctuation', '甲。乙'))
+punctuationScheduler.tick(334)
+assert.equal(punctuationRuntime.getSnapshot().queue.current?.revealedCharacters, 2)
+punctuationScheduler.tick(582)
+assert.equal(punctuationRuntime.getSnapshot().queue.current?.revealedCharacters, 2)
+punctuationScheduler.tick(1)
+assert.equal(punctuationRuntime.getSnapshot().queue.current?.revealedCharacters, 3)
 
 const performanceScheduler = new FakeScheduler()
 const performanceRuntime = new TheaterDialogueRuntime({ scheduler: performanceScheduler })

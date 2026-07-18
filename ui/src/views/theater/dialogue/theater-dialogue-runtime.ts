@@ -6,6 +6,7 @@ import {
 } from '../../../types/theaterPresentation'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import { hasPerformanceContent } from '../../../utils/tiptap-performance-parser'
+import { resolvePunctuationPauseExtra } from '../../../components/chat/twinLayerPlayback'
 import {
   createTheaterDialogueQueueState,
   getTheaterDialogueTextLength,
@@ -255,6 +256,11 @@ export class TheaterDialogueRuntime {
       length,
       this.charactersPerSecond ?? getTheaterDialogueCharactersPerSecond(current.message),
     ) / Math.max(1, length)
+    const revealedText = Array.from(current.message.contentText)
+    const previousCharacter = current.revealedCharacters > 0
+      ? revealedText[current.revealedCharacters - 1]
+      : ''
+    const punctuationPause = resolvePunctuationPauseExtra(previousCharacter, interval)
     this.schedule(() => {
       if (!this.queue.current) return
       this.queue = reduceTheaterDialogueQueue(this.queue, {
@@ -267,7 +273,7 @@ export class TheaterDialogueRuntime {
         this.emit()
         this.scheduleAdvance()
       }
-    }, interval)
+    }, interval + punctuationPause)
   }
 
   private scheduleAdvance() {
