@@ -21,8 +21,10 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/spf13/afero"
+	"github.com/valyala/fasthttp"
 
 	"sealchat/model"
+	"sealchat/service"
 	"sealchat/service/perfprofiler"
 	"sealchat/utils"
 )
@@ -397,6 +399,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 		EnableTrustedProxyCheck: enableTrustedProxyCheck,
 		TrustedProxies:          trustedProxies,
 	})
+	app.Server().HeaderReceived = func(header *fasthttp.RequestHeader) fasthttp.RequestConfig {
+		requestURI := string(header.RequestURI())
+		if strings.Contains(requestURI, "/api/v1/worlds/") && strings.Contains(requestURI, "/theater/packages/import") {
+			return fasthttp.RequestConfig{MaxRequestBodySize: service.TheaterPackageRequestBodyLimit()}
+		}
+		return fasthttp.RequestConfig{MaxRequestBodySize: bodyLimit}
+	}
 	app.Use(certificateHTTPRedirectMiddleware(config))
 	app.Use(corsConfig)
 	app.Use(recover.New())

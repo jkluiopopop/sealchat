@@ -512,5 +512,5 @@ func listTheaterEvents(actorID, worldID, channelID string, afterRevision int64, 
 }
 
 func isTheaterManagementMutation(mutationType string) bool {
-	return mutationType == TheaterMutationAdminRestore || mutationType == TheaterMutationAdminReplace
+	return mutationType == TheaterMutationAdminRestore || mutationType == TheaterMutationAdminReplace || mutationType == TheaterMutationAdminPackageImport
 }

@@ -2,7 +2,7 @@
 import Konva from 'konva'
 import { Howl, Howler } from 'howler'
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NButton, NButtonGroup, NCheckbox, NColorPicker, NIcon, NInput, NInputNumber, NPopover, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip } from 'naive-ui'
+import { NButton, NButtonGroup, NCheckbox, NColorPicker, NDropdown, NIcon, NInput, NInputNumber, NPopover, NRadio, NRadioGroup, NSelect, NSlider, NSwitch, NTooltip, useDialog, useMessage, type DropdownOption } from 'naive-ui'
 import {
   ArrowBackUp,
   ArrowDown,
@@ -106,6 +106,7 @@ const containerRef = ref<HTMLDivElement | null>(null)
 const viewportRef = ref<HTMLDivElement | null>(null)
 const viewportSize = ref({ width: 1, height: 1 })
 const imageInputRef = ref<HTMLInputElement | null>(null)
+const packageInputRef = ref<HTMLInputElement | null>(null)
 const resourceError = ref('')
 const resourceUploading = ref(false)
 const scenePanelOpen = ref(false)
@@ -145,6 +146,121 @@ const readTheaterAudioMasterVolume = () => {
 }
 const theaterAudioMasterVolume = ref(readTheaterAudioMasterVolume())
 let theaterAudioRefreshTimer: number | null = null
+const packageMessage = useMessage()
+const packageDialog = useDialog()
+const packageBusy = ref(false)
+let packagePollTimer: number | null = null
+let packagePollGeneration = 0
+
+type TheaterPackageJob = {
+  id: string
+  type: 'export' | 'import'
+  status: 'pending' | 'running' | 'done' | 'failed'
+  progress: number
+  outputFileName?: string
+  errorMessage?: string
+  summary?: { scenes?: number, objects?: number, resources?: number, audioAssets?: number, warnings?: string[] }
+}
+
+const canManagePackages = computed(() => props.syncReady && props.permissions.includes('stage.admin.restore'))
+const packageMenuOptions = computed<DropdownOption[]>(() => [
+  { label: packageBusy.value ? '任务处理中…' : '导出小剧场 ZIP', key: 'export', disabled: packageBusy.value },
+  { label: '导入小剧场 ZIP', key: 'import', disabled: packageBusy.value },
+])
+
+const theaterPackagePath = (suffix: string) => `api/v1/worlds/${encodeURIComponent(props.worldId)}/theater/packages/${suffix}`
+
+const stopPackagePolling = () => {
+  packagePollGeneration += 1
+  if (packagePollTimer !== null) window.clearTimeout(packagePollTimer)
+  packagePollTimer = null
+}
+
+const waitPackagePoll = (generation: number) => new Promise<boolean>((resolve) => {
+  packagePollTimer = window.setTimeout(() => {
+    packagePollTimer = null
+    resolve(generation === packagePollGeneration)
+  }, 1000)
+})
+
+const pollTheaterPackageJob = async (jobId: string) => {
+  stopPackagePolling()
+  const generation = packagePollGeneration
+  while (generation === packagePollGeneration) {
+    const response = await api.get<{ job: TheaterPackageJob }>(theaterPackagePath(`jobs/${encodeURIComponent(jobId)}`), { timeout: 30000 })
+    const job = response.data.job
+    if (job.status === 'done') return job
+    if (job.status === 'failed') throw new Error(job.errorMessage || '小剧场任务失败')
+    if (!await waitPackagePoll(generation)) throw new Error('小剧场任务已取消')
+  }
+  throw new Error('小剧场任务已取消')
+}
+
+const downloadTheaterPackage = (job: TheaterPackageJob) => {
+  const anchor = document.createElement('a')
+  anchor.href = `${urlBase}/${theaterPackagePath(`jobs/${encodeURIComponent(job.id)}/download`)}`
+  anchor.download = job.outputFileName || 'theater-package.zip'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+}
+
+const exportTheaterPackage = async () => {
+  packageBusy.value = true
+  try {
+    const response = await api.post<{ job: TheaterPackageJob }>(theaterPackagePath('export'), { inputChannelId: props.channelId })
+    packageMessage.info('小剧场导出任务已启动')
+    const job = await pollTheaterPackageJob(response.data.job.id)
+    downloadTheaterPackage(job)
+    packageMessage.success('小剧场 ZIP 已生成')
+  } catch (error) {
+    packageMessage.error(theaterAudioErrorMessage(error, '小剧场导出失败'))
+  } finally {
+    packageBusy.value = false
+  }
+}
+
+const importTheaterPackageFile = async (file: File) => {
+  packageBusy.value = true
+  try {
+    const body = new FormData()
+    body.append('file', file)
+    body.append('inputChannelId', props.channelId)
+    const response = await api.post<{ job: TheaterPackageJob }>(theaterPackagePath('import'), body, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 0,
+    })
+    packageMessage.info('小剧场导入任务已启动')
+    const job = await pollTheaterPackageJob(response.data.job.id)
+    const warnings = job.summary?.warnings?.filter(Boolean) || []
+    packageMessage.success(`已追加导入 ${job.summary?.scenes ?? 0} 个场景、${job.summary?.objects ?? 0} 个组件`)
+    if (warnings.length) packageMessage.warning(warnings.join('；'))
+  } catch (error) {
+    packageMessage.error(theaterAudioErrorMessage(error, '小剧场导入失败'))
+  } finally {
+    packageBusy.value = false
+  }
+}
+
+const handlePackageInput = (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  packageDialog.warning({
+    title: '追加导入小剧场',
+    content: `将“${file.name}”作为副本追加到当前世界。现有场景不会被覆盖。`,
+    positiveText: '开始导入',
+    negativeText: '取消',
+    onPositiveClick: () => { void importTheaterPackageFile(file) },
+  })
+}
+
+const handlePackageMenuSelect = (key: string | number) => {
+  if (!canManagePackages.value || packageBusy.value) return
+  if (key === 'export') void exportTheaterPackage()
+  if (key === 'import') packageInputRef.value?.click()
+}
 
 const unlockTheaterAudio = () => {
   if (!Howler.ctx) void Howler.volume()
@@ -2674,6 +2790,7 @@ watch(theaterAudioMasterVolume, (volume) => {
 })
 
 onBeforeUnmount(() => {
+  stopPackagePolling()
   unsubscribeEffectRuntime()
   effectRuntime.dispose()
   theaterAudioSequences.clear()
@@ -2709,6 +2826,7 @@ onBeforeUnmount(() => {
 <template>
   <section class="theater-stage-app">
     <input ref="imageInputRef" class="theater-image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif,video/webm,.webm" @change="handleImageInput">
+    <input ref="packageInputRef" class="theater-image-input" type="file" accept=".zip,application/zip" @change="handlePackageInput">
     <header
       class="theater-stage-toolbar"
       :class="{ 'is-controls-visible': toolbarColorsVisible }"
@@ -2725,9 +2843,12 @@ onBeforeUnmount(() => {
         </template>
         退出小剧场
       </n-tooltip>
-      <div class="theater-stage-title" :title="store.activeScene.value.name">
-        {{ store.activeScene.value.name }}
-      </div>
+      <n-dropdown v-if="canManagePackages" trigger="click" :options="packageMenuOptions" @select="handlePackageMenuSelect">
+        <button class="theater-stage-title is-actionable" type="button" :title="`${store.activeScene.value.name} · 导入/导出`" :aria-busy="packageBusy">
+          {{ store.activeScene.value.name }}
+        </button>
+      </n-dropdown>
+      <div v-else class="theater-stage-title" :title="store.activeScene.value.name">{{ store.activeScene.value.name }}</div>
       <n-button-group class="theater-panel-switches" size="small">
         <n-tooltip v-if="canEditAllObjects || canSwitchScene" trigger="hover">
           <template #trigger>
@@ -3424,6 +3545,12 @@ onBeforeUnmount(() => {
 .theater-stage-title {
   width: 8em; flex: 0 0 8em; overflow: hidden; color: var(--sc-text-primary, #f4f4f5);
   font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap;
+}
+.theater-stage-title.is-actionable {
+  height: 34px; padding: 0; border: 0; border-radius: 5px; background: transparent; text-align: left; cursor: pointer;
+}
+.theater-stage-title.is-actionable:hover, .theater-stage-title.is-actionable:focus-visible {
+  color: #fff; text-decoration: underline; text-underline-offset: 4px; outline: none;
 }
 .theater-panel-switches :deep(.n-button), .theater-stage-object-actions :deep(.n-button) { width: 34px; padding: 0; }
 .theater-bulk-select-tool.is-active, .theater-panel-switches :deep(.n-button.is-active) {

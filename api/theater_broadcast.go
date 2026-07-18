@@ -251,7 +251,7 @@ func (LocalTheaterEventPublisher) PublishTheaterMutation(_ context.Context, muta
 		"checksum": result.Checksum,
 	}
 	event := theaterGatewayEvent(protocol.EventTheaterMutationApplied, mutation.WorldID, mutation.ChannelID, mutation.RoomID, *mutation.RevisionAfter, mutation.ID, payload)
-	managementMutation := mutation.Type == service.TheaterMutationAdminRestore || mutation.Type == service.TheaterMutationAdminReplace
+	managementMutation := mutation.Type == service.TheaterMutationAdminRestore || mutation.Type == service.TheaterMutationAdminReplace || mutation.Type == service.TheaterMutationAdminPackageImport
 	userId2ConnInfoGlobal.Range(func(userID string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
 		connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
 			if info == nil || info.User == nil || info.User.IsBot {

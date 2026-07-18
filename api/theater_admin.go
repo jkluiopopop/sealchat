@@ -91,4 +91,9 @@ func bindTheaterRoutes(router fiber.Router, base string) {
 	router.Get(base+"/admin/audit", TheaterAdminAudit)
 	router.Post(base+"/admin/restore", TheaterAdminRestore)
 	router.Put(base+"/admin/snapshot", TheaterAdminReplace)
+	router.Post(base+"/packages/export", TheaterPackageExportCreate)
+	router.Post(base+"/packages/import", TheaterPackageImportCreate)
+	router.Get(base+"/packages/jobs/:jobId", TheaterPackageJobGet)
+	router.Get(base+"/packages/jobs/:jobId/download", TheaterPackageDownload)
+	router.Delete(base+"/packages/jobs/:jobId", TheaterPackageJobDelete)
 }
