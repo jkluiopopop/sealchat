@@ -82,7 +82,11 @@ func (processor *VisualMediaProcessor) ProcessTheaterResource(ctx context.Contex
 			return result, nil
 		}
 		if !processor.toolchain.FFmpegAvailable() {
-			return nil, errors.New(TheaterMediaErrorProcessorUnavailable + ": ffmpeg unavailable")
+			// Browsers and the Konva renderer can play GIF, Animated WebP and APNG
+			// directly. Keep the validated source usable when optional transcoding is
+			// unavailable instead of rejecting every animated stage resource.
+			result.Outputs = append(result.Outputs, visualSourceOutput(VisualMediaOutputDisplay, sourcePath, mimeType, metadata))
+			return result, nil
 		}
 		tempDir, err := os.MkdirTemp("", "sealchat-theater-animation-*")
 		if err != nil {

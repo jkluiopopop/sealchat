@@ -717,7 +717,7 @@ func prepareCCFOLIAAnimatedResources(ctx context.Context, root string, resources
 		func() {
 			defer processed.Cleanup()
 			for _, output := range processed.Outputs {
-				if output.Name != VisualMediaOutputDisplay || output.MimeType != "video/webm" {
+				if output.Name != VisualMediaOutputDisplay {
 					continue
 				}
 				relative := filepath.ToSlash(filepath.Join(".sealchat-derived", resource.ContentHash+".display.webm"))
@@ -745,7 +745,7 @@ func prepareCCFOLIAAnimatedResources(ctx context.Context, root string, resources
 				targets[resource.ID] = target
 				return
 			}
-			err = fmt.Errorf("转换 CCFOLIA 动图 %s 未生成 display WebM", resource.ID)
+			err = fmt.Errorf("转换 CCFOLIA 动图 %s 未生成 display 资源", resource.ID)
 		}()
 		if err != nil {
 			return err
