@@ -24,6 +24,17 @@ type theaterPreloadRequest struct {
 	SceneIDs  []string `json:"sceneIds"`
 }
 
+type theaterPointerTraceRequest struct {
+	WorldID        string    `json:"worldId"`
+	ChannelID      string    `json:"channelId"`
+	InputChannelID string    `json:"inputChannelId"`
+	TraceID        string    `json:"traceId"`
+	IdentityID     string    `json:"identityId"`
+	VariantID      string    `json:"variantId"`
+	Points         []float64 `json:"points"`
+	Finished       bool      `json:"finished"`
+}
+
 type theaterSnapshotDescriptor struct {
 	Type    protocol.EventName     `json:"type"`
 	Payload theaterSnapshotPayload `json:"payload"`
@@ -233,6 +244,92 @@ func apiTheaterPreloadWs(ctx *ChatContext, msg []byte) {
 			return true
 		})
 	}
+}
+
+func apiTheaterPointerWs(ctx *ChatContext, msg []byte) {
+	var envelope struct {
+		Data theaterPointerTraceRequest `json:"data"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		writeTheaterWSResponse(ctx, nil, err)
+		return
+	}
+	request := envelope.Data
+	request.WorldID = strings.TrimSpace(request.WorldID)
+	request.ChannelID = strings.TrimSpace(request.ChannelID)
+	request.InputChannelID = strings.TrimSpace(request.InputChannelID)
+	request.TraceID = strings.TrimSpace(request.TraceID)
+	request.IdentityID = strings.TrimSpace(request.IdentityID)
+	request.VariantID = strings.TrimSpace(request.VariantID)
+	if ctx == nil || ctx.User == nil || ctx.ConnInfo == nil || request.WorldID == "" || request.TraceID == "" || len(request.TraceID) > 128 {
+		writeTheaterWSResponse(ctx, nil, errors.New("invalid theater pointer trace"))
+		return
+	}
+	if request.InputChannelID == "" || request.InputChannelID != ctx.ConnInfo.ChannelId || len(request.Points) < 2 || len(request.Points)%2 != 0 || len(request.Points) > 128 {
+		writeTheaterWSResponse(ctx, nil, errors.New("invalid theater pointer trace points"))
+		return
+	}
+	for _, point := range request.Points {
+		if point != point || point > 1_000_000 || point < -1_000_000 {
+			writeTheaterWSResponse(ctx, nil, errors.New("invalid theater pointer coordinate"))
+			return
+		}
+	}
+	subscription, _ := ctx.ConnInfo.theaterState()
+	if subscription == nil || subscription.WorldID != request.WorldID || subscription.ChannelID != request.ChannelID {
+		writeTheaterWSResponse(ctx, nil, errors.New("theater pointer scope does not match subscription"))
+		return
+	}
+	identity, err := service.ChannelIdentityResolve(ctx.User.ID, request.InputChannelID, request.IdentityID)
+	if err != nil || identity == nil {
+		writeTheaterWSResponse(ctx, nil, errors.New("current channel identity is unavailable"))
+		return
+	}
+	variant, err := service.ChannelIdentityVariantValidateMessageVariant(ctx.User.ID, request.InputChannelID, identity, request.VariantID)
+	if err != nil {
+		writeTheaterWSResponse(ctx, nil, err)
+		return
+	}
+	appearance := service.ResolveChannelIdentityAppearance(identity, variant)
+	displayName := strings.TrimSpace(appearance.DisplayName)
+	if displayName == "" {
+		displayName = ctx.User.Nickname
+	}
+	color := model.ChannelIdentityNormalizeColor(appearance.Color)
+	if color == "" {
+		color = "#38bdf8"
+	}
+	room, err := model.TheaterRoomFindByScope(request.WorldID, request.ChannelID)
+	if err != nil {
+		writeTheaterWSResponse(ctx, nil, err)
+		return
+	}
+	event := theaterGatewayEvent(protocol.EventTheaterPointerTrace, request.WorldID, request.ChannelID, room.ID, room.Revision, request.TraceID, map[string]any{
+		"traceId":     request.TraceID,
+		"displayName": displayName,
+		"color":       color,
+		"points":      request.Points,
+		"finished":    request.Finished,
+	})
+	writeTheaterWSResponse(ctx, map[string]any{"accepted": true}, nil)
+	if userId2ConnInfoGlobal == nil {
+		return
+	}
+	userId2ConnInfoGlobal.Range(func(userID string, connMap *utils.SyncMap[*WsSyncConn, *ConnInfo]) bool {
+		connMap.Range(func(_ *WsSyncConn, info *ConnInfo) bool {
+			if !canConnectionViewTheater(userID, info, request.WorldID, request.ChannelID) {
+				return true
+			}
+			targetSubscription, queue := info.theaterState()
+			if targetSubscription == nil || queue == nil || targetSubscription.WorldID != request.WorldID || targetSubscription.ChannelID != request.ChannelID {
+				return true
+			}
+			gap := theaterSnapshotEventForConnection(info, request.WorldID, request.ChannelID, room.ID, room.Revision, room.SchemaVersion, room.StateHash, "gap")
+			queue.Enqueue(event, gap)
+			return true
+		})
+		return true
+	})
 }
 
 func writeTheaterWSResponse(ctx *ChatContext, data any, err error) {

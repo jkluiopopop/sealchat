@@ -438,6 +438,7 @@ const (
 	EventTheaterResourceReady      EventName = "theater.resource.ready"
 	EventTheaterResourceFailed     EventName = "theater.resource.failed"
 	EventTheaterPreloadRequested   EventName = "theater.preload.requested"
+	EventTheaterPointerTrace       EventName = "theater.pointer.trace"
 )
 
 type TheaterEventPayload struct {

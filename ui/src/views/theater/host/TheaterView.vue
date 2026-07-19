@@ -13,6 +13,7 @@ import { mergeTheaterBridgePermissions, TheaterHostBridge } from '../bridge/Thea
 import { createTheaterBridgeId } from '../bridge/theater-bridge-protocol'
 import type { ChatCharactersSnapshotPayload } from '../bridge/theater-bridge-protocol'
 import { TheaterSyncClient } from '../sync/TheaterSyncClient'
+import type { StagePointerTraceInput } from '../shared/stage-types'
 import { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
 import { theaterPresentationSchema, type TheaterPresentation } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
@@ -170,6 +171,12 @@ const requestTheaterPreload = async (sceneIds: string[]) => {
   }
 }
 
+const publishTheaterPointerTrace = (trace: StagePointerTraceInput) => {
+  void theaterSync?.publishPointerTrace(trace).catch((error) => {
+    message.warning(error instanceof Error ? error.message : '临时轨迹同步失败')
+  })
+}
+
 watch(width, () => { splitRatio.value = clampRatio(splitRatio.value) })
 
 const emptyCharacterSnapshot = (): ChatCharactersSnapshotPayload => ({
@@ -251,6 +258,7 @@ const startTheaterSync = async () => {
     },
     onSyncingChange: (syncing) => { theaterSyncing.value = syncing },
     onPreloadRequested: (sceneIds, requestId) => { void stageAppRef.value?.preloadScenes(sceneIds, requestId) },
+    onPointerTrace: (trace) => { stageAppRef.value?.appendPointerTrace(trace) },
     onError: (error) => message.warning(error),
   })
   theaterSync = client
@@ -386,6 +394,7 @@ onBeforeUnmount(() => {
           :dialogue-runtime="dialogueRuntime"
           :appearance-preview="appearancePreview"
           @action-triggered="theaterBridge?.triggerStageAction($event)"
+          @pointer-trace="publishTheaterPointerTrace($event)"
           @preload-requested="requestTheaterPreload"
           @select-character="selectChatCharacter"
           @select-character-variant="selectChatCharacterVariant"

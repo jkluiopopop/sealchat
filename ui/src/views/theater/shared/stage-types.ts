@@ -65,6 +65,22 @@ export interface StageActionTriggeredPayload {
   }
 }
 
+export interface StagePointerTraceInput {
+  traceId: string
+  identityId: string
+  variantId: string | null
+  points: number[]
+  finished: boolean
+}
+
+export interface StagePointerTrace {
+  traceId: string
+  displayName: string
+  color: string
+  points: number[]
+  finished: boolean
+}
+
 export interface StageImageRef {
   resourceId: string
   url: string

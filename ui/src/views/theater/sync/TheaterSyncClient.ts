@@ -2,7 +2,7 @@ import { watch, type WatchStopHandle } from 'vue'
 
 import { api } from '@/stores/_config'
 import { chatEvent } from '@/stores/chat'
-import type { StageActionTriggeredPayload, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StageScene, StageSurfaceFit, StageWorkspaceState } from '../shared/stage-types'
+import type { StageActionTriggeredPayload, StageDrawing, StageImageRef, StageLiveState, StageObject, StageObjectType, StagePointerTrace, StagePointerTraceInput, StageScene, StageSurfaceFit, StageWorkspaceState } from '../shared/stage-types'
 import { isSafeStageImageUrl, normalizeStageSurfaceStyle } from '../shared/stage-types'
 import { createInitialTheaterStageState, type TheaterStageStore } from '../stage/StageStore'
 
@@ -80,6 +80,7 @@ interface TheaterSyncOptions {
   onPermissionsChange?: (permissions: string[]) => void
   onSyncingChange?: (syncing: boolean) => void
   onPreloadRequested?: (sceneIds: string[], requestId: string) => void
+  onPointerTrace?: (trace: StagePointerTrace) => void
   onError?: (message: string) => void
 }
 
@@ -595,6 +596,20 @@ export class TheaterSyncClient {
     this.options.onPreloadRequested?.(sceneIds, typeof payload.requestId === 'string' ? payload.requestId : '')
   }
 
+  private readonly onPointerTrace = (event: any) => {
+    const theater = event?.theater
+    if (!theater || theater.worldId !== this.options.worldId || (this.options.scopeType !== 'world' && theater.channelId !== this.options.channelId)) return
+    const payload = asObject(theater.payload)
+    const traceId = typeof payload.traceId === 'string' ? payload.traceId.trim() : ''
+    const displayName = typeof payload.displayName === 'string' ? payload.displayName.trim() : ''
+    const color = typeof payload.color === 'string' ? payload.color.trim() : ''
+    const points = Array.isArray(payload.points)
+      ? payload.points.filter((point): point is number => typeof point === 'number' && Number.isFinite(point)).slice(0, 128)
+      : []
+    if (!traceId || !displayName || !color || points.length < 2 || points.length % 2 !== 0) return
+    this.options.onPointerTrace?.({ traceId, displayName, color, points, finished: payload.finished === true })
+  }
+
   private readonly onGatewayConnected = () => {
     void this.subscribe()
   }
@@ -608,6 +623,7 @@ export class TheaterSyncClient {
     chatEvent.on('theater.mutation.applied' as any, this.onGatewayEvent)
     chatEvent.on('theater.mutation.rejected' as any, this.onGatewayEvent)
     chatEvent.on('theater.preload.requested' as any, this.onPreloadRequested)
+    chatEvent.on('theater.pointer.trace' as any, this.onPointerTrace)
     chatEvent.on('connected' as any, this.onGatewayConnected)
     await this.reload()
     this.stopWatch = watch(() => [
@@ -634,6 +650,7 @@ export class TheaterSyncClient {
     chatEvent.off('theater.mutation.applied' as any, this.onGatewayEvent)
     chatEvent.off('theater.mutation.rejected' as any, this.onGatewayEvent)
     chatEvent.off('theater.preload.requested' as any, this.onPreloadRequested)
+    chatEvent.off('theater.pointer.trace' as any, this.onPointerTrace)
     chatEvent.off('connected' as any, this.onGatewayConnected)
     try {
       await this.options.sendGatewayAPI('theater.unsubscribe', {})
@@ -662,6 +679,19 @@ export class TheaterSyncClient {
       channelId: this.options.scopeType === 'world' ? '' : this.options.channelId,
       requestId: mutationId('preload'),
       sceneIds: normalized,
+    })
+  }
+
+  async publishPointerTrace(trace: StagePointerTraceInput) {
+    await this.options.sendGatewayAPI('theater.pointer', {
+      worldId: this.options.worldId,
+      channelId: this.options.scopeType === 'world' ? '' : this.options.channelId,
+      inputChannelId: this.options.inputChannelId || this.options.channelId,
+      traceId: trace.traceId,
+      identityId: trace.identityId,
+      variantId: trace.variantId || '',
+      points: trace.points,
+      finished: trace.finished,
     })
   }
 

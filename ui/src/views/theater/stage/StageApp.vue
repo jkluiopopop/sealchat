@@ -51,6 +51,8 @@ import {
   type StageImageRef,
   type StageObject,
   type StageObjectFit,
+  type StagePointerTrace,
+  type StagePointerTraceInput,
   type StageSurfaceFit,
   type StageSurfaceStyle,
   type StageSurfaceTarget,
@@ -99,6 +101,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   actionTriggered: [payload: StageActionTriggeredPayload]
+  pointerTrace: [trace: StagePointerTraceInput]
   selectCharacter: [identityId: string]
   selectCharacterVariant: [payload: { identityId: string, variantId: string | null }]
   toggleChat: []
@@ -536,6 +539,7 @@ const imageEditorFile = ref<File | null>(null)
 const imageEditorVisible = ref(false)
 const activeCanvasTool = ref<StageCanvasTool | null>(null)
 const quickDeleteActive = ref(false)
+const viewToolActive = ref(false)
 const drawingStyle = ref<StageDrawingStyle>({
   stroke: '#f8fafc',
   strokeWidth: 4,
@@ -667,6 +671,7 @@ const handleStageShortcut = (event: KeyboardEvent) => {
 
 const selectCanvasTool = (tool: StageCanvasTool) => {
   cancelDrawingSession()
+  viewToolActive.value = false
   quickDeleteActive.value = false
   const previousTool = activeCanvasTool.value
   if (isDrawingTool(previousTool)) drawingStyleMemory.set(previousTool, { ...drawingStyle.value })
@@ -691,11 +696,28 @@ const selectCanvasTool = (tool: StageCanvasTool) => {
 const toggleQuickDeleteTool = () => {
   if (!canEditAllObjects.value) return
   cancelDrawingSession()
+  viewToolActive.value = false
   activeCanvasTool.value = null
   quickDeleteActive.value = !quickDeleteActive.value
   props.store.setBulkSelectionMode(false)
   props.store.clearSelection()
   nextTick(updateTransformer)
+}
+
+const toggleViewTool = () => {
+  cancelDrawingSession()
+  finishPointerTrace()
+  activeCanvasTool.value = null
+  quickDeleteActive.value = false
+  viewToolActive.value = !viewToolActive.value
+  if (viewToolActive.value) {
+    props.store.setBulkSelectionMode(false)
+    props.store.clearSelection()
+  }
+  nextTick(() => {
+    syncObjects()
+    updateTransformer()
+  })
 }
 
 const updateDrawingStyle = (style: StageDrawingStyle) => {
@@ -919,6 +941,7 @@ let gridGroup: Konva.Group | null = null
 let objectRoot: Konva.Group | null = null
 let sceneMorphRoot: Konva.Group | null = null
 let drawingDraftRoot: Konva.Group | null = null
+let pointerTraceRoot: Konva.Group | null = null
 let transformer: Konva.Transformer | null = null
 let selectionRect: Konva.Rect | null = null
 let quickDeleteOutline: Konva.Rect | null = null
@@ -940,6 +963,146 @@ interface DrawingSession {
 }
 
 let drawingSession: DrawingSession | null = null
+
+interface PointerTraceVisual {
+  group: Konva.Group
+  line: Konva.Line
+  expiryTimer: number | null
+}
+
+interface PointerTraceSession {
+  traceId: string
+  identityId: string
+  variantId: string | null
+  pendingPoints: number[]
+  lastPoint: { x: number, y: number }
+  lastSentAt: number
+}
+
+const pointerTraceVisuals = new Map<string, PointerTraceVisual>()
+const localPointerTraceIds = new Set<string>()
+let pointerTraceSession: PointerTraceSession | null = null
+
+const clearPointerTrace = (traceId: string) => {
+  const visual = pointerTraceVisuals.get(traceId)
+  if (!visual) return
+  if (visual.expiryTimer !== null) window.clearTimeout(visual.expiryTimer)
+  visual.group.destroy()
+  pointerTraceVisuals.delete(traceId)
+  localPointerTraceIds.delete(traceId)
+  worldLayer?.batchDraw()
+}
+
+const keepPointerTrace = (traceId: string) => {
+  const visual = pointerTraceVisuals.get(traceId)
+  if (!visual) return
+  if (visual.expiryTimer !== null) window.clearTimeout(visual.expiryTimer)
+  visual.expiryTimer = window.setTimeout(() => clearPointerTrace(traceId), 5_000)
+}
+
+const appendPointerTraceVisual = (trace: StagePointerTrace) => {
+  if (!pointerTraceRoot) return
+  let visual = pointerTraceVisuals.get(trace.traceId)
+  if (!visual) {
+    const group = new Konva.Group({ listening: false })
+    const line = new Konva.Line({
+      points: trace.points,
+      stroke: trace.color,
+      strokeWidth: 5,
+      opacity: 0.9,
+      lineCap: 'round',
+      lineJoin: 'round',
+      listening: false,
+    })
+    const label = new Konva.Text({
+      x: trace.points[0] + 8,
+      y: trace.points[1] - 24,
+      text: trace.displayName,
+      fill: trace.color,
+      fontSize: 14,
+      fontStyle: 'bold',
+      shadowColor: '#000000',
+      shadowBlur: 3,
+      shadowOpacity: 0.9,
+      listening: false,
+    })
+    group.add(line, label)
+    pointerTraceRoot.add(group)
+    visual = { group, line, expiryTimer: null }
+    pointerTraceVisuals.set(trace.traceId, visual)
+  } else {
+    visual.line.points([...visual.line.points(), ...trace.points])
+  }
+  keepPointerTrace(trace.traceId)
+  worldLayer?.batchDraw()
+}
+
+const appendPointerTrace = (trace: StagePointerTrace) => {
+  const local = localPointerTraceIds.has(trace.traceId)
+  if (local) {
+    keepPointerTrace(trace.traceId)
+    return
+  }
+  appendPointerTraceVisual(trace)
+}
+
+const beginPointerTrace = (pointer: { x: number, y: number }) => {
+  const character = activeChatCharacter.value
+  if (!character) return
+  const traceId = `pointer-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
+  pointerTraceSession = {
+    traceId,
+    identityId: character.identityId,
+    variantId: character.activeVariantId || null,
+    pendingPoints: [pointer.x, pointer.y],
+    lastPoint: pointer,
+    lastSentAt: 0,
+  }
+  localPointerTraceIds.add(traceId)
+  appendPointerTraceVisual({
+    traceId,
+    displayName: character.resolvedAppearance.displayName || character.displayName || character.identityId,
+    color: character.resolvedAppearance.color || character.color || '#38bdf8',
+    points: [pointer.x, pointer.y],
+    finished: false,
+  })
+}
+
+const flushPointerTrace = (finished: boolean) => {
+  const session = pointerTraceSession
+  if (!session) return
+  const points = session.pendingPoints.splice(0)
+  if (!points.length) points.push(session.lastPoint.x, session.lastPoint.y)
+  emit('pointerTrace', {
+    traceId: session.traceId,
+    identityId: session.identityId,
+    variantId: session.variantId,
+    points,
+    finished,
+  })
+  session.lastSentAt = Date.now()
+}
+
+const continuePointerTrace = (pointer: { x: number, y: number }) => {
+  const session = pointerTraceSession
+  if (!session || Math.hypot(pointer.x - session.lastPoint.x, pointer.y - session.lastPoint.y) < 2) return
+  session.lastPoint = pointer
+  session.pendingPoints.push(pointer.x, pointer.y)
+  appendPointerTraceVisual({
+    traceId: session.traceId,
+    displayName: '',
+    color: '',
+    points: [pointer.x, pointer.y],
+    finished: false,
+  })
+  if (Date.now() - session.lastSentAt >= 50) flushPointerTrace(false)
+}
+
+const finishPointerTrace = () => {
+  if (!pointerTraceSession) return
+  flushPointerTrace(true)
+  pointerTraceSession = null
+}
 
 const objectNodes = new Map<string, Konva.Group>()
 const imageLoadVersions = new Map<string, number>()
@@ -1285,7 +1448,7 @@ const applyCamera = () => {
 
 const updateTransformer = () => {
   if (!transformer) return
-  if (activeCanvasTool.value || quickDeleteActive.value) {
+  if (viewToolActive.value || activeCanvasTool.value || quickDeleteActive.value) {
     transformer.nodes([])
     transformer.visible(false)
     interactionLayer?.batchDraw()
@@ -1333,6 +1496,7 @@ const updateTransformer = () => {
 }
 
 const selectObject = (objectId: string | null, additive = false) => {
+  if (viewToolActive.value) return
   if (objectId && !canEditObject(getObject(objectId))) return
   props.store.selectObject(objectId, additive)
   nextTick(updateTransformer)
@@ -1985,7 +2149,7 @@ const settleSceneMedia = (key: string, url: string, reveal?: () => void) => {
   if (batch.settled.size >= batch.expected.size) releaseSceneMediaBatch(batch)
 }
 
-defineExpose({ preloadScenes })
+defineExpose({ preloadScenes, appendPointerTrace })
 
 const setImageFit = (
   node: Konva.Image,
@@ -2712,6 +2876,7 @@ const createObjectNode = (object: StageObject) => {
   wrapper.setAttr('stageObjectId', object.id)
   rebuildObjectContent(wrapper, object)
   wrapper.on('pointerdown', (event) => {
+    if (viewToolActive.value) return
     if (event.evt.button !== 0) return
     const current = getObject(object.id)
     if (quickDeleteActive.value) {
@@ -2746,18 +2911,18 @@ const createObjectNode = (object: StageObject) => {
     selectObject(selectionId, additive)
   })
   wrapper.on('dblclick dbltap', (event) => {
-    if (activeCanvasTool.value || quickDeleteActive.value) return
+    if (viewToolActive.value || activeCanvasTool.value || quickDeleteActive.value) return
     if (!canEditObject(getObject(object.id))) return
     event.cancelBubble = true
     selectObject(object.id)
   })
   wrapper.on('click tap', () => {
-    if (activeCanvasTool.value || quickDeleteActive.value) return
+    if (viewToolActive.value || activeCanvasTool.value || quickDeleteActive.value) return
     const current = getObject(object.id)
     if (current) triggerObjectActions(current)
   })
   wrapper.on('contextmenu', (event) => {
-    if (activeCanvasTool.value || quickDeleteActive.value) return
+    if (viewToolActive.value || activeCanvasTool.value || quickDeleteActive.value) return
     if (!canEditObject(getObject(object.id))) return
     event.evt.preventDefault()
     event.cancelBubble = true
@@ -2988,12 +3153,13 @@ const updateObjectNode = (wrapper: Konva.Group, object: StageObject) => {
     scaleY: object.transform.scaleY,
     visible: object.visible,
     draggable: !object.locked
+      && !viewToolActive.value
       && !activeCanvasTool.value
       && !quickDeleteActive.value
       && canEditObject(object)
       && groupedObjectDirectlySelected
       && (!multiSelected || (!batchMoveBlocked.value && !selectedAncestor)),
-    listening: canEditObject(object) || (canTriggerActions.value && object.interactive && ['image', 'button'].includes(object.type)),
+    listening: !viewToolActive.value && (canEditObject(object) || (canTriggerActions.value && object.interactive && ['image', 'button'].includes(object.type))),
   })
   if (object.type === 'drawing') {
     return
@@ -3108,6 +3274,21 @@ const handleWheel = (event: Konva.KonvaEventObject<WheelEvent>) => {
 
 const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
   if (!stage) return
+  if (viewToolActive.value) {
+    if (event.evt.button === 2) {
+      const pointer = worldCameraGroup?.getRelativePointerPosition()
+      if (!pointer) return
+      event.evt.preventDefault()
+      beginPointerTrace(pointer)
+      return
+    }
+    if (event.evt.button !== 0 || event.target !== stage) return
+    event.evt.preventDefault()
+    panning = true
+    panPointer = { x: event.evt.clientX, y: event.evt.clientY }
+    panOrigin = { x: props.store.state.camera.x, y: props.store.state.camera.y }
+    return
+  }
   if (quickDeleteActive.value) {
     quickDeleteOutline?.visible(false)
     interactionLayer?.batchDraw()
@@ -3147,6 +3328,11 @@ const startPan = (event: Konva.KonvaEventObject<PointerEvent>) => {
 }
 
 const movePan = (event: Konva.KonvaEventObject<PointerEvent>) => {
+  if (pointerTraceSession) {
+    const pointer = worldCameraGroup?.getRelativePointerPosition()
+    if (pointer) continuePointerTrace(pointer)
+    return
+  }
   if (drawingSession) {
     const pointer = worldCameraGroup?.getRelativePointerPosition()
     if (!pointer) return
@@ -3179,6 +3365,10 @@ const movePan = (event: Konva.KonvaEventObject<PointerEvent>) => {
 }
 
 const stopPan = (event?: Konva.KonvaEventObject<PointerEvent>) => {
+  if (pointerTraceSession) {
+    finishPointerTrace()
+    return
+  }
   if (drawingSession) {
     if (event?.type === 'pointercancel') {
       cancelDrawingSession()
@@ -3567,6 +3757,7 @@ onMounted(() => {
   gridGroup = new Konva.Group({ listening: false })
   objectRoot = new Konva.Group()
   drawingDraftRoot = new Konva.Group({ listening: false })
+  pointerTraceRoot = new Konva.Group({ listening: false })
   transformer = new Konva.Transformer({
     rotateEnabled: true,
     keepRatio: false,
@@ -3579,7 +3770,7 @@ onMounted(() => {
     anchorSize: 9,
   })
   transformer.on('contextmenu', (event) => {
-    if (activeCanvasTool.value || quickDeleteActive.value) return
+    if (viewToolActive.value || activeCanvasTool.value || quickDeleteActive.value) return
     const selectedId = props.store.state.selectedObjectId
     if (!selectedId || !canEditObject(getObject(selectedId))) return
     event.evt.preventDefault()
@@ -3604,7 +3795,7 @@ onMounted(() => {
   backgroundSlot = createSurfaceSlot(backgroundCameraGroup, true, props.store.state.liveState.surfaceStyles.background)
   foregroundSlot = createSurfaceSlot(foregroundCameraGroup, false, props.store.state.liveState.surfaceStyles.foreground)
   sceneMorphRoot = new Konva.Group({ listening: false })
-  worldCameraGroup.add(gridGroup, objectRoot, sceneMorphRoot, drawingDraftRoot)
+  worldCameraGroup.add(gridGroup, objectRoot, sceneMorphRoot, drawingDraftRoot, pointerTraceRoot)
   backgroundLayer.add(backgroundCameraGroup)
   worldLayer.add(worldCameraGroup)
   foregroundLayer.add(foregroundCameraGroup)
@@ -3651,6 +3842,10 @@ watch(activeCanvasTool, () => {
 })
 watch(quickDeleteActive, (active) => {
   if (!active) quickDeleteOutline?.visible(false)
+  syncObjects()
+  updateTransformer()
+})
+watch(viewToolActive, () => {
   syncObjects()
   updateTransformer()
 })
@@ -3706,6 +3901,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', unlockTheaterAudio, true)
   props.store.commitObjectEdit()
   cancelDrawingSession()
+  finishPointerTrace()
+  Array.from(pointerTraceVisuals.keys()).forEach(clearPointerTrace)
   if (sceneMediaBatch && !sceneMediaBatch.released) releaseSceneMediaBatch(sceneMediaBatch)
   sceneMediaBatch = null
   finishSceneMorph()
@@ -3722,6 +3919,7 @@ onBeforeUnmount(() => {
   stage?.destroy()
   stage = null
   drawingDraftRoot = null
+  pointerTraceRoot = null
   sceneMorphRoot = null
 })
 </script>
@@ -3812,6 +4010,20 @@ onBeforeUnmount(() => {
         :class="{ 'is-online': syncReady && !syncing, 'is-syncing': syncing }"
         :title="syncing ? '正在同步' : syncReady ? '后端同步已连接' : '后端同步未连接'"
       />
+      <n-tooltip trigger="hover">
+        <template #trigger>
+          <n-button
+            class="theater-view-tool"
+            :class="{ 'is-active': viewToolActive }"
+            :aria-pressed="viewToolActive"
+            :aria-label="viewToolActive ? '关闭查看工具' : '打开查看工具'"
+            @click="toggleViewTool"
+          >
+            <template #icon><n-icon><Eye /></n-icon></template>
+          </n-button>
+        </template>
+        {{ viewToolActive ? '关闭查看工具' : '查看工具' }}
+      </n-tooltip>
       <span v-if="canEditAllObjects" class="theater-toolbar-divider" />
       <StageDrawingToolbar
         v-if="canEditAllObjects"
@@ -3881,7 +4093,7 @@ onBeforeUnmount(() => {
       <div
         ref="viewportRef"
         class="theater-stage-viewport"
-        :class="{ 'is-drawing': activeCanvasTool && activeCanvasTool !== 'eraser', 'is-erasing': activeCanvasTool === 'eraser', 'is-quick-deleting': quickDeleteActive }"
+        :class="{ 'is-viewing': viewToolActive, 'is-drawing': activeCanvasTool && activeCanvasTool !== 'eraser', 'is-erasing': activeCanvasTool === 'eraser', 'is-quick-deleting': quickDeleteActive }"
         @dragover.prevent
         @drop.prevent="handleCanvasDrop"
       >
@@ -4512,6 +4724,7 @@ onBeforeUnmount(() => {
 .theater-appearance-preview-layer { position: absolute; z-index: 8; inset: 0; overflow: hidden; }
 .theater-appearance-preview-layer :deep(.theater-preview) { min-height: 0; background: transparent; }
 .theater-stage-viewport.is-drawing :deep(canvas) { cursor: crosshair !important; }
+.theater-stage-viewport.is-viewing :deep(canvas) { cursor: grab !important; }
 .theater-stage-viewport.is-erasing :deep(canvas) { cursor: cell !important; }
 .theater-stage-viewport.is-quick-deleting :deep(canvas) { cursor: crosshair !important; }
 .theater-stage-canvas { position: absolute; inset: 0; }
