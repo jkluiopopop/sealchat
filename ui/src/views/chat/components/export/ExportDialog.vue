@@ -1056,6 +1056,14 @@ onBeforeUnmount(() => {
                 >
                   <n-icon :component="Settings" />
                 </n-button>
+                <n-button
+                  text
+                  size="tiny"
+                  :disabled="!props.channelId"
+                  @click.stop="openColorProfilePanel"
+                >
+                  BBcode角色染色设置
+                </n-button>
               </n-space>
             </template>
             仅对纯文本导出生效，会使用 [color] 标签包裹角色名与内容，并引用频道内的昵称颜色。
