@@ -1266,7 +1266,10 @@ const applyCamera = () => {
     y: stage.height() / 2 + props.store.state.camera.y,
   }
   const scale = { x: props.store.state.camera.zoom, y: props.store.state.camera.zoom }
-  for (const group of [backgroundCameraGroup, worldCameraGroup, foregroundCameraGroup]) {
+  // Background fills viewport independently; world and foreground follow camera.
+  backgroundCameraGroup?.position({ x: 0, y: 0 })
+  backgroundCameraGroup?.scale({ x: 1, y: 1 })
+  for (const group of [worldCameraGroup, foregroundCameraGroup]) {
     group?.position(position)
     group?.scale(scale)
   }
@@ -1880,7 +1883,8 @@ const syncField = () => {
   const width = liveState.fieldWidth * WORLD_UNIT_PX
   const height = liveState.fieldHeight * WORLD_UNIT_PX
   const box = { x: -width / 2, y: -height / 2, width, height }
-  updateSurfaceSlot(backgroundSlot, liveState.background, box, liveState.surfaceStyles.background, '背景')
+  const viewportBox = { x: 0, y: 0, width: viewportSize.value.width, height: viewportSize.value.height }
+  updateSurfaceSlot(backgroundSlot, liveState.background, viewportBox, liveState.surfaceStyles.background, '背景')
   updateSurfaceSlot(foregroundSlot, liveState.foreground, box, liveState.surfaceStyles.foreground, '前景')
   rebuildGrid(box.x, box.y, width, height)
   backgroundLayer?.batchDraw()
