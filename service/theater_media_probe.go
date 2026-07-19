@@ -30,6 +30,7 @@ type theaterMediaMetadata struct {
 	DurationMS int64
 	FrameCount int
 	FrameRate  float64
+	LoopCount  *int
 	Container  string
 	VideoCodec string
 	AudioCodec string
@@ -144,7 +145,7 @@ func probeAnimatedImage(path, mimeType string) (theaterMediaMetadata, error) {
 		if len(decoded.Image) <= 1 {
 			kind = "static_image"
 		}
-		return theaterMediaMetadata{Kind: kind, MimeType: mimeType, Width: decoded.Config.Width, Height: decoded.Config.Height, FrameCount: len(decoded.Image), DurationMS: duration}, nil
+		return theaterMediaMetadata{Kind: kind, MimeType: mimeType, Width: decoded.Config.Width, Height: decoded.Config.Height, FrameCount: len(decoded.Image), DurationMS: duration, LoopCount: gifPlaybackCount(decoded.LoopCount)}, nil
 	case "image/apng":
 		return parseAPNGMetadata(path)
 	case "image/webp":
@@ -156,10 +157,22 @@ func probeAnimatedImage(path, mimeType string) (theaterMediaMetadata, error) {
 		if !webpMetadata.Animated || webpMetadata.FrameCount <= 1 {
 			kind = "static_image"
 		}
-		return theaterMediaMetadata{Kind: kind, MimeType: mimeType, Width: webpMetadata.Width, Height: webpMetadata.Height, FrameCount: webpMetadata.FrameCount, DurationMS: webpMetadata.DurationMS, HasAlpha: webpMetadata.HasAlpha}, nil
+		return theaterMediaMetadata{Kind: kind, MimeType: mimeType, Width: webpMetadata.Width, Height: webpMetadata.Height, FrameCount: webpMetadata.FrameCount, DurationMS: webpMetadata.DurationMS, LoopCount: webpMetadata.LoopCount, HasAlpha: webpMetadata.HasAlpha}, nil
 	default:
 		return theaterMediaMetadata{}, errors.New(TheaterMediaErrorUnsupported)
 	}
+}
+
+func gifPlaybackCount(loopCount int) *int {
+	if loopCount == 0 {
+		return intPointer(0)
+	}
+	plays := 1
+	if loopCount > 0 {
+		// GIF stores additional repeats, while the stage property stores total plays.
+		plays = min(loopCount+1, 65_535)
+	}
+	return &plays
 }
 
 func parseAPNGMetadata(path string) (theaterMediaMetadata, error) {
@@ -194,7 +207,12 @@ func parseAPNGMetadata(path string) (theaterMediaMetadata, error) {
 		}
 		offset = index + 4
 	}
-	return theaterMediaMetadata{Kind: "animated_image", MimeType: "image/apng", Width: width, Height: height, FrameCount: frameCount, DurationMS: duration}, nil
+	var loopCount *int
+	if index >= 4 && index+12 <= len(data) {
+		plays := int(binary.BigEndian.Uint32(data[index+8 : index+12]))
+		loopCount = &plays
+	}
+	return theaterMediaMetadata{Kind: "animated_image", MimeType: "image/apng", Width: width, Height: height, FrameCount: frameCount, DurationMS: duration, LoopCount: loopCount}, nil
 }
 
 type theaterWebPMetadata struct {
@@ -203,6 +221,7 @@ type theaterWebPMetadata struct {
 	Animated   bool
 	FrameCount int
 	DurationMS int64
+	LoopCount  *int
 	HasAlpha   bool
 }
 
@@ -241,6 +260,11 @@ func parseWebPMetadata(path string) (theaterWebPMetadata, error) {
 				}
 				metadata.DurationMS += int64(duration)
 			}
+		case "ANIM":
+			if len(chunk) >= 6 {
+				plays := int(binary.LittleEndian.Uint16(chunk[4:6]))
+				metadata.LoopCount = &plays
+			}
 		case "ALPH":
 			metadata.HasAlpha = true
 		}
@@ -254,6 +278,10 @@ func parseWebPMetadata(path string) (theaterWebPMetadata, error) {
 	}
 	metadata.Animated = metadata.Animated || metadata.FrameCount > 1
 	return metadata, nil
+}
+
+func intPointer(value int) *int {
+	return &value
 }
 
 func uint24LE(value []byte) int {

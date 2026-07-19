@@ -594,7 +594,7 @@ func importTheaterPackageResource(tx *gorm.DB, root string, room *model.TheaterR
 		ClientResourceID: "", AttachmentID: attachmentID, Kind: item.Kind, ContentHash: item.ContentHash,
 		SizeBytes: item.SizeBytes, MimeType: item.MimeType, OriginalFilename: item.OriginalFilename,
 		Width: item.Width, Height: item.Height, DurationMS: item.DurationMS, FrameCount: item.FrameCount,
-		FrameRate: item.FrameRate, Container: item.Container, VideoCodec: item.VideoCodec, AudioCodec: item.AudioCodec,
+		FrameRate: item.FrameRate, LoopCount: item.LoopCount, Container: item.Container, VideoCodec: item.VideoCodec, AudioCodec: item.AudioCodec,
 		Status: "ready", ProcessingProgress: 1, PosterResourceID: remap.resources[item.PosterResourceID],
 		VariantsJSON: variantsJSON, CreatedBy: job.ActorUserID, ReadyAt: &now,
 	}

@@ -193,12 +193,15 @@ func (processor *VisualMediaProcessor) transcodeTransparentWebM(ctx context.Cont
 		filter = "scale='min(1920,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:flags=lanczos,format=yuva420p"
 		width, height = scaledVisualDimensions(metadata.Width, metadata.Height, 1920)
 	}
-	output, err := processor.runner.Run(transcodeCtx, processor.toolchain.FFmpegPath,
-		"-y", "-i", sourcePath, "-map", "0:v:0", "-an",
+	inputArgs := []string{"-y"}
+	if metadata.MimeType == "image/gif" {
+		inputArgs = append(inputArgs, "-ignore_loop", "1")
+	}
+	inputArgs = append(inputArgs, "-i", sourcePath, "-map", "0:v:0", "-an",
 		"-vf", filter,
 		"-c:v", "libvpx-vp9", "-deadline", "good", "-cpu-used", "4", "-crf", "30", "-b:v", "0",
-		"-row-mt", "1", "-auto-alt-ref", "0", "-metadata:s:v:0", "alpha_mode=1", outputPath,
-	)
+		"-row-mt", "1", "-auto-alt-ref", "0", "-metadata:s:v:0", "alpha_mode=1", outputPath)
+	output, err := processor.runner.Run(transcodeCtx, processor.toolchain.FFmpegPath, inputArgs...)
 	if err != nil && metadata.MimeType == "image/webp" && transcodeCtx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		concatPath, decodeErr := decodeAnimatedWebPFrames(transcodeCtx, sourcePath, filepath.Dir(outputPath), metadata)
 		if decodeErr != nil {

@@ -64,6 +64,7 @@ type TheaterPackageResource struct {
 	DurationMS       *int64                          `json:"durationMs,omitempty"`
 	FrameCount       *int                            `json:"frameCount,omitempty"`
 	FrameRate        *float64                        `json:"frameRate,omitempty"`
+	LoopCount        *int                            `json:"loopCount,omitempty"`
 	Container        string                          `json:"container,omitempty"`
 	VideoCodec       string                          `json:"videoCodec,omitempty"`
 	AudioCodec       string                          `json:"audioCodec,omitempty"`

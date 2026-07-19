@@ -123,6 +123,7 @@ const imageRef = (value: unknown): StageImageRef | null => {
     ...(typeof raw.alt === 'string' ? { alt: raw.alt } : {}),
     ...(typeof raw.mimeType === 'string' && raw.mimeType.trim() ? { mimeType: raw.mimeType.trim().toLowerCase() } : {}),
     ...(raw.animated === true ? { animated: true } : {}),
+    ...(Number.isInteger(raw.loopCount) && Number(raw.loopCount) > 0 && Number(raw.loopCount) <= 65_535 ? { loopCount: Number(raw.loopCount) } : {}),
   }
 }
 

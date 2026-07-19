@@ -165,6 +165,7 @@ type TheaterResourcePublic struct {
 	DurationMS       *int64                         `json:"durationMs"`
 	FrameCount       *int                           `json:"frameCount"`
 	FrameRate        *float64                       `json:"frameRate"`
+	LoopCount        *int                           `json:"loopCount"`
 	Animated         bool                           `json:"animated"`
 	PlaybackVariant  string                         `json:"playbackVariant,omitempty"`
 	PlaybackMimeType string                         `json:"playbackMimeType,omitempty"`

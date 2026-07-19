@@ -249,6 +249,7 @@ type ccfoliaAssetTarget struct {
 	MimeType        string
 	Animated        bool
 	PlaybackVariant string
+	LoopCount       *int
 }
 
 type ccfoliaConversion struct {
@@ -655,6 +656,7 @@ func loadCCFOLIAResources(root string, backup ccfoliaBackup) ([]TheaterPackageRe
 		isAnimated := metadata.Kind == "animated_image"
 		if isAnimated {
 			animated++
+			metadata.LoopCount = normalizedTheaterLoopCount(metadata)
 		}
 		width, height := metadata.Width, metadata.Height
 		frameCount := metadata.FrameCount
@@ -666,12 +668,12 @@ func loadCCFOLIAResources(root string, backup ccfoliaBackup) ([]TheaterPackageRe
 		resource := TheaterPackageResource{
 			ID: ref, Kind: metadata.Kind, ContentHash: fileInfo.SHA256, SizeBytes: fileInfo.Size,
 			MimeType: mediaMIME, OriginalFilename: ref, Width: &width, Height: &height,
-			DurationMS: duration, FrameCount: &frameCount, Container: ccfoliaContainer(detected, isAnimated),
+			DurationMS: duration, FrameCount: &frameCount, LoopCount: metadata.LoopCount, Container: ccfoliaContainer(detected, isAnimated),
 			Original: TheaterPackageFile{Path: ref, SHA256: fileInfo.SHA256, Size: fileInfo.Size, MimeType: mediaMIME, Filename: ref},
 			Variants: []TheaterPackageResourceVariant{},
 		}
 		resources = append(resources, resource)
-		targets[ref] = ccfoliaAssetTarget{ResourceID: resourceID, MimeType: mediaMIME, Animated: isAnimated}
+		targets[ref] = ccfoliaAssetTarget{ResourceID: resourceID, MimeType: mediaMIME, Animated: isAnimated, LoopCount: metadata.LoopCount}
 	}
 	warnings := []string{}
 	entries, err := os.ReadDir(root)
@@ -789,7 +791,7 @@ func inspectCCFOLIAImage(path string) (theaterMediaMetadata, string, error) {
 		if webp.Animated && webp.FrameCount > 1 {
 			kind = "animated_image"
 		}
-		return theaterMediaMetadata{Kind: kind, MimeType: detected, Width: webp.Width, Height: webp.Height, FrameCount: webp.FrameCount, DurationMS: webp.DurationMS}, detected, nil
+		return theaterMediaMetadata{Kind: kind, MimeType: detected, Width: webp.Width, Height: webp.Height, FrameCount: webp.FrameCount, DurationMS: webp.DurationMS, LoopCount: webp.LoopCount}, detected, nil
 	}
 	if kind == "animated_image" {
 		metadata, err := probeAnimatedImage(path, detected)
@@ -1152,6 +1154,9 @@ func ccfoliaImageRef(sourceRef *string, alt, worldID string, targets map[string]
 	}
 	if target.Animated {
 		result["animated"] = true
+	}
+	if target.LoopCount != nil {
+		result["loopCount"] = *target.LoopCount
 	}
 	return result, nil
 }

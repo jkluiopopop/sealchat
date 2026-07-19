@@ -111,7 +111,8 @@ func (service *theaterMediaService) processResource(ctx context.Context, resourc
 		updates := map[string]any{
 			"status": "ready", "processing_progress": 1, "kind": metadata.Kind, "width": metadata.Width, "height": metadata.Height,
 			"duration_ms": nullableMediaInt64(metadata.DurationMS), "frame_count": nullableMediaInt(metadata.FrameCount), "frame_rate": nullableMediaFloat(metadata.FrameRate),
-			"container": metadata.Container, "video_codec": metadata.VideoCodec, "audio_codec": metadata.AudioCodec,
+			"loop_count": normalizedTheaterLoopCount(metadata),
+			"container":  metadata.Container, "video_codec": metadata.VideoCodec, "audio_codec": metadata.AudioCodec,
 			"variants_json": string(variantsJSON), "failure_code": "", "failure_message": "", "retryable": false, "ready_at": &readyAt,
 		}
 		if err := tx.Model(&model.TheaterResourceModel{}).Where("id = ?", resource.ID).Updates(updates).Error; err != nil {
@@ -126,6 +127,13 @@ func (service *theaterMediaService) processResource(ctx context.Context, resourc
 	auditTheaterResourceState(resource.ID, "ready", "")
 	RecordTheaterMetric("theater_resource_upload_total", map[string]string{"status": "ready", "mime": resource.MimeType}, 1)
 	RecordTheaterMetric("theater_resource_bytes_total", map[string]string{"mime": resource.MimeType}, float64(resource.SizeBytes))
+}
+
+func normalizedTheaterLoopCount(metadata theaterMediaMetadata) *int {
+	if metadata.Kind != "animated_image" || metadata.LoopCount != nil {
+		return metadata.LoopCount
+	}
+	return intPointer(0)
 }
 
 func transcodeTheaterDisplay(ctx context.Context, sourcePath, tempDir string, toolchain MediaToolchain, runner MediaCommandRunner) (string, string, error) {

@@ -185,7 +185,7 @@ func exportTheaterPackageResource(stagingDir string, resource model.TheaterResou
 		ID: resource.ID, ClientResourceID: resource.ClientResourceID, Kind: resource.Kind,
 		ContentHash: resource.ContentHash, SizeBytes: resource.SizeBytes, MimeType: resource.MimeType,
 		OriginalFilename: resource.OriginalFilename, Width: resource.Width, Height: resource.Height,
-		DurationMS: resource.DurationMS, FrameCount: resource.FrameCount, FrameRate: resource.FrameRate,
+		DurationMS: resource.DurationMS, FrameCount: resource.FrameCount, FrameRate: resource.FrameRate, LoopCount: resource.LoopCount,
 		Container: resource.Container, VideoCodec: resource.VideoCodec, AudioCodec: resource.AudioCodec,
 		PosterResourceID: resource.PosterResourceID, VariantsJSON: resource.VariantsJSON, Original: original,
 		Variants: []TheaterPackageResourceVariant{},

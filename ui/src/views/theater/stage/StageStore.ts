@@ -55,6 +55,7 @@ const createImageRef = (
   resourceId?: string,
   mimeType?: string,
   animated?: boolean,
+  loopCount?: number,
 ): StageImageRef | null => {
   const normalized = url.trim()
   if (!normalized || !isSafeStageImageUrl(normalized)) return null
@@ -64,6 +65,7 @@ const createImageRef = (
     ...(alt ? { alt } : {}),
     ...(mimeType?.trim() ? { mimeType: mimeType.trim().toLowerCase() } : {}),
     ...(animated === true ? { animated: true } : {}),
+    ...(Number.isInteger(loopCount) && (loopCount || 0) > 0 && (loopCount || 0) <= 65_535 ? { loopCount } : {}),
   }
 }
 
@@ -160,6 +162,7 @@ const normalizeImageRef = (input: unknown): StageImageRef | null => {
     ...(typeof value.alt === 'string' ? { alt: value.alt } : {}),
     ...(typeof value.mimeType === 'string' && value.mimeType.trim() ? { mimeType: value.mimeType.trim().toLowerCase() } : {}),
     ...(value.animated === true ? { animated: true } : {}),
+    ...(Number.isInteger(value.loopCount) && (value.loopCount || 0) > 0 && (value.loopCount || 0) <= 65_535 ? { loopCount: value.loopCount } : {}),
   }
 }
 
@@ -355,7 +358,7 @@ export interface TheaterStageStore {
   ) => boolean
   moveOrder: (objectId: string, direction: -1 | 1) => void
   reorderObject: (objectId: string, targetId: string, placement: 'before' | 'after') => void
-  setSceneImage: (target: 'background' | 'foreground', url: string, resourceId?: string, mimeType?: string, animated?: boolean) => boolean
+  setSceneImage: (target: 'background' | 'foreground', url: string, resourceId?: string, mimeType?: string, animated?: boolean, loopCount?: number) => boolean
   patchSceneSurfaceStyle: (target: StageSurfaceTarget, patch: StageSurfaceStylePatch) => void
   resetSceneSurfaceStyle: (target: StageSurfaceTarget) => void
   setObjectImage: (
@@ -364,6 +367,7 @@ export interface TheaterStageStore {
     resourceId?: string,
     mimeType?: string,
     animated?: boolean,
+    loopCount?: number,
     dimensions?: { width: number, height: number },
   ) => boolean
   addObjectAction: (objectId: string, action: StageAction) => boolean
@@ -826,12 +830,12 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     })
   })
 
-  const setSceneImage = (target: 'background' | 'foreground', url: string, resourceId?: string, mimeType?: string, animated?: boolean) => {
+  const setSceneImage = (target: 'background' | 'foreground', url: string, resourceId?: string, mimeType?: string, animated?: boolean, loopCount?: number) => {
     if (!url.trim()) {
       state.liveState[target] = null
       return true
     }
-    const image = createImageRef(url, target === 'background' ? '场景背景' : '场景前景', resourceId, mimeType, animated)
+    const image = createImageRef(url, target === 'background' ? '场景背景' : '场景前景', resourceId, mimeType, animated, loopCount)
     if (!image) return false
     state.liveState[target] = image
     return true
@@ -861,6 +865,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
     resourceId?: string,
     mimeType?: string,
     animated?: boolean,
+    loopCount?: number,
     dimensions?: { width: number, height: number },
   ) => runObjectEdit('修改对象图片', () => {
     const object = getObject(objectId)
@@ -874,7 +879,7 @@ export const createTheaterStageStore = (_storageKey?: string): TheaterStageStore
       }
       return true
     }
-    const image = createImageRef(url, object.name, resourceId, mimeType, animated)
+    const image = createImageRef(url, object.name, resourceId, mimeType, animated, loopCount)
     if (!image) return false
     const effectConfig = object.type === 'effect'
       ? normalizeTheaterEffectConfig(object.content?.effect)

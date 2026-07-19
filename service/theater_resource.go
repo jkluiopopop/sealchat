@@ -197,6 +197,9 @@ func CreateTheaterResourceUpload(ctx context.Context, actorID, worldID, channelI
 			if existing.ContentHash != hashHex || existing.SizeBytes != written {
 				return nil, newTheaterError("RESOURCE_ID_REUSED", "clientResourceId 已用于不同内容", 409, nil)
 			}
+			if err := backfillTheaterResourceLoopCount(ctx, &existing); err != nil {
+				return nil, err
+			}
 			public, err := theaterResourcePublicFromModel(model.GetDB(), existing)
 			return &TheaterResourceUploadResult{Resource: public, Deduplicated: true}, err
 		}
@@ -206,6 +209,9 @@ func CreateTheaterResourceUpload(ctx context.Context, actorID, worldID, channelI
 		return nil, err
 	}
 	if duplicate.ID != "" {
+		if err := backfillTheaterResourceLoopCount(ctx, &duplicate); err != nil {
+			return nil, err
+		}
 		public, err := theaterResourcePublicFromModel(model.GetDB(), duplicate)
 		return &TheaterResourceUploadResult{Resource: public, Deduplicated: true}, err
 	}
@@ -238,6 +244,35 @@ func CreateTheaterResourceUpload(ctx context.Context, actorID, worldID, channelI
 	auditTheaterResourceState(resource.ID, "pending", "")
 	public, err := theaterResourcePublicFromModel(model.GetDB(), resource)
 	return &TheaterResourceUploadResult{Resource: public}, err
+}
+
+func backfillTheaterResourceLoopCount(ctx context.Context, resource *model.TheaterResourceModel) error {
+	if resource == nil || resource.Kind != "animated_image" || resource.LoopCount != nil {
+		return nil
+	}
+	loopCount := intPointer(0)
+	if resource.MimeType != "video/webm" {
+		attachment, err := theaterResourceAttachment(resource)
+		if err != nil {
+			return err
+		}
+		path, cleanup, err := resolveTheaterAttachmentPath(ctx, attachment)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		processor := NewVisualMediaProcessor(theaterMedia.config, theaterMedia.toolchain, theaterMedia.runner)
+		metadata, err := processor.Probe(ctx, path, resource.Kind, resource.MimeType)
+		if err != nil {
+			return err
+		}
+		loopCount = normalizedTheaterLoopCount(metadata)
+	}
+	if err := model.GetDB().Model(resource).Update("loop_count", *loopCount).Error; err != nil {
+		return err
+	}
+	resource.LoopCount = loopCount
+	return nil
 }
 
 func GetTheaterResource(ctx context.Context, actorID, worldID, channelID, resourceID string) (*TheaterResourcePublic, error) {

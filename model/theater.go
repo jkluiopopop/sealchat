@@ -111,6 +111,7 @@ type TheaterResourceModel struct {
 	DurationMS         *int64     `json:"durationMs,omitempty"`
 	FrameCount         *int       `json:"frameCount,omitempty"`
 	FrameRate          *float64   `json:"frameRate,omitempty"`
+	LoopCount          *int       `json:"loopCount,omitempty"`
 	Container          string     `json:"container,omitempty" gorm:"size:64"`
 	VideoCodec         string     `json:"videoCodec,omitempty" gorm:"size:64"`
 	AudioCodec         string     `json:"audioCodec,omitempty" gorm:"size:64"`

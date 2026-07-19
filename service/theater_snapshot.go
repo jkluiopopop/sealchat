@@ -471,7 +471,7 @@ func theaterResourcePublicFromModel(conn *gorm.DB, resource model.TheaterResourc
 	}
 	return TheaterResourcePublic{
 		ID: resource.ID, Kind: resource.Kind, Status: resource.Status, MimeType: resource.MimeType, SizeBytes: resource.SizeBytes,
-		Width: resource.Width, Height: resource.Height, DurationMS: resource.DurationMS, FrameCount: resource.FrameCount, FrameRate: resource.FrameRate,
+		Width: resource.Width, Height: resource.Height, DurationMS: resource.DurationMS, FrameCount: resource.FrameCount, FrameRate: resource.FrameRate, LoopCount: resource.LoopCount,
 		Animated: resource.Kind == "animated_image", PlaybackVariant: playbackVariant, PlaybackMimeType: playbackMimeType,
 		PosterResourceID: optionalString(resource.PosterResourceID), Variants: publicVariants,
 		Processing: TheaterResourceProcessing{Progress: resource.ProcessingProgress, Retryable: resource.Retryable, ErrorCode: resource.FailureCode},

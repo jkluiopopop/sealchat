@@ -519,6 +519,7 @@ interface TheaterResource {
   animated?: boolean
   playbackVariant?: string
   playbackMimeType?: string
+  loopCount?: number | null
   processing?: { errorCode?: string }
 }
 
@@ -1108,6 +1109,7 @@ const objectNodes = new Map<string, Konva.Group>()
 const imageLoadVersions = new Map<string, number>()
 type StageMediaSource = HTMLImageElement | HTMLVideoElement
 const activeAnimatedMedia = new Set<StageMediaSource>()
+const videoLoopStates = new WeakMap<HTMLVideoElement, { loopCount: number | null, completed: number }>()
 let mediaAnimation: Konva.Animation | null = null
 let multiDrag: {
   driverId: string
@@ -1239,6 +1241,16 @@ const updateSelectedDimension = (dimension: 'width' | 'height', value: number | 
   } else {
     object.transform.width = Number(Math.max(0.5, nextValue * aspectRatio).toFixed(6))
   }
+}
+
+const updateSelectedLoopCount = (value: number | null) => {
+  const image = selectedObject.value?.image
+  if (!image?.animated) return
+  if (value === null) {
+    delete image.loopCount
+    return
+  }
+  image.loopCount = Math.min(65_535, Math.max(1, Math.round(value)))
 }
 
 const updateSelectedScale = (dimension: 'scaleX' | 'scaleY', value: number | null) => {
@@ -1606,6 +1618,8 @@ const releaseStageMedia = (source: StageMediaSource | null | undefined) => {
     source.pause()
     source.onloadedmetadata = null
     source.onerror = null
+    source.onended = null
+    videoLoopStates.delete(source)
     source.removeAttribute('src')
     source.load()
   } else {
@@ -1693,7 +1707,7 @@ const loadStageMedia = (
 
   if (isVideoSource(source)) {
     source.muted = true
-    source.loop = true
+    source.loop = false
     source.autoplay = false
     source.playsInline = true
     source.preload = 'auto'
@@ -2111,9 +2125,37 @@ const beginSceneMediaBatch = (sceneId: string, captureCurrent = true) => {
   batch.timeout = window.setTimeout(() => releaseSceneMediaBatch(batch), 10_000)
 }
 
+const configureVideoLoop = (source: HTMLVideoElement, imageRef: StageImageRef, restart = false) => {
+  const loopCount = Number.isInteger(imageRef.loopCount) && (imageRef.loopCount || 0) > 0
+    ? Math.min(65_535, imageRef.loopCount!)
+    : null
+  const previous = videoLoopStates.get(source)
+  if (!restart && previous?.loopCount === loopCount) return
+  const state = { loopCount, completed: 0 }
+  videoLoopStates.set(source, state)
+  source.loop = loopCount === null
+  source.onended = loopCount === null ? null : () => {
+    state.completed += 1
+    if (state.completed >= loopCount) {
+      activeAnimatedMedia.delete(source)
+      syncMediaAnimation()
+      return
+    }
+    source.currentTime = 0
+    void source.play().catch((error) => theaterMediaDebug('video replay error', stageMediaErrorMessage(error)))
+  }
+  if (previous && source.ended) {
+    source.currentTime = 0
+    activeAnimatedMedia.add(source)
+    syncMediaAnimation()
+    void source.play().catch((error) => theaterMediaDebug('video replay error', stageMediaErrorMessage(error)))
+  }
+}
+
 const activateStageMedia = (source: StageMediaSource, imageRef: StageImageRef) => {
   if (isVideoSource(source)) {
     source.currentTime = 0
+    configureVideoLoop(source, imageRef, true)
     activeAnimatedMedia.add(source)
     void source.play().catch((error) => theaterMediaDebug('video play error', stageMediaErrorMessage(error)))
   } else if (imageRef.animated) {
@@ -2409,6 +2451,7 @@ const updateSurfaceSlot = (
     return
   }
   if (slot.url === resolved && slot.source && slot.ready) {
+    if (isVideoSource(slot.source)) configureVideoLoop(slot.source, imageRef)
     updateDirectSurfaceImage(slot, slot.source, box)
     slot.media.visible(Boolean(slot.source) && !slot.directImage.visible())
     slot.overlay.visible(Boolean(slot.source) && style.overlay.enabled && style.overlay.opacity > 0)
@@ -3075,6 +3118,7 @@ const syncObjectImage = (wrapper: Konva.Group, object: StageObject, width: numbe
   }
   const currentSource = image.image() as StageMediaSource | undefined
   if (wrapper.getAttr('stageImageUrl') === resolved && currentSource) {
+    if (isVideoSource(currentSource)) configureVideoLoop(currentSource, object.image)
     setImageFit(image, currentSource, width, height, objectImageFit(object))
     settleSceneMedia(`object:${object.id}`, resolved)
     return
@@ -3434,10 +3478,11 @@ const applyImageUrl = (
   resourceId?: string,
   mimeType?: string,
   animated?: boolean,
+  loopCount?: number,
   dimensions?: { width: number, height: number },
 ) => {
-  if (target.kind === 'scene') return props.store.setSceneImage(target.target, url, resourceId, mimeType, animated)
-  return props.store.setObjectImage(target.objectId, url, resourceId, mimeType, animated, dimensions)
+  if (target.kind === 'scene') return props.store.setSceneImage(target.target, url, resourceId, mimeType, animated, loopCount)
+  return props.store.setObjectImage(target.objectId, url, resourceId, mimeType, animated, loopCount, dimensions)
 }
 
 const theaterResourcePath = (resourceId = '') => {
@@ -3547,7 +3592,7 @@ const uploadImage = async (file: File, target: ImageTarget) => {
     const variant = resource?.playbackVariant || 'original'
     const mimeType = resource?.playbackMimeType || prepared.type || normalizedFileType(prepared)
     const url = theaterResourceContentPath(theaterMediaScope(), resourceId, variant)
-    if (!applyImageUrl(target, url, resourceId, mimeType, resource?.animated === true, dimensions)) throw new Error('图片目标已失效')
+    if (!applyImageUrl(target, url, resourceId, mimeType, resource?.animated === true, resource?.loopCount || undefined, dimensions)) throw new Error('图片目标已失效')
   } catch (error) {
     resourceError.value = error instanceof Error ? error.message : '图片上传失败'
     throw error
@@ -4333,6 +4378,9 @@ onBeforeUnmount(() => {
               <template v-else>
                 <label>宽</label><n-input-number :value="selectedObject.transform.width" :min="0.5" :precision="2" @update:value="updateSelectedDimension('width', $event)" />
                 <label>高</label><n-input-number :value="selectedObject.transform.height" :min="0.5" :precision="2" @update:value="updateSelectedDimension('height', $event)" />
+                <template v-if="selectedObject.image?.animated">
+                  <label>循环次数</label><n-input-number :value="selectedObject.image.loopCount ?? null" :min="1" :max="65535" :step="1" :precision="0" clearable placeholder="无限循环" @update:value="updateSelectedLoopCount" />
+                </template>
               </template>
             </div>
             <div v-if="canEditAllObjects" class="theater-object-editor__checks">

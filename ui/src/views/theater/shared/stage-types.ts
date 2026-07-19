@@ -87,6 +87,7 @@ export interface StageImageRef {
   alt?: string
   mimeType?: string
   animated?: boolean
+  loopCount?: number
 }
 
 export interface StageSurfaceStyle {
