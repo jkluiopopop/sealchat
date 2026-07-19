@@ -953,6 +953,7 @@ interface SurfaceSlot {
   group: Konva.Group
   base: Konva.Rect | null
   media: Konva.Shape
+  directImage: Konva.Image
   overlay: Konva.Rect
   placeholder: Konva.Rect
   label: Konva.Text
@@ -960,6 +961,7 @@ interface SurfaceSlot {
   url: string
   version: number
   source: StageMediaSource | null
+  debugDrawCount: number
 }
 
 let backgroundSlot: SurfaceSlot | null = null
@@ -1385,6 +1387,14 @@ const stageMediaErrorMessage = (error: unknown) => {
   return theaterAudioErrorMessage(error, '资源请求失败')
 }
 
+const theaterMediaDebug = (...args: unknown[]) => {
+  const enabled = typeof window !== 'undefined'
+    && ((window as any).__SC_DEBUG__ === true || window.localStorage.getItem('SC_DEBUG') === '1')
+  if (enabled) {
+    console.info('[theater-media]', ...args)
+  }
+}
+
 const releaseStageMedia = (source: StageMediaSource | null | undefined) => {
   if (!source) return
   stageMediaRequestControllers.get(source)?.abort()
@@ -1420,19 +1430,32 @@ const loadStageMedia = (
   stageMediaRequestControllers.set(source, controller)
   let authenticatedRetryStarted = false
 
+  // 舞台与 API 可能跨端口，显式携带凭据并保持 Canvas 可安全绘制。
+  if (location.managed) source.crossOrigin = 'use-credentials'
+  theaterMediaDebug('create', {
+    source: isVideoSource(source) ? 'video' : 'image',
+    managed: location.managed,
+    url: location.url,
+    resourceId: imageRef.resourceId,
+    mimeType: imageRef.mimeType,
+  })
+
   const assignSourceUrl = (sourceUrl: string) => {
     if (controller.signal.aborted) return
     source.src = sourceUrl
     if (isVideoSource(source)) source.load()
   }
 
-  const handleSourceError = (decodeMessage: string) => {
-    if (!location.managed || authenticatedRetryStarted) {
-      onError(decodeMessage)
-      return
-    }
+  const loadAuthenticatedSource = () => {
     authenticatedRetryStarted = true
     void api.get<Blob>(location.url, { responseType: 'blob', signal: controller.signal }).then((response) => {
+      theaterMediaDebug('blob response', {
+        status: response.status,
+        contentType: response.headers?.['content-type'],
+        size: response.data instanceof Blob ? response.data.size : null,
+        blobType: response.data instanceof Blob ? response.data.type : typeof response.data,
+        url: location.url,
+      })
       if (!(response.data instanceof Blob) || response.data.size === 0) throw new Error('资源响应为空')
       const sourceUrl = URL.createObjectURL(response.data)
       if (controller.signal.aborted) {
@@ -1442,10 +1465,21 @@ const loadStageMedia = (
       stageMediaObjectUrls.set(source, sourceUrl)
       assignSourceUrl(sourceUrl)
     }).catch((error) => {
-      if (!controller.signal.aborted) onError(stageMediaErrorMessage(error))
+      if (!controller.signal.aborted) {
+        theaterMediaDebug('blob error', error)
+        onError(stageMediaErrorMessage(error))
+      }
     }).finally(() => {
       stageMediaRequestControllers.delete(source)
     })
+  }
+
+  const handleSourceError = (decodeMessage: string) => {
+    if (!location.managed || authenticatedRetryStarted) {
+      onError(decodeMessage)
+      return
+    }
+    loadAuthenticatedSource()
   }
 
   if (isVideoSource(source)) {
@@ -1455,15 +1489,20 @@ const loadStageMedia = (
     source.playsInline = true
     source.preload = 'auto'
     source.onloadedmetadata = () => {
+      theaterMediaDebug('video loadedmetadata', { width: source.videoWidth, height: source.videoHeight, url: location.url })
       stageMediaRequestControllers.delete(source)
       activeAnimatedMedia.add(source)
       syncMediaAnimation()
       onReady(source)
       void source.play().catch((error) => onError(stageMediaErrorMessage(error)))
     }
-    source.onerror = () => handleSourceError('浏览器无法解码此动图')
+    source.onerror = () => {
+      theaterMediaDebug('video error', { error: source.error, url: location.url })
+      handleSourceError('浏览器无法解码此动图')
+    }
   } else {
     source.onload = () => {
+      theaterMediaDebug('image load', { width: source.naturalWidth, height: source.naturalHeight, url: location.url })
       stageMediaRequestControllers.delete(source)
       if (imageRef.animated) {
         activeAnimatedMedia.add(source)
@@ -1471,10 +1510,17 @@ const loadStageMedia = (
       }
       onReady(source)
     }
-    source.onerror = () => handleSourceError('浏览器无法解码此图片')
+    source.onerror = () => {
+      theaterMediaDebug('image error', { url: location.url })
+      handleSourceError('浏览器无法解码此图片')
+    }
   }
 
-  assignSourceUrl(location.url)
+  if (location.managed && !isVideoSource(source)) {
+    loadAuthenticatedSource()
+  } else {
+    assignSourceUrl(location.url)
+  }
   return source
 }
 
@@ -1540,11 +1586,25 @@ const surfaceDrawRect = (
 const drawSurfaceMedia = (slot: SurfaceSlot, context: Konva.Context) => {
   const source = slot.source
   if (!source) return
+  if (slot.debugDrawCount < 2) {
+    slot.debugDrawCount += 1
+    theaterMediaDebug('surface draw', {
+      count: slot.debugDrawCount,
+      visible: slot.media.visible(),
+      width: slot.placeholder.width(),
+      height: slot.placeholder.height(),
+      fit: slot.style.fit,
+      sourceWidth: stageMediaDimensions(source).width,
+      sourceHeight: stageMediaDimensions(source).height,
+    })
+  }
   const width = slot.placeholder.width()
   const height = slot.placeholder.height()
   const style = slot.style
   context.save()
-  context.filter = `brightness(${style.brightness}) blur(${style.blurPx}px)`
+  if (style.brightness !== 1 || style.blurPx > 0) {
+    context.filter = `brightness(${style.brightness}) blur(${style.blurPx}px)`
+  }
   context.imageSmoothingEnabled = true
   if (style.fit === 'tile') {
     const pattern = context.createPattern(source, 'repeat')
@@ -1562,6 +1622,7 @@ const drawSurfaceMedia = (slot: SurfaceSlot, context: Konva.Context) => {
 const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: StageSurfaceStyle): SurfaceSlot => {
   const group = new Konva.Group()
   const base = withBase ? new Konva.Rect({ listening: false }) : null
+  const directImage = new Konva.Image({ visible: false, listening: false })
   let slot: SurfaceSlot
   const media = new Konva.Shape({
     visible: false,
@@ -1586,9 +1647,57 @@ const createSurfaceSlot = (cameraGroup: Konva.Group, withBase: boolean, style: S
   })
   cameraGroup.add(group)
   if (base) group.add(base)
-  group.add(media, overlay, placeholder, label)
-  slot = { group, base, media, overlay, placeholder, label, style, url: '', version: 0, source: null }
+  group.add(media, directImage, overlay, placeholder, label)
+  slot = { group, base, media, directImage, overlay, placeholder, label, style, url: '', version: 0, source: null, debugDrawCount: 0 }
   return slot
+}
+
+const useDirectSurfaceImage = (style: StageSurfaceStyle) => (
+  style.fit !== 'tile'
+)
+
+const updateDirectSurfaceImage = (
+  slot: SurfaceSlot,
+  source: StageMediaSource | null,
+  box: { width: number, height: number },
+) => {
+  theaterMediaDebug('direct image decision', {
+    hasSource: Boolean(source),
+    fit: slot.style.fit,
+    brightness: slot.style.brightness,
+    blurPx: slot.style.blurPx,
+    isVideo: source ? isVideoSource(source) : false,
+    useDirect: useDirectSurfaceImage(slot.style),
+  })
+  if (!source || !useDirectSurfaceImage(slot.style) || isVideoSource(source)) {
+    slot.directImage.image(undefined)
+    slot.directImage.visible(false)
+    return
+  }
+  const dimensions = stageMediaDimensions(source)
+  const rect = surfaceDrawRect(source, box.width, box.height, slot.style.fit as Exclude<StageSurfaceFit, 'tile'>, 0)
+  slot.directImage.image(source)
+  slot.directImage.position({ x: rect.x, y: rect.y })
+  slot.directImage.size({ width: rect.width, height: rect.height })
+  slot.directImage.crop({ x: 0, y: 0, width: Math.max(1, dimensions.width), height: Math.max(1, dimensions.height) })
+  slot.directImage.opacity(slot.style.opacity)
+  const filters: Konva.Filter[] = []
+  if (slot.style.brightness !== 1) {
+    slot.directImage.brightness(slot.style.brightness - 1)
+    filters.push(Konva.Filters.Brighten)
+  } else {
+    slot.directImage.brightness(0)
+  }
+  if (slot.style.blurPx > 0) {
+    slot.directImage.blurRadius(slot.style.blurPx)
+    filters.push(Konva.Filters.Blur)
+  } else {
+    slot.directImage.blurRadius(0)
+  }
+  slot.directImage.clearCache()
+  slot.directImage.filters(filters)
+  if (filters.length) slot.directImage.cache()
+  slot.directImage.visible(true)
 }
 
 const updateSurfaceSlot = (
@@ -1605,6 +1714,7 @@ const updateSurfaceSlot = (
   slot.placeholder.setAttrs({ width: box.width, height: box.height })
   slot.label.setAttrs({ width: box.width, height: box.height })
   slot.media.setAttrs({ width: box.width, height: box.height, opacity: style.opacity })
+  slot.directImage.setAttrs({ width: box.width, height: box.height, opacity: style.opacity })
   slot.overlay.setAttrs({
     width: box.width,
     height: box.height,
@@ -1614,11 +1724,24 @@ const updateSurfaceSlot = (
 
   const location = imageRef ? resolveTheaterStageMedia(imageRef) : null
   const resolved = location?.url || null
+  if (imageRef && location) theaterMediaDebug('surface resolve', {
+    resourceId: imageRef.resourceId,
+    sourceUrl: imageRef.url,
+    resolvedUrl: location.url,
+    managed: location.managed,
+    box,
+  })
+  if (imageRef && !location) theaterMediaDebug('surface resolve rejected', {
+    resourceId: imageRef.resourceId,
+    sourceUrl: imageRef.url,
+    scope: theaterMediaScope(),
+  })
   if (!imageRef) {
     releaseStageMedia(slot.source)
     slot.url = ''
     slot.source = null
     slot.media.visible(false)
+    slot.directImage.visible(false)
     slot.overlay.visible(false)
     slot.placeholder.visible(false)
     slot.label.visible(false)
@@ -1629,13 +1752,15 @@ const updateSurfaceSlot = (
     slot.url = imageRef.url
     slot.source = null
     slot.media.visible(false)
+    slot.directImage.visible(false)
     slot.overlay.visible(false)
     slot.placeholder.visible(true)
     slot.label.text('图片地址被安全策略拒绝').visible(true)
     return
   }
   if (slot.url === resolved && slot.source) {
-    slot.media.visible(Boolean(slot.source))
+    updateDirectSurfaceImage(slot, slot.source, box)
+    slot.media.visible(Boolean(slot.source) && !slot.directImage.visible())
     slot.overlay.visible(Boolean(slot.source) && style.overlay.enabled && style.overlay.opacity > 0)
     slot.group.getLayer()?.batchDraw()
     return
@@ -1656,11 +1781,58 @@ const updateSurfaceSlot = (
       return
     }
     slot.source = loadedSource
-    slot.media.visible(true)
+    theaterMediaDebug('surface ready', {
+      resourceId: imageRef.resourceId,
+      width: stageMediaDimensions(loadedSource).width,
+      height: stageMediaDimensions(loadedSource).height,
+      visible: slot.media.visible(),
+      box,
+    })
+    updateDirectSurfaceImage(slot, loadedSource, box)
+    slot.media.visible(!slot.directImage.visible())
     slot.overlay.visible(slot.style.overlay.enabled && slot.style.overlay.opacity > 0)
     slot.placeholder.visible(false)
     slot.label.visible(false)
-    slot.group.getLayer()?.batchDraw()
+    theaterMediaDebug('surface visible', {
+      resourceId: imageRef.resourceId,
+      visible: slot.media.visible(),
+      layer: Boolean(slot.group.getLayer()),
+    })
+    const layer = slot.group.getLayer()
+    layer?.batchDraw()
+    if (layer) {
+      requestAnimationFrame(() => {
+        if (!theaterMediaDebug) return
+        try {
+          const canvas = layer.getCanvas()._canvas
+          const context = canvas.getContext('2d')
+          const sampleAt = (x: number, y: number) => context
+            ? Array.from(context.getImageData(Math.floor(canvas.width * x), Math.floor(canvas.height * y), 1, 1).data)
+            : null
+          theaterMediaDebug('surface pixels', {
+            resourceId: imageRef.resourceId,
+            canvas: { width: canvas.width, height: canvas.height },
+            group: {
+              position: slot.group.getAbsolutePosition(),
+              clip: slot.group.clip(),
+            },
+            directImage: {
+              visible: slot.directImage.visible(),
+              position: slot.directImage.getAbsolutePosition(),
+              size: slot.directImage.size(),
+              hasImage: Boolean(slot.directImage.image()),
+            },
+            pixels: {
+              topLeft: sampleAt(0.25, 0.25),
+              center: sampleAt(0.5, 0.5),
+              bottomRight: sampleAt(0.75, 0.75),
+            },
+          })
+        } catch (error) {
+          theaterMediaDebug('surface pixels error', { resourceId: imageRef.resourceId, error })
+        }
+      })
+    }
   }, (errorMessage) => {
     if (slot.version !== version || slot.url !== resolved) return
     releaseStageMedia(source)
@@ -1669,6 +1841,7 @@ const updateSurfaceSlot = (
     slot.overlay.visible(false)
     slot.placeholder.visible(true)
     slot.label.text(`${loadingLabel}加载失败：${errorMessage}`).visible(true)
+    theaterMediaDebug('surface error', { resourceId: imageRef.resourceId, errorMessage, box })
     slot.group.getLayer()?.batchDraw()
   })
   slot.source = source
