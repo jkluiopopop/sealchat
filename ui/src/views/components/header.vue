@@ -908,7 +908,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 </script>
 
 <template>
-  <div class="sc-header border-b flex justify-between items-center w-full px-2" style="height: 3.5rem;">
+  <div class="sc-header flex justify-between items-center w-full px-2" style="height: 3.5rem;">
     <div>
       <div class="flex items-center">
         <button
@@ -1430,6 +1430,7 @@ const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? LayoutSidebarL
 .sc-header {
   background-color: var(--sc-bg-header);
   color: var(--sc-text-primary);
+  border-bottom: 1px solid var(--sc-border-mute);
   transition: background-color 0.25s ease, color 0.25s ease;
 }
 

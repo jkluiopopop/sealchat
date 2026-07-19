@@ -18850,6 +18850,22 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
+.chat-root-container--embed {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chat-root-container--embed > .chat {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto !important;
+}
+
+.chat-root-container--embed > .edit-area {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
 .chat-root-container--embed .chat-input-area {
   margin-block: 0.2rem;
 }
