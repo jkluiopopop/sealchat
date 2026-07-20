@@ -452,7 +452,20 @@ const suffix = (item: SChannel) => {
 }
 
 
-const showAllSubChannels = ref(true);
+const SHOW_ALL_SUB_CHANNELS_STORAGE_KEY = 'sealchat.sidebar.showAllSubChannels';
+
+const resolveShowAllSubChannels = (): boolean => {
+  if (typeof window === 'undefined') {
+    return true;
+  }
+  try {
+    return window.localStorage.getItem(SHOW_ALL_SUB_CHANNELS_STORAGE_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+};
+
+const showAllSubChannels = ref(resolveShowAllSubChannels());
 const channelNameWrapEnabled = computed({
   get: () => display.settings.channelNameWrapEnabled,
   set: (value: boolean) => {
@@ -462,6 +475,14 @@ const channelNameWrapEnabled = computed({
 
 const toggleSubChannelDisplay = () => {
   showAllSubChannels.value = !showAllSubChannels.value;
+  try {
+    window.localStorage.setItem(
+      SHOW_ALL_SUB_CHANNELS_STORAGE_KEY,
+      String(showAllSubChannels.value),
+    );
+  } catch {
+    // 忽略 localStorage 写入失败，侧栏开关仍可在当前页面生效。
+  }
 };
 
 const openAppNotificationSettings = () => {
