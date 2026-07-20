@@ -60,8 +60,6 @@ import { useObservable } from "@vueuse/rxjs";
 import { db, getSrc, type Thumb } from '@/models';
 import { throttle } from 'lodash-es';
 import AvatarVue from '@/components/avatar.vue';
-import { Howl, Howler } from 'howler';
-import SoundMessageCreated from '@/assets/message.mp3';
 import RightClickMenu from './components/ChatRightClickMenu.vue'
 import AvatarClickMenu from './components/AvatarClickMenu.vue'
 import { nanoid } from 'nanoid';
@@ -95,7 +93,6 @@ import { shouldAttemptCharacterApiReconnectBeforeBotCommand } from '@/utils/char
 import { buildOptimisticMessageIcModeFields } from '@/utils/optimisticMessageIcMode';
 import { buildGeneratedAvatarFile } from '@/utils/generatedAvatarImage';
 import { extractPushNotificationPreviewText } from '@/utils/pushNotificationPreview';
-import { shouldPlayMessageSound } from '@/utils/messageSoundMode';
 import { useIFormStore } from '@/stores/iform';
 import { useWorldGlossaryStore } from '@/stores/worldGlossary';
 import { useChannelSearchStore } from '@/stores/channelSearch';
@@ -13740,14 +13737,6 @@ const handleChannelContextCleared = () => {
   showButton.value = false;
 };
 
-const currentWorldChannelTree = computed(() => {
-  const worldId = String(chat.currentWorldId || '').trim();
-  if (!worldId) {
-    return [] as SChannel[];
-  }
-  return (chat.channelTreeByWorld?.[worldId] || []) as SChannel[];
-});
-
 onMounted(async () => {
   await chat.tryInit();
   draftOwnerChannelKey.value = currentChannelKey.value;
@@ -13760,11 +13749,6 @@ onMounted(async () => {
     window.addEventListener('pageshow', handleForegroundResume);
     window.addEventListener('online', handleForegroundResume);
   }
-
-  const sound = new Howl({
-    src: [SoundMessageCreated],
-    html5: true
-  });
 
   chatEvent.off('message-deleted', '*');
   chatEvent.on('message-deleted', (e?: Event) => {
@@ -13854,17 +13838,6 @@ const handleMessageCreated = (e?: Event) => {
   const currentUserId = user.info.id;
   const mentionIds = !isSelf ? collectMentionIdsFromContent(content) : new Set<string>();
   const isMentioned = !isSelf && (mentionIds.has(currentUserId) || mentionIds.has('all'));
-  if (!isSelf && shouldPlayMessageSound({
-    mode: display.settings.messageSoundMode,
-    isSelf,
-    isAppFocused: chat.isAppFocused,
-    messageChannelId: incomingChannelId,
-    currentChannelId,
-    currentWorldChannels: currentWorldChannelTree.value,
-    embedNotifyOwnerEnabled: pushStore.embedNotifyOwnerEnabled,
-  })) {
-    sound.play();
-  }
   if (!isCurrentChannelMessage) {
     if (incomingChannelId && isMentioned) {
       chat.setChannelMentionState(incomingChannelId, true);

@@ -69,7 +69,7 @@ const handleToggleSidebarWidthResize = () => {
   emit('toggle-sidebar-width-resize');
 };
 
-const MESSAGE_SOUND_MODE_ORDER: MessageSoundMode[] = ['off', 'away', 'world-other-channel'];
+const MESSAGE_SOUND_MODE_ORDER: MessageSoundMode[] = ['off', 'away', 'world-other-channel', 'background-all'];
 
 const cycleMessageSoundMode = () => {
   const current = display.settings.messageSoundMode;
@@ -97,7 +97,10 @@ const messageSoundTooltip = computed(() => {
   if (display.settings.messageSoundMode === 'away') {
     return '仅当前频道在离开页面时播放提示音';
   }
-  return '仅当前世界内的其他频道来新消息时播放提示音';
+  if (display.settings.messageSoundMode === 'world-other-channel') {
+    return '仅当前世界内的其他频道来新消息时播放提示音';
+  }
+  return '页面处于后台时，任意频道收到新消息均播放提示音';
 });
 
 const renderIcon = (icon: Component) => {
