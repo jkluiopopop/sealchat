@@ -50,6 +50,7 @@ export interface Dice3DSkin {
   faceBackground: string;
   faceForeground: string;
   edgeColor: string;
+  outlineColor: string;
   roughness: number;
   metalness: number;
   scale: number;

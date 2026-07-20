@@ -30,9 +30,10 @@ const updateRuleIDs = (rule: Dice3DBotRule, field: 'channelIds' | 'botUserIds', 
     </n-grid>
     <DiceSurfaceSelector v-if="config.surfaceMode === 'custom'" v-model="config.customSurface" />
     <n-grid :cols="2" :x-gap="12">
-      <n-form-item-gi label="骰面底色"><n-color-picker v-model:value="config.defaultSkin.faceBackground" /></n-form-item-gi>
-      <n-form-item-gi label="数字颜色"><n-color-picker v-model:value="config.defaultSkin.faceForeground" /></n-form-item-gi>
-      <n-form-item-gi label="边缘颜色"><n-color-picker v-model:value="config.defaultSkin.edgeColor" /></n-form-item-gi>
+      <n-form-item-gi label="骰面底色"><n-color-picker v-model:value="config.defaultSkin.faceBackground" :show-alpha="false" :modes="['hex']" /></n-form-item-gi>
+      <n-form-item-gi label="数字颜色"><n-color-picker v-model:value="config.defaultSkin.faceForeground" :show-alpha="false" :modes="['hex']" /></n-form-item-gi>
+      <n-form-item-gi label="边缘颜色"><n-color-picker v-model:value="config.defaultSkin.edgeColor" :show-alpha="false" :modes="['hex']" /></n-form-item-gi>
+      <n-form-item-gi label="分界线颜色"><n-color-picker v-model:value="config.defaultSkin.outlineColor" :show-alpha="false" :modes="['hex']" /></n-form-item-gi>
       <n-form-item-gi label="骰子大小"><n-slider v-model:value="config.defaultSkin.scale" :min="0.5" :max="2" :step="0.05" /></n-form-item-gi>
     </n-grid>
     <n-form-item label="骰面图集"><DiceTextureGrid v-model="config.defaultSkin" platform /></n-form-item>

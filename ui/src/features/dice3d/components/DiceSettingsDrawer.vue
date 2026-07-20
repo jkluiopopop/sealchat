@@ -192,9 +192,10 @@ const save = async () => {
 					</div>
 				  </n-form-item>
 			  <n-grid :cols="2" :x-gap="12">
-                <n-form-item-gi label="骰面底色"><n-color-picker v-model:value="profile.skin.faceBackground" /></n-form-item-gi>
-                <n-form-item-gi label="数字颜色"><n-color-picker v-model:value="profile.skin.faceForeground" /></n-form-item-gi>
-                <n-form-item-gi label="边缘颜色"><n-color-picker v-model:value="profile.skin.edgeColor" /></n-form-item-gi>
+                <n-form-item-gi label="骰面底色"><n-color-picker v-model:value="profile.skin.faceBackground" :show-alpha="false" :modes="['hex']" /></n-form-item-gi>
+                <n-form-item-gi label="数字颜色"><n-color-picker v-model:value="profile.skin.faceForeground" :show-alpha="false" :modes="['hex']" /></n-form-item-gi>
+                <n-form-item-gi label="边缘颜色"><n-color-picker v-model:value="profile.skin.edgeColor" :show-alpha="false" :modes="['hex']" /></n-form-item-gi>
+                <n-form-item-gi label="分界线颜色"><n-color-picker v-model:value="profile.skin.outlineColor" :show-alpha="false" :modes="['hex']" /></n-form-item-gi>
                 <n-form-item-gi label="骰子大小"><n-slider v-model:value="profile.skin.scale" :min="0.5" :max="2" :step="0.05" /></n-form-item-gi>
 			  </n-grid>
 				  <n-form-item label="单独上传骰面图集"><DiceTextureGrid v-model="profile.skin" :world-id="worldId" /></n-form-item>
@@ -219,7 +220,7 @@ const save = async () => {
 				  <n-form-item-gi label="标签"><n-input v-model:value="stack.label" /></n-form-item-gi>
 				  <n-form-item-gi label="表达式"><n-input v-model:value="stack.expression" /></n-form-item-gi>
 				  </n-grid>
-				<n-form-item label="颜色"><n-color-picker v-model:value="stack.color" /></n-form-item>
+				<n-form-item label="颜色"><n-color-picker v-model:value="stack.color" :show-alpha="false" :modes="['hex']" /></n-form-item>
 			  </n-card>
 			  <n-button dashed block :disabled="profile.dockStacks.length >= 8" @click="addDockStack">增加骰子堆</n-button>
             </n-form>
@@ -252,9 +253,10 @@ const save = async () => {
 						</n-grid>
 					  </section>
 			  <n-grid :cols="2" :x-gap="12">
-				<n-form-item-gi label="骰面底色"><n-color-picker v-model:value="config.defaultSkin.faceBackground" /></n-form-item-gi>
-				<n-form-item-gi label="数字颜色"><n-color-picker v-model:value="config.defaultSkin.faceForeground" /></n-form-item-gi>
-				<n-form-item-gi label="边缘颜色"><n-color-picker v-model:value="config.defaultSkin.edgeColor" /></n-form-item-gi>
+					<n-form-item-gi label="骰面底色"><n-color-picker v-model:value="config.defaultSkin.faceBackground" :show-alpha="false" :modes="['hex']" /></n-form-item-gi>
+					<n-form-item-gi label="数字颜色"><n-color-picker v-model:value="config.defaultSkin.faceForeground" :show-alpha="false" :modes="['hex']" /></n-form-item-gi>
+					<n-form-item-gi label="边缘颜色"><n-color-picker v-model:value="config.defaultSkin.edgeColor" :show-alpha="false" :modes="['hex']" /></n-form-item-gi>
+					<n-form-item-gi label="分界线颜色"><n-color-picker v-model:value="config.defaultSkin.outlineColor" :show-alpha="false" :modes="['hex']" /></n-form-item-gi>
 					<n-form-item-gi label="骰子大小"><n-slider v-model:value="config.defaultSkin.scale" :min="0.5" :max="2" :step="0.05" /></n-form-item-gi>
 			  </n-grid>
 			  <n-form-item label="单独上传骰面图集"><DiceTextureGrid v-model="config.defaultSkin" :world-id="worldId" /></n-form-item>

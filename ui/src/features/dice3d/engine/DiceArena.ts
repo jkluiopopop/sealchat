@@ -266,11 +266,9 @@ export class DiceArena {
 			const resource = DICE_GEOMETRY_RESOURCES[resourceKey]
 		const material = this.materialFor(resource, payload.appearance)
 		const mesh = new THREE.Mesh(resource.geometry, material)
-		const edgeMaterial = new THREE.LineBasicMaterial({
-			color: payload.appearance.edgeColor || '#20242b',
-			transparent: true,
-			opacity: 0.72,
-		})
+			const edgeMaterial = new THREE.LineBasicMaterial({
+				color: payload.appearance.outlineColor || payload.appearance.edgeColor || '#20242b',
+			})
 		const edges = new THREE.LineSegments(resource.edgeGeometry, edgeMaterial)
 		edges.raycast = () => undefined
 		mesh.add(edges)

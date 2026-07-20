@@ -37,6 +37,7 @@ func DefaultDice3DWorldConfig() protocol.Dice3DWorldConfig {
 			FaceBackground: "#f5f6fa",
 			FaceForeground: "#111827",
 			EdgeColor:      "#d1d5db",
+			OutlineColor:   "#d1d5db",
 			Roughness:      0.72,
 			Metalness:      0.05,
 			Scale:          1,
@@ -82,7 +83,11 @@ func NormalizeDice3DWorldConfig(value protocol.Dice3DWorldConfig) (protocol.Dice
 	default:
 		return value, fmt.Errorf("%w: surfaceMode", ErrDice3DConfigInvalid)
 	}
-	value.DefaultSkin = normalizeDice3DSkin(value.DefaultSkin, defaults.DefaultSkin)
+	var invalidSkinField string
+	value.DefaultSkin, invalidSkinField = normalizeDice3DSkin(value.DefaultSkin, defaults.DefaultSkin)
+	if invalidSkinField != "" {
+		return value, fmt.Errorf("%w: defaultSkin.%s", ErrDice3DConfigInvalid, invalidSkinField)
+	}
 	value.CustomSurface.X = dice3DClampFloat(value.CustomSurface.X, 0, 1, defaults.CustomSurface.X)
 	value.CustomSurface.Y = dice3DClampFloat(value.CustomSurface.Y, 0, 1, defaults.CustomSurface.Y)
 	value.CustomSurface.Width = dice3DClampFloat(value.CustomSurface.Width, 0.1, 1, defaults.CustomSurface.Width)
@@ -157,7 +162,11 @@ func NormalizeDice3DWorldConfig(value protocol.Dice3DWorldConfig) (protocol.Dice
 
 func NormalizeDice3DMemberProfile(value protocol.Dice3DMemberProfile) (protocol.Dice3DMemberProfile, error) {
 	value.Version = 1
-	value.Skin = normalizeDice3DSkin(value.Skin, DefaultDice3DWorldConfig().DefaultSkin)
+	var invalidSkinField string
+	value.Skin, invalidSkinField = normalizeDice3DSkin(value.Skin, DefaultDice3DWorldConfig().DefaultSkin)
+	if invalidSkinField != "" {
+		return value, fmt.Errorf("%w: skin.%s", ErrDice3DProfileInvalid, invalidSkinField)
+	}
 	if value.DockCorner == "" {
 		value.DockCorner = "bottom-right"
 	}
@@ -188,8 +197,12 @@ func NormalizeDice3DMemberProfile(value protocol.Dice3DMemberProfile) (protocol.
 		if stack.Label == "" {
 			stack.Label = stack.Expression
 		}
-		if stack.Color == "" || !validHexColor(stack.Color) {
+		if stack.Color == "" {
 			stack.Color = value.Skin.FaceBackground
+		} else if !validHexColor(stack.Color) {
+			return value, fmt.Errorf("%w: dockStacks[%d].color", ErrDice3DProfileInvalid, index)
+		} else {
+			stack.Color = strings.TrimSpace(stack.Color)
 		}
 	}
 	if value.Audio != nil {
@@ -512,15 +525,24 @@ func supportedDice3DSides(sides int) bool {
 	}
 }
 
-func normalizeDice3DSkin(value, defaults protocol.Dice3DSkin) protocol.Dice3DSkin {
-	if !validHexColor(value.FaceBackground) {
-		value.FaceBackground = defaults.FaceBackground
+func normalizeDice3DSkin(value, defaults protocol.Dice3DSkin) (protocol.Dice3DSkin, string) {
+	var valid bool
+	value.FaceBackground, valid = normalizeDice3DColor(value.FaceBackground, defaults.FaceBackground)
+	if !valid {
+		return value, "faceBackground"
 	}
-	if !validHexColor(value.FaceForeground) {
-		value.FaceForeground = defaults.FaceForeground
+	value.FaceForeground, valid = normalizeDice3DColor(value.FaceForeground, defaults.FaceForeground)
+	if !valid {
+		return value, "faceForeground"
 	}
-	if !validHexColor(value.EdgeColor) {
-		value.EdgeColor = defaults.EdgeColor
+	value.EdgeColor, valid = normalizeDice3DColor(value.EdgeColor, defaults.EdgeColor)
+	if !valid {
+		return value, "edgeColor"
+	}
+	// 旧配置没有独立分界线颜色；沿用旧 edgeColor 保持原外观。
+	value.OutlineColor, valid = normalizeDice3DColor(value.OutlineColor, value.EdgeColor)
+	if !valid {
+		return value, "outlineColor"
 	}
 	value.Roughness = dice3DClampFloat(value.Roughness, 0, 1, defaults.Roughness)
 	value.Metalness = dice3DClampFloat(value.Metalness, 0, 1, defaults.Metalness)
@@ -533,7 +555,18 @@ func normalizeDice3DSkin(value, defaults protocol.Dice3DSkin) protocol.Dice3DSki
 		}
 	}
 	value.Textures = textures
-	return value
+	return value, ""
+}
+
+func normalizeDice3DColor(value, fallback string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback, true
+	}
+	if !validHexColor(value) {
+		return value, false
+	}
+	return value, true
 }
 
 func validHexColor(value string) bool {

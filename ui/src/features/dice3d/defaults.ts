@@ -7,7 +7,7 @@ export const createDefaultDice3DWorldConfig = (): Dice3DWorldConfig => ({
   surfaceMode: 'auto',
   customSurface: { x: 0.1, y: 0.1, width: 0.8, height: 0.8 },
   defaultSkin: {
-    faceBackground: '#f5f6fa', faceForeground: '#111827', edgeColor: '#d1d5db',
+    faceBackground: '#f5f6fa', faceForeground: '#111827', edgeColor: '#d1d5db', outlineColor: '#d1d5db',
     roughness: 0.72, metalness: 0.05, scale: 1, textures: {},
   },
   motion: {

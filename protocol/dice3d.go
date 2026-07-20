@@ -4,6 +4,7 @@ type Dice3DSkin struct {
 	FaceBackground string            `json:"faceBackground"`
 	FaceForeground string            `json:"faceForeground"`
 	EdgeColor      string            `json:"edgeColor"`
+	OutlineColor   string            `json:"outlineColor"`
 	Roughness      float64           `json:"roughness"`
 	Metalness      float64           `json:"metalness"`
 	Scale          float64           `json:"scale"`
