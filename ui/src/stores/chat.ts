@@ -6175,6 +6175,59 @@ export const useChatStore = defineStore({
       };
     },
 
+    async createBatchExportTask(params: {
+      channelId: string;
+      channelIds: string[];
+      format: string;
+      timeRange?: [number, number];
+      includeOoc?: boolean;
+      includeArchived?: boolean;
+      includeImages?: boolean;
+      includeDiceCommands?: boolean;
+      withoutTimestamp?: boolean;
+      mergeMessages?: boolean;
+      textColorizeBBCode?: boolean;
+      sliceLimit?: number;
+      maxConcurrency?: number;
+      displaySettings?: DisplaySettings;
+      displayName?: string;
+      textColorizeBBCodeMap?: Record<string, string>;
+      textColorizeBBCodeNameMap?: Record<string, string>;
+    }) {
+      const payload: Record<string, any> = {
+        channel_id: params.channelId,
+        channel_ids: params.channelIds,
+        format: params.format,
+        include_ooc: params.includeOoc ?? true,
+        include_archived: params.includeArchived ?? false,
+        include_images: params.includeImages ?? true,
+        include_dice_commands: params.includeDiceCommands ?? true,
+        without_timestamp: params.withoutTimestamp ?? false,
+        merge_messages: params.mergeMessages ?? true,
+      };
+      if (params.displayName) payload.display_name = params.displayName;
+      if (params.timeRange?.length === 2) payload.time_range = params.timeRange;
+      if (params.sliceLimit) payload.slice_limit = params.sliceLimit;
+      if (params.maxConcurrency) payload.max_concurrency = params.maxConcurrency;
+      if (params.displaySettings) payload.display_settings = params.displaySettings;
+      if (params.textColorizeBBCode) {
+        payload.text_bbcode_colorize = true;
+        if (params.textColorizeBBCodeMap && Object.keys(params.textColorizeBBCodeMap).length > 0) {
+          payload.text_bbcode_color_map = params.textColorizeBBCodeMap;
+        }
+        if (params.textColorizeBBCodeNameMap && Object.keys(params.textColorizeBBCodeNameMap).length > 0) {
+          payload.text_bbcode_name_map = params.textColorizeBBCodeNameMap;
+        }
+      }
+      const resp = await api.post('api/v1/chat/export/batch', payload);
+      return resp.data as {
+        task_id: string;
+        status: string;
+        message?: string;
+        requested_at?: number;
+      };
+    },
+
     async getExportTaskStatus(taskId: string) {
       const resp = await api.get(`api/v1/chat/export/${taskId}`);
       return resp.data as {
@@ -6257,6 +6310,18 @@ export const useChatStore = defineStore({
         name?: string;
         file_name?: string;
         uploaded_at?: number;
+      };
+    },
+
+    async uploadBatchExportTask(taskId: string) {
+      const resp = await api.post(`api/v1/chat/export/${taskId}/upload-batch`);
+      return resp.data as {
+        items: Array<{
+          url: string;
+          name?: string;
+          file_name?: string;
+          uploaded_at?: number;
+        }>;
       };
     },
 

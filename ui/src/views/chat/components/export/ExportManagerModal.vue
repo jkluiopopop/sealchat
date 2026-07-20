@@ -17,6 +17,7 @@ interface Props {
 interface Emits {
   (e: 'update:visible', visible: boolean): void;
   (e: 'request-export'): void;
+  (e: 'request-batch-export'): void;
 }
 
 const props = defineProps<Props>();
@@ -342,6 +343,10 @@ const handleCreateExport = () => {
   emit('request-export');
 };
 
+const handleCreateBatchExport = () => {
+  emit('request-batch-export');
+};
+
 const resetState = () => {
   page.value = 1;
   pageSize.value = 5;
@@ -441,6 +446,9 @@ watch(
           />
           <n-space class="filter-actions" align="center" justify="end">
             <n-button size="small" tertiary @click="handleRefresh" :loading="loading">刷新</n-button>
+            <n-button size="small" :disabled="!props.channelId" @click="handleCreateBatchExport">
+              批量导出
+            </n-button>
             <n-button size="small" type="primary" :disabled="!props.channelId" @click="handleCreateExport">
               新建导出
             </n-button>

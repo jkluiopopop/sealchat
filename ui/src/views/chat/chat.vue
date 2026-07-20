@@ -1543,6 +1543,7 @@ const showActionRibbon = ref(isTheaterEmbedMode.value);
 const archiveDrawerVisible = ref(false);
 const exportManagerVisible = ref(false);
 const exportDialogVisible = ref(false);
+const exportDialogBatchMode = ref(false);
 const exportManagerRefreshVersion = ref(0);
 const exportManagerRevealVersion = ref(0);
 const battleReportDrawerVisible = ref(false);
@@ -6153,6 +6154,28 @@ const showCloudUploadDialog = (payload: CloudUploadResult) => {
   });
 };
 
+const showBatchCloudUploadDialog = (items: CloudUploadResult[]) => {
+  const links = items.filter(item => !!item?.url);
+  if (!links.length) {
+    message.warning('云端染色返回异常，未提供链接');
+    return;
+  }
+  dialog.success({
+    title: `云端日志已上传（${links.length} 个）`,
+    positiveText: '知道了',
+    content: () => (
+      <div class="cloud-upload-result">
+        {links.map((item, index) => (
+          <p key={`${item.url}-${index}`}>
+            {item.name || item.file_name || `频道 ${index + 1}`}：
+            <a href={item.url} target="_blank" rel="noopener">{item.url}</a>
+          </p>
+        ))}
+      </div>
+    ),
+  });
+};
+
 const refreshExportManager = (opts?: { revealLatestTask?: boolean }) => {
   exportManagerRefreshVersion.value += 1;
   if (opts?.revealLatestTask) {
@@ -6160,7 +6183,7 @@ const refreshExportManager = (opts?: { revealLatestTask?: boolean }) => {
   }
 };
 
-const pollExportTask = async (taskId: string, opts?: { autoUpload?: boolean; format?: string }) => {
+const pollExportTask = async (taskId: string, opts?: { autoUpload?: boolean; batchUpload?: boolean; format?: string }) => {
   const maxAttempts = 30;
   const interval = 2000;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -6173,11 +6196,16 @@ const pollExportTask = async (taskId: string, opts?: { autoUpload?: boolean; for
         triggerBlobDownload(blob, fileName);
         if (opts?.autoUpload) {
           try {
-            const uploadResp = await chat.uploadExportTask(taskId);
-            if (uploadResp?.url) {
-              showCloudUploadDialog(uploadResp);
+            if (opts.batchUpload) {
+              const uploadResp = await chat.uploadBatchExportTask(taskId);
+              showBatchCloudUploadDialog(uploadResp?.items || []);
             } else {
-              message.warning('云端染色返回结果异常，未提供链接');
+              const uploadResp = await chat.uploadExportTask(taskId);
+              if (uploadResp?.url) {
+                showCloudUploadDialog(uploadResp);
+              } else {
+                message.warning('云端染色返回结果异常，未提供链接');
+              }
             }
           } catch (error: any) {
             const errMsg = error?.response?.data?.error || (error as Error)?.message || '未知错误';
@@ -6233,6 +6261,7 @@ const handleExportMessages = async (params: {
   autoUpload: boolean;
   maxExportMessages: number;
   maxExportConcurrency: number;
+  channelIds?: string[];
 }) => {
   if (!chat.curChannel?.id) {
     message.error('请选择需要导出的频道');
@@ -6275,12 +6304,16 @@ const handleExportMessages = async (params: {
       maxConcurrency,
       displaySettings: displayOptions,
     };
-    const result = await chat.createExportTask(payload);
-    message.info(`导出任务已创建（#${result.task_id}），正在生成文件…`);
+    const channelIds = Array.from(new Set((params.channelIds || []).map(id => String(id || '').trim()).filter(Boolean)));
+    const isBatchExport = channelIds.length > 0;
+    const result = isBatchExport
+      ? await chat.createBatchExportTask({ ...payload, channelIds })
+      : await chat.createExportTask(payload);
+    message.info(`${isBatchExport ? '批量导出' : '导出'}任务已创建（#${result.task_id}），正在生成文件…`);
     refreshExportManager({ revealLatestTask: true });
     exportDialogVisible.value = false;
     const shouldAutoUpload = Boolean(params.autoUpload && params.format === 'json' && canUseCloudUpload.value);
-    void pollExportTask(result.task_id, { autoUpload: shouldAutoUpload, format: params.format });
+    void pollExportTask(result.task_id, { autoUpload: shouldAutoUpload, batchUpload: isBatchExport, format: params.format });
   } catch (error: any) {
     console.error('导出失败', error);
     const errMsg = error?.response?.data?.error || (error as Error)?.message || '导出失败';
@@ -18762,11 +18795,13 @@ onBeforeUnmount(() => {
     :channel-id="chat.curChannel?.id"
     :refresh-version="exportManagerRefreshVersion"
     :reveal-latest-task-version="exportManagerRevealVersion"
-    @request-export="exportDialogVisible = true"
+    @request-export="exportDialogBatchMode = false; exportDialogVisible = true"
+    @request-batch-export="exportDialogBatchMode = true; exportDialogVisible = true"
   />
   <ExportDialog
     v-model:visible="exportDialogVisible"
     :channel-id="chat.curChannel?.id"
+    :batch-mode="exportDialogBatchMode"
     :battle-summary-enabled="showBattleSummary"
     @export="handleExportMessages"
     @request-battle-summary="openBattleSummary"
