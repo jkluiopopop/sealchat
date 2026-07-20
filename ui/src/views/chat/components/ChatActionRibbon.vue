@@ -733,6 +733,7 @@ const cycleIcFilter = () => {
 }
 
 .ribbon-action-button {
+  cursor: var(--sc-cursor-pointer, pointer) !important;
   transition: background-color 0.2s ease, color 0.2s ease;
   border-radius: 999px;
   padding: 0 0.85rem;
@@ -745,6 +746,14 @@ const cycleIcFilter = () => {
   gap: 0.35rem;
   background-color: transparent;
   flex-shrink: 0;
+}
+
+.ribbon-action-button :deep(*) {
+  cursor: inherit !important;
+}
+
+.ribbon-action-button.n-button--disabled {
+  cursor: var(--sc-cursor-not-allowed, not-allowed) !important;
 }
 
 .ribbon-dual-split {

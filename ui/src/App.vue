@@ -11,8 +11,10 @@ import { useDisplayStore } from '@/stores/display'
 import { DEFAULT_MONO_FONT_STACK, buildGlobalFontFamilyStack } from '@/services/font/fontUtils'
 import GlobalLobbyAnnouncementHost from '@/components/announcement/GlobalLobbyAnnouncementHost.vue'
 import QuickLoginApprovalHost from '@/components/auth/QuickLoginApprovalHost.vue'
+import { useCursorThemeRuntime } from '@/services/cursor/cursorRuntime'
 
 const display = useDisplayStore()
+useCursorThemeRuntime()
 const globalFontFamily = computed(() => buildGlobalFontFamilyStack(display.settings.globalFontFamily))
 
 const naiveTheme = computed<GlobalTheme | null>(() => (display.palette === 'night' ? darkTheme : null))

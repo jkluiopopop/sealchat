@@ -459,6 +459,7 @@ type AppConfig struct {
 	Proxy                     ProxyConfig               `json:"-" yaml:"proxy"`
 	LoginBackground           LoginBackgroundConfig     `json:"loginBackground" yaml:"loginBackground"`
 	ThemeManagement           ThemeManagementConfig     `json:"themeManagement" yaml:"themeManagement"`
+	CursorTheme               CursorThemeConfig         `json:"cursorTheme" yaml:"cursorTheme"`
 	UITextReplace             UITextReplaceConfig       `json:"uiTextReplace" yaml:"uiTextReplace"`
 	Certificate               CertificateConfig         `json:"certificate" yaml:"certificate"`
 	AI                        AIConfig                  `json:"ai" yaml:"ai"`
@@ -671,6 +672,7 @@ func ReadConfig() *AppConfig {
 			PlatformThemes:         []PlatformThemeConfig{},
 			DefaultPlatformThemeID: "",
 		},
+		CursorTheme: NormalizeCursorThemeConfig(CursorThemeConfig{}, false),
 		UITextReplace: UITextReplaceConfig{
 			Enabled: false,
 			Rules:   DefaultUITextReplaceRules(),
@@ -760,6 +762,7 @@ func ReadConfig() *AppConfig {
 	applyAuthSessionDefaults(&config.AuthSession)
 	config.Proxy = NormalizeProxyConfig(config.Proxy)
 	config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
+	config.CursorTheme = NormalizeCursorThemeConfig(config.CursorTheme, false)
 	config.UITextReplace = NormalizeUITextReplaceConfig(config.UITextReplace)
 	config.Certificate = NormalizeCertificateConfig(config.Certificate)
 	config.AI = NormalizeAIConfig(config.AI)
@@ -1895,6 +1898,9 @@ func WriteConfig(config *AppConfig) {
 		config.ThemeManagement = NormalizeThemeManagementConfig(config.ThemeManagement)
 		_ = k.Set("themeManagement.platformThemes", config.ThemeManagement.PlatformThemes)
 		_ = k.Set("themeManagement.defaultPlatformThemeId", config.ThemeManagement.DefaultPlatformThemeID)
+		config.CursorTheme = NormalizeCursorThemeConfig(config.CursorTheme, false)
+		_ = k.Set("cursorTheme.version", config.CursorTheme.Version)
+		_ = k.Set("cursorTheme.slots", config.CursorTheme.Slots)
 		_ = k.Set("uiTextReplace.enabled", config.UITextReplace.Enabled)
 		_ = k.Set("uiTextReplace.rules", config.UITextReplace.Rules)
 

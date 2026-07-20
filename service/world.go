@@ -33,6 +33,7 @@ var (
 	ErrWorldSystemDefaultProtect  = errors.New("系统默认世界不可删除")
 	ErrWorldObserverSlugInvalid   = errors.New("world observer slug invalid")
 	ErrWorldObserverSlugConflict  = errors.New("world observer slug conflict")
+	ErrWorldCursorThemeInvalid    = errors.New("世界鼠标样式无效")
 	ErrWorldObserverLinkInvalid   = errors.New("world observer link invalid")
 	ErrWorldDefaultDiceMode       = errors.New("world default dice mode invalid")
 	ErrWorldDefaultDiceBotEmpty   = errors.New("world default dice bot required")
@@ -80,6 +81,7 @@ type WorldUpdateParams struct {
 	ChannelDefaultBotIDs                  *[]string
 	ChannelDefaultEventBotIDs             *[]string
 	CharacterCardBadgeTemplate            *string
+	CursorTheme                           *utils.CursorThemeConfig
 	StickyNoteDefaultAppearance           *protocol.StickyNoteAppearance
 }
 
@@ -736,6 +738,20 @@ func WorldUpdate(worldID, actorID string, params WorldUpdateParams) (*model.Worl
 			return nil, err
 		}
 		updates["character_card_badge_template"] = template
+	}
+	if params.CursorTheme != nil {
+		if err := utils.ValidateCursorThemeConfig(*params.CursorTheme, true); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrWorldCursorThemeInvalid, err)
+		}
+		normalized := utils.NormalizeCursorThemeConfig(*params.CursorTheme, true)
+		if err := validateWorldCursorThemeAttachments(worldID, actorID, normalized); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrWorldCursorThemeInvalid, err)
+		}
+		raw, err := json.Marshal(normalized)
+		if err != nil {
+			return nil, err
+		}
+		updates["cursor_theme_json"] = string(raw)
 	}
 	if params.StickyNoteDefaultAppearance != nil {
 		if err := ValidateStickyNoteAppearanceForWorld(worldID, actorID, params.StickyNoteDefaultAppearance); err != nil {

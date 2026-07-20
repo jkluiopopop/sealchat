@@ -45,6 +45,7 @@ type WorldModel struct {
 	ChannelDefaultBotIDsJSON              string  `json:"-" gorm:"type:text"`
 	ChannelDefaultEventBotIDsJSON         string  `json:"-" gorm:"type:text"`
 	CharacterCardBadgeTemplate            string  `json:"characterCardBadgeTemplate" gorm:"size:512"` // 世界徽章模板
+	CursorThemeJSON                       string  `json:"-" gorm:"type:text"`
 	TheaterPresentationTemplateJSON       string  `json:"-" gorm:"type:text"`
 	StickyNoteDefaultAppearanceJSON       string  `json:"-" gorm:"type:text"`
 	IsSystemDefault                       bool    `json:"isSystemDefault" gorm:"default:false;index"` // 系统默认世界标识，仅允许一个
@@ -113,6 +114,14 @@ func (m *WorldModel) GetStickyNoteDefaultAppearance() *protocol.StickyNoteAppear
 	return &value
 }
 
+func (m *WorldModel) GetCursorTheme() utils.CursorThemeConfig {
+	var value utils.CursorThemeConfig
+	if strings.TrimSpace(m.CursorThemeJSON) != "" {
+		_ = json.Unmarshal([]byte(m.CursorThemeJSON), &value)
+	}
+	return utils.NormalizeCursorThemeConfig(value, true)
+}
+
 func (m *WorldModel) MarshalJSON() ([]byte, error) {
 	type worldModelAlias WorldModel
 	return json.Marshal(&struct {
@@ -121,12 +130,14 @@ func (m *WorldModel) MarshalJSON() ([]byte, error) {
 		ChannelDefaultEventBotIDs   []string                                  `json:"channelDefaultEventBotIds,omitempty"`
 		TheaterPresentationTemplate protocol.WorldTheaterPresentationTemplate `json:"theaterPresentationTemplate"`
 		StickyNoteDefaultAppearance *protocol.StickyNoteAppearance            `json:"stickyNoteDefaultAppearance,omitempty"`
+		CursorTheme                 utils.CursorThemeConfig                   `json:"cursorTheme"`
 	}{
 		worldModelAlias:             (*worldModelAlias)(m),
 		ChannelDefaultBotIDs:        m.GetChannelDefaultBotIDs(),
 		ChannelDefaultEventBotIDs:   m.GetChannelDefaultEventBotIDs(),
 		TheaterPresentationTemplate: m.GetTheaterPresentationTemplate(),
 		StickyNoteDefaultAppearance: m.GetStickyNoteDefaultAppearance(),
+		CursorTheme:                 m.GetCursorTheme(),
 	})
 }
 

@@ -13,6 +13,9 @@ import { useDisplayStore } from '@/stores/display'
 import { useUtilsStore } from '@/stores/utils'
 import { normalizeUITextReplaceConfig } from '@/utils/uiTextReplace'
 import { uploadImageAttachment } from '@/views/chat/composables/useAttachmentUploader'
+import CursorThemeEditorModal from '@/components/cursor/CursorThemeEditorModal.vue'
+import { normalizeCursorTheme } from '@/services/cursor/cursorRuntime'
+import type { CursorThemeConfig } from '@/services/cursor/cursorTypes'
 
 type AdminThemeStyleExpose = {
   save: () => Promise<void>
@@ -40,6 +43,8 @@ const loginBgFileInputRef = ref<HTMLInputElement | null>(null)
 const expandedNames = ref<string[]>([])
 const loginBackground = ref<LoginBackgroundConfig>({})
 const uiTextReplace = ref<UITextReplaceConfig>(normalizeUITextReplaceConfig())
+const cursorTheme = ref<CursorThemeConfig>(normalizeCursorTheme(null, 'platform'))
+const cursorThemeVisible = ref(false)
 
 const { compress: compressImage } = useImageCompressor()
 const loginBgUploading = ref(false)
@@ -60,6 +65,7 @@ const isModified = computed(() =>
     themeManagement: model.value,
     loginBackground: loginBackground.value,
     uiTextReplace: uiTextReplace.value,
+    cursorTheme: cursorTheme.value,
   }) !== originalSnapshot.value,
 )
 
@@ -430,10 +436,12 @@ const resetFromConfig = async () => {
   model.value = normalizeThemeManagement(utils.config?.themeManagement)
   loginBackground.value = cloneDeep(utils.config?.loginBackground || {})
   uiTextReplace.value = normalizeUITextReplaceConfig(utils.config?.uiTextReplace)
+  cursorTheme.value = normalizeCursorTheme(utils.config?.cursorTheme, 'platform')
   originalSnapshot.value = JSON.stringify({
     themeManagement: model.value,
     loginBackground: loginBackground.value,
     uiTextReplace: uiTextReplace.value,
+    cursorTheme: cursorTheme.value,
   })
 }
 
@@ -447,14 +455,17 @@ const save = async () => {
     payload.themeManagement = cloneDeep(model.value)
     payload.loginBackground = cloneDeep(loginBackground.value)
     payload.uiTextReplace = cloneDeep(uiTextReplace.value)
+    payload.cursorTheme = cloneDeep(cursorTheme.value)
     await utils.configSet(payload)
     model.value = normalizeThemeManagement(payload.themeManagement)
     loginBackground.value = cloneDeep(payload.loginBackground || {})
     uiTextReplace.value = normalizeUITextReplaceConfig(payload.uiTextReplace)
+    cursorTheme.value = normalizeCursorTheme(payload.cursorTheme, 'platform')
     originalSnapshot.value = JSON.stringify({
       themeManagement: model.value,
       loginBackground: loginBackground.value,
       uiTextReplace: uiTextReplace.value,
+      cursorTheme: cursorTheme.value,
     })
     message.success('主题与样式管理已保存')
   } catch (error: any) {
@@ -551,6 +562,15 @@ defineExpose<AdminThemeStyleExpose>({
 
         <n-collapse-item title="平台字体管理" name="platform-font-manager">
           <AdminPlatformFontManager />
+        </n-collapse-item>
+
+        <n-collapse-item title="网页鼠标样式" name="cursor-theme">
+          <n-form-item label="自定义鼠标">
+            <div class="flex flex-wrap items-center gap-2 w-full">
+              <n-button secondary @click="cursorThemeVisible = true">管理鼠标样式</n-button>
+              <span class="text-sm text-gray-600 dark:text-gray-400">最多六种；未配置时使用浏览器默认样式</span>
+            </div>
+          </n-form-item>
         </n-collapse-item>
 
         <n-collapse-item title="登录页背景" name="login-bg">
@@ -719,6 +739,7 @@ defineExpose<AdminThemeStyleExpose>({
       </n-collapse>
     </n-form>
   </div>
+  <CursorThemeEditorModal v-model:show="cursorThemeVisible" v-model="cursorTheme" scope="platform" />
 </template>
 
 <style scoped>

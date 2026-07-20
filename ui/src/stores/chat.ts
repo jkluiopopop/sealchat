@@ -2186,6 +2186,7 @@ export const useChatStore = defineStore({
       channelDefaultBotId?: string;
       channelDefaultEventBotIds?: string[];
       characterCardBadgeTemplate?: string;
+      cursorTheme?: import('@/services/cursor/cursorTypes').CursorThemeConfig;
       stickyNoteDefaultAppearance?: unknown;
     }) {
       const resp = await api.patch(`/api/v1/worlds/${worldId}`, payload);

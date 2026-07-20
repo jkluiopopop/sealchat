@@ -533,6 +533,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 	v1Auth.Get("/attachments-list", AttachmentList)
 
 	v1Auth.Post("/attachment-upload", AttachmentUploadTempFile)
+	v1Auth.Post("/cursor-assets", CursorAssetUploadHandler)
 	v1Auth.Post("/attachment-upload-quick", AttachmentUploadQuick)
 	v1Auth.Post("/attachment-import-from-url", AttachmentImportFromURL)
 	v1Auth.Post("/attachment-confirm", AttachmentSetConfirm)
@@ -939,6 +940,13 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 		if validateErr := utils.ValidateThemeManagementConfig(newConfig.ThemeManagement); validateErr != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
 		}
+		newConfig.CursorTheme = utils.NormalizeCursorThemeConfig(newConfig.CursorTheme, false)
+		if validateErr := utils.ValidateCursorThemeConfig(newConfig.CursorTheme, false); validateErr != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
+		}
+		if validateErr := service.ValidateCursorThemeAttachments(newConfig.CursorTheme, "", ""); validateErr != nil {
+			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
+		}
 		newConfig.UITextReplace = utils.NormalizeUITextReplaceConfig(newConfig.UITextReplace)
 		if validateErr := utils.ValidateUITextReplaceConfig(newConfig.UITextReplace); validateErr != nil {
 			return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"message": validateErr.Error()})
@@ -946,6 +954,7 @@ func Init(config *utils.AppConfig, uiStatic fs.FS) error {
 
 		appConfig = mergeConfigForWrite(appConfig, &newConfig)
 		utils.WriteConfig(appConfig)
+		service.ConfirmCursorThemeAttachments(newConfig.CursorTheme)
 		if manager := perfprofiler.Get(); manager != nil && appConfig != nil {
 			_ = manager.Reconfigure(perfprofiler.ConfigFromApp(appConfig.PerformanceProfiler))
 		}

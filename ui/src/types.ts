@@ -290,6 +290,25 @@ export interface ThemeManagementConfig {
   defaultPlatformThemeId?: string;
 }
 
+export type CursorSlot = 'default' | 'pointer' | 'text' | 'grab' | 'grabbing' | 'not-allowed';
+export type CursorMode = 'inherit' | 'browser' | 'custom';
+
+export interface CursorAssetConfig {
+  mode: CursorMode;
+  attachmentId?: string;
+  hotspotX?: number;
+  hotspotY?: number;
+  width?: number;
+  height?: number;
+  size?: number;
+  animated?: boolean;
+}
+
+export interface CursorThemeConfig {
+  version: 1;
+  slots: Partial<Record<CursorSlot, CursorAssetConfig>>;
+}
+
 export interface UITextReplaceRule {
   id: string;
   searchText: string;
@@ -563,6 +582,7 @@ export interface ServerConfig {
   audioImportEnabled?: boolean;
   loginBackground?: LoginBackgroundConfig;
   themeManagement?: ThemeManagementConfig;
+  cursorTheme?: CursorThemeConfig;
   uiTextReplace?: UITextReplaceConfig;
   certificate?: CertificateConfig;
   ai?: AIConfig;
