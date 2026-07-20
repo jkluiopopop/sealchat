@@ -23,7 +23,8 @@ var (
 
 const (
 	legacyDefaultDice3DBotPattern = `(?i)\[(?P<count>\d+)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)\]`
-	defaultDice3DBotPattern       = `(?i)\[(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)\]`
+	bracketDice3DBotPattern       = `(?i)\[(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)\]`
+	defaultDice3DBotPattern       = `(?i)(?:\[|\b)(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)(?:\]|\b)`
 )
 
 func DefaultDice3DWorldConfig() protocol.Dice3DWorldConfig {
@@ -124,7 +125,7 @@ func NormalizeDice3DWorldConfig(value protocol.Dice3DWorldConfig) (protocol.Dice
 	}
 	for index := range value.BotRules {
 		rule := &value.BotRules[index]
-		if rule.Pattern == legacyDefaultDice3DBotPattern {
+		if rule.Pattern == legacyDefaultDice3DBotPattern || rule.Pattern == bracketDice3DBotPattern {
 			rule.Pattern = defaultDice3DBotPattern
 		}
 		if strings.TrimSpace(rule.ID) == "" {
