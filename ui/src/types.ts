@@ -28,6 +28,7 @@ declare module '@satorijs/protocol' {
     pinnedAt?: number;
     pinnedBy?: string;
     isDeleted?: boolean;
+    diceVisual?: DiceVisualPayload;
     deletedAt?: number;
     deletedBy?: string;
     reactions?: MessageReaction[];
@@ -43,6 +44,98 @@ declare module '@satorijs/protocol' {
     characterApiEnabled?: boolean;
     characterApiReason?: string;
   }
+}
+
+export interface Dice3DSkin {
+  faceBackground: string;
+  faceForeground: string;
+  edgeColor: string;
+  roughness: number;
+  metalness: number;
+  scale: number;
+  textures?: Record<string, string>;
+}
+
+export interface Dice3DMotionConfig {
+  speed: number;
+  throwForce: number;
+  wallBounce: number;
+  lingerMs: number;
+  maxDice: number;
+  interactive: boolean;
+}
+
+export interface Dice3DAudioConfig {
+  enabled: boolean;
+  volume: number;
+  soundAssetId?: string;
+}
+
+export interface Dice3DCustomSurface {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface Dice3DDockStack {
+  id: string;
+  label: string;
+  expression: string;
+  color?: string;
+}
+
+export interface Dice3DBotRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  channelIds?: string[];
+  botUserIds?: string[];
+  pattern: string;
+  countGroup: string;
+  sidesGroup: string;
+  valuesGroup: string;
+  valueSeparatorPattern: string;
+  priority: number;
+}
+
+export interface Dice3DWorldConfig {
+  version: number;
+  enabled: boolean;
+  surfaceMode: 'auto' | 'chat' | 'theater' | 'fullscreen' | 'custom';
+  customSurface: Dice3DCustomSurface;
+  defaultSkin: Dice3DSkin;
+  motion: Dice3DMotionConfig;
+  audio: Dice3DAudioConfig;
+  botRules: Dice3DBotRule[];
+}
+
+export interface Dice3DMemberProfile {
+  version: number;
+  useOverride: boolean;
+  skin: Dice3DSkin;
+  audio?: Dice3DAudioConfig;
+  dockEnabled: boolean;
+  dockCorner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'free';
+  dockX: number;
+  dockY: number;
+  dockStacks: Dice3DDockStack[];
+}
+
+export interface DiceVisualPayload {
+  version: number;
+  rollId: string;
+  messageId: string;
+  channelId: string;
+  actorUserId: string;
+  seed: number;
+  groups: Array<{ type: string; results: number[] }>;
+  appearance: Dice3DSkin;
+  motion: Dice3DMotionConfig;
+  audio: Dice3DAudioConfig;
+  surfaceMode: Dice3DWorldConfig['surfaceMode'];
+  customSurface: Dice3DCustomSurface;
+  createdAt: number;
 }
 
 export type BotWhisperForwardRuleType = 'legacy_hidden_dice' | 'keyword' | 'regex' | 'all';

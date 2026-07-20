@@ -18,6 +18,7 @@ type MessageModel struct {
 	StringPKBaseModel
 	Content          string  `json:"content"`
 	WidgetData       string  `json:"widget_data" gorm:"type:text;not null;default:''"`
+	DiceVisualJSON   string  `json:"-" gorm:"type:text;not null;default:''"`
 	ChannelID        string  `json:"channel_id" gorm:"size:100;index:idx_msg_channel_order,priority:1;uniqueIndex:idx_msg_client_dedupe,priority:1"`
 	GuildID          string  `json:"guild_id" gorm:"null;size:100"`
 	MemberID         string  `json:"member_id" gorm:"null;size:100"`
@@ -191,6 +192,12 @@ func (m *MessageModel) ToProtocolType2(channelData *protocol.Channel) *protocol.
 	}
 	if m.ClientID != nil {
 		msg.ClientID = *m.ClientID
+	}
+	if strings.TrimSpace(m.DiceVisualJSON) != "" {
+		var payload protocol.DiceVisualPayload
+		if json.Unmarshal([]byte(m.DiceVisualJSON), &payload) == nil && len(payload.Groups) > 0 {
+			msg.DiceVisual = &payload
+		}
 	}
 	if len(m.WhisperTargets) > 0 {
 		msg.WhisperToIds = make([]*protocol.User, 0, len(m.WhisperTargets))

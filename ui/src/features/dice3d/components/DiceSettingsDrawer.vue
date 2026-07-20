@@ -1,0 +1,228 @@
+<script setup lang="ts">
+import { ref, watch } from 'vue'
+import { useMessage } from 'naive-ui'
+
+import type { Dice3DBotRule, Dice3DMemberProfile, Dice3DWorldConfig } from '@/types'
+import { loadDice3DSettings, saveDice3DProfile, saveDice3DWorldSettings } from '../api'
+import { dice3dRuntime } from '../runtime'
+
+const props = defineProps<{ show: boolean, worldId: string, canManageWorld?: boolean }>()
+const emit = defineEmits<{ (event: 'update:show', value: boolean): void, (event: 'profile-saved', profile: Dice3DMemberProfile): void }>()
+const message = useMessage()
+const loading = ref(false)
+const saving = ref(false)
+const tab = ref<'world' | 'personal'>('personal')
+const config = ref<Dice3DWorldConfig | null>(null)
+const profile = ref<Dice3DMemberProfile | null>(null)
+
+const diceTypes = ['d2', 'd4', 'd6', 'd8', 'd10', 'd12', 'd20', 'd100'] as const
+const ruleTestText = ref('[2d6=2+1]')
+
+const addBotRule = () => {
+	if (!config.value) return
+	config.value.botRules.push({
+		id: `rule-${Date.now()}`,
+		name: '自定义规则',
+		enabled: true,
+			pattern: String.raw`\[(?P<count>\d*)d(?P<sides>\d+)=(?P<values>\d+(?:\+\d+)*)\]`,
+		countGroup: 'count',
+		sidesGroup: 'sides',
+		valuesGroup: 'values',
+		valueSeparatorPattern: String.raw`\+`,
+		priority: 0,
+	})
+}
+
+const addDockStack = () => {
+	if (!profile.value) return
+	profile.value.dockStacks ||= []
+	if (profile.value.dockStacks.length >= 8) return
+	profile.value.dockStacks.push({
+		id: `stack-${Date.now()}`,
+		label: 'd20',
+		expression: '1d20',
+		color: profile.value.skin.faceBackground || '#f5f6fa',
+	})
+}
+
+const setPersonalAudioOverride = (enabled: boolean) => {
+	if (!profile.value) return
+	profile.value.audio = enabled
+		? structuredClone(config.value?.audio || { enabled: true, volume: 0.65 })
+		: undefined
+}
+
+const testBotRule = (rule: Dice3DBotRule) => {
+	try {
+		const browserPattern = rule.pattern.replace(/\(\?P</g, '(?<')
+		const regex = new RegExp(browserPattern, 'i')
+		const match = regex.exec(ruleTestText.value)
+		if (!match) return '未匹配'
+		const groups = match.groups || {}
+			return `${groups[rule.countGroup] || '1'}d${groups[rule.sidesGroup] || '?'} = ${groups[rule.valuesGroup] || '?'}`
+	} catch (error) {
+		return error instanceof Error ? error.message : '正则错误'
+	}
+}
+
+const updateRuleIDs = (rule: Dice3DBotRule, field: 'channelIds' | 'botUserIds', raw: string) => {
+	rule[field] = raw.split(',').map(value => value.trim()).filter(Boolean)
+}
+
+const load = async () => {
+  if (!props.worldId) return
+  loading.value = true
+  try {
+    const result = await loadDice3DSettings(props.worldId)
+    config.value = structuredClone(result.config)
+    profile.value = structuredClone(result.profile)
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '加载 3D 骰子配置失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(() => [props.show, props.worldId] as const, ([show]) => {
+	if (show) void load()
+})
+
+watch(() => props.canManageWorld, (allowed) => {
+	if (!allowed && tab.value === 'world') tab.value = 'personal'
+}, { immediate: true })
+
+const save = async () => {
+  if (!config.value || !profile.value) return
+  saving.value = true
+  try {
+    if (tab.value === 'world') {
+      config.value = await saveDice3DWorldSettings(props.worldId, config.value)
+		  if (config.value.enabled) dice3dRuntime.requestLoad()
+      message.success('世界 3D 骰子配置已保存')
+    } else {
+      const result = await saveDice3DProfile(props.worldId, profile.value)
+      profile.value = result.profile
+      emit('profile-saved', result.profile)
+      message.success('个人骰子已保存')
+    }
+  } catch (error: any) {
+    message.error(error?.response?.data?.message || '保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+</script>
+
+<template>
+  <n-drawer :show="show" width="min(520px, 94vw)" placement="right" @update:show="emit('update:show', $event)">
+    <n-drawer-content title="3D 骰子" closable>
+      <n-spin :show="loading">
+        <n-tabs v-if="config && profile" v-model:value="tab" type="segment">
+          <n-tab-pane name="personal" tab="我的骰子">
+            <n-form label-placement="top" size="small">
+              <n-form-item label="使用个人骰子覆盖世界默认">
+                <n-switch v-model:value="profile.useOverride" />
+              </n-form-item>
+			  <n-grid :cols="2" :x-gap="12">
+                <n-form-item-gi label="骰面底色"><n-color-picker v-model:value="profile.skin.faceBackground" /></n-form-item-gi>
+                <n-form-item-gi label="数字颜色"><n-color-picker v-model:value="profile.skin.faceForeground" /></n-form-item-gi>
+                <n-form-item-gi label="边缘颜色"><n-color-picker v-model:value="profile.skin.edgeColor" /></n-form-item-gi>
+                <n-form-item-gi label="骰子大小"><n-slider v-model:value="profile.skin.scale" :min="0.5" :max="2" :step="0.05" /></n-form-item-gi>
+			  </n-grid>
+			  <n-collapse>
+				<n-collapse-item title="自定义骰面图集（附件 ID 或 URL）">
+				  <n-form-item v-for="type in diceTypes" :key="type" :label="type">
+					<n-input :value="profile.skin.textures?.[type] || ''" @update:value="profile.skin.textures = { ...(profile.skin.textures || {}), [type]: $event }" />
+				  </n-form-item>
+				</n-collapse-item>
+				  </n-collapse>
+			  <n-form-item label="覆盖世界投掷音效">
+				<n-switch :value="Boolean(profile.audio)" @update:value="setPersonalAudioOverride" />
+			  </n-form-item>
+			  <template v-if="profile.audio">
+				<n-form-item label="个人投掷音效"><n-switch v-model:value="profile.audio.enabled" /></n-form-item>
+				<n-form-item label="个人音量"><n-slider v-model:value="profile.audio.volume" :min="0" :max="1" :step="0.05" /></n-form-item>
+				<n-form-item label="个人音效附件 ID"><n-input v-model:value="profile.audio.soundAssetId" clearable /></n-form-item>
+			  </template>
+              <n-form-item label="屏幕角骰子堆"><n-switch v-model:value="profile.dockEnabled" /></n-form-item>
+              <n-form-item label="默认位置">
+                <n-select v-model:value="profile.dockCorner" :options="[
+                  { label: '右下', value: 'bottom-right' }, { label: '左下', value: 'bottom-left' },
+                  { label: '右上', value: 'top-right' }, { label: '左上', value: 'top-left' }, { label: '自由位置', value: 'free' },
+                ]" />
+              </n-form-item>
+			  <n-card v-for="(stack, index) in profile.dockStacks" :key="stack.id" size="small" :title="`骰子堆 ${index + 1}`" style="margin-bottom: 10px">
+				<template #header-extra><n-button text type="error" @click="profile.dockStacks.splice(index, 1)">删除</n-button></template>
+				<n-grid :cols="2" :x-gap="12">
+				  <n-form-item-gi label="标签"><n-input v-model:value="stack.label" /></n-form-item-gi>
+				  <n-form-item-gi label="表达式"><n-input v-model:value="stack.expression" /></n-form-item-gi>
+				</n-grid>
+				<n-form-item label="颜色"><n-color-picker v-model:value="stack.color" /></n-form-item>
+			  </n-card>
+			  <n-button dashed block :disabled="profile.dockStacks.length >= 8" @click="addDockStack">增加骰子堆</n-button>
+            </n-form>
+          </n-tab-pane>
+
+		  <n-tab-pane v-if="canManageWorld" name="world" tab="世界默认">
+            <n-form label-placement="top" size="small">
+              <n-form-item label="启用 3D 骰子"><n-switch v-model:value="config.enabled" /></n-form-item>
+				  <n-form-item label="显示区域">
+                <n-select v-model:value="config.surfaceMode" :options="[
+                  { label: '自动：聊天区 / 小剧场左侧', value: 'auto' }, { label: '聊天区域', value: 'chat' },
+					  { label: '小剧场区域', value: 'theater' }, { label: '全屏', value: 'fullscreen' },
+					  { label: '自定义区域', value: 'custom' },
+					]" />
+				  </n-form-item>
+				  <n-card v-if="config.surfaceMode === 'custom'" size="small" title="自定义显示区域" style="margin-bottom: 12px">
+					<n-grid :cols="2" :x-gap="12">
+					  <n-form-item-gi label="左侧位置"><n-slider v-model:value="config.customSurface.x" :min="0" :max="0.9" :step="0.01" /></n-form-item-gi>
+					  <n-form-item-gi label="顶部位置"><n-slider v-model:value="config.customSurface.y" :min="0" :max="0.9" :step="0.01" /></n-form-item-gi>
+					  <n-form-item-gi label="宽度"><n-slider v-model:value="config.customSurface.width" :min="0.1" :max="1" :step="0.01" /></n-form-item-gi>
+					  <n-form-item-gi label="高度"><n-slider v-model:value="config.customSurface.height" :min="0.1" :max="1" :step="0.01" /></n-form-item-gi>
+					</n-grid>
+				  </n-card>
+			  <n-grid :cols="2" :x-gap="12">
+				<n-form-item-gi label="骰面底色"><n-color-picker v-model:value="config.defaultSkin.faceBackground" /></n-form-item-gi>
+				<n-form-item-gi label="数字颜色"><n-color-picker v-model:value="config.defaultSkin.faceForeground" /></n-form-item-gi>
+				<n-form-item-gi label="边缘颜色"><n-color-picker v-model:value="config.defaultSkin.edgeColor" /></n-form-item-gi>
+				<n-form-item-gi label="骰子大小"><n-slider v-model:value="config.defaultSkin.scale" :min="0.5" :max="2" :step="0.05" /></n-form-item-gi>
+			  </n-grid>
+              <n-grid :cols="2" :x-gap="12">
+                <n-form-item-gi label="运动速度"><n-slider v-model:value="config.motion.speed" :min="0.25" :max="3" :step="0.05" /></n-form-item-gi>
+                <n-form-item-gi label="投掷力度"><n-slider v-model:value="config.motion.throwForce" :min="0.25" :max="3" :step="0.05" /></n-form-item-gi>
+                <n-form-item-gi label="停留时间（毫秒）"><n-input-number v-model:value="config.motion.lingerMs" :min="500" :max="30000" /></n-form-item-gi>
+                <n-form-item-gi label="最大同时骰子"><n-input-number v-model:value="config.motion.maxDice" :min="1" :max="100" /></n-form-item-gi>
+              </n-grid>
+              <n-form-item label="允许结算后物理交互"><n-switch v-model:value="config.motion.interactive" /></n-form-item>
+			  <n-form-item label="投掷音效"><n-switch v-model:value="config.audio.enabled" /></n-form-item>
+			  <n-form-item label="音量"><n-slider v-model:value="config.audio.volume" :min="0" :max="1" :step="0.05" /></n-form-item>
+			  <n-form-item label="自定义音效附件 ID"><n-input v-model:value="config.audio.soundAssetId" clearable placeholder="留空使用内置轻量音效" /></n-form-item>
+			  <n-divider>BOT 骰点匹配</n-divider>
+			  <n-form-item label="规则测试文本"><n-input v-model:value="ruleTestText" /></n-form-item>
+			  <n-card v-for="(rule, index) in config.botRules" :key="rule.id" size="small" :title="rule.name || `规则 ${index + 1}`" style="margin-bottom: 12px">
+				<template #header-extra><n-button text type="error" @click="config.botRules.splice(index, 1)">删除</n-button></template>
+				<n-grid :cols="2" :x-gap="12">
+				  <n-form-item-gi label="名称"><n-input v-model:value="rule.name" /></n-form-item-gi>
+				  <n-form-item-gi label="优先级"><n-input-number v-model:value="rule.priority" /></n-form-item-gi>
+				</n-grid>
+				<n-form-item label="启用"><n-switch v-model:value="rule.enabled" /></n-form-item>
+				<n-form-item label="频道 ID（逗号分隔）"><n-input :value="rule.channelIds?.join(', ') || ''" @update:value="updateRuleIDs(rule, 'channelIds', $event)" /></n-form-item>
+				<n-form-item label="BOT 用户 ID（逗号分隔）"><n-input :value="rule.botUserIds?.join(', ') || ''" @update:value="updateRuleIDs(rule, 'botUserIds', $event)" /></n-form-item>
+				<n-form-item label="正则"><n-input v-model:value="rule.pattern" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }" /></n-form-item>
+				<n-grid :cols="2" :x-gap="12">
+				  <n-form-item-gi label="数量捕获组"><n-input v-model:value="rule.countGroup" /></n-form-item-gi>
+				  <n-form-item-gi label="骰面捕获组"><n-input v-model:value="rule.sidesGroup" /></n-form-item-gi>
+				  <n-form-item-gi label="结果捕获组"><n-input v-model:value="rule.valuesGroup" /></n-form-item-gi>
+				  <n-form-item-gi label="结果分隔正则"><n-input v-model:value="rule.valueSeparatorPattern" /></n-form-item-gi>
+				</n-grid>
+				<n-alert type="info" :show-icon="false">测试：{{ testBotRule(rule) }}</n-alert>
+			  </n-card>
+			  <n-button dashed block @click="addBotRule">增加 BOT 匹配规则</n-button>
+            </n-form>
+          </n-tab-pane>
+        </n-tabs>
+      </n-spin>
+      <template #footer><n-button type="primary" :loading="saving" :disabled="loading || !config || !profile" @click="save">保存</n-button></template>
+    </n-drawer-content>
+  </n-drawer>
+</template>

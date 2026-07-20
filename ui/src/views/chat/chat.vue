@@ -37,6 +37,12 @@ import IFormFloatingWindows from '@/components/iform/IFormFloatingWindows.vue';
 import IFormDrawer from '@/components/iform/IFormDrawer.vue';
 import IFormEmbedInstances from '@/components/iform/IFormEmbedInstances.vue';
 import StickyNoteManager from './components/StickyNoteManager.vue';
+import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue';
+import DiceSettingsDrawer from '@/features/dice3d/components/DiceSettingsDrawer.vue';
+import DiceDock from '@/features/dice3d/components/DiceDock.vue';
+import { loadDice3DSettings, saveDice3DProfile } from '@/features/dice3d/api';
+import { dice3dRuntime } from '@/features/dice3d/runtime';
+import type { Dice3DMemberProfile } from '@/types';
 import CharacterSheetManager from './components/character-sheet/CharacterSheetManager.vue';
 import { useStickyNoteStore } from '@/stores/stickyNote';
 import { useAudioStudioStore } from '@/stores/audioStudio';
@@ -205,6 +211,8 @@ const channelImageLayout = useChannelImageLayoutStore();
 const onboarding = useOnboardingStore();
 const iFormStore = useIFormStore();
 const stickyNoteStore = useStickyNoteStore();
+const dice3dSettingsVisible = ref(false);
+const dice3dProfile = ref<Dice3DMemberProfile | null>(null);
 const characterCardStore = useCharacterCardStore();
 const characterSheetStore = useCharacterSheetStore();
 iFormStore.bootstrap();
@@ -335,6 +343,47 @@ const openIcOocSplitView = async (side: 'left' | 'right') => {
 
 const toggleStickyNotes = () => {
   stickyNoteStore.toggleVisible();
+};
+
+const openDice3DSettings = () => {
+  dice3dSettingsVisible.value = true;
+};
+
+const canManageDice3DWorld = computed(() => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  const role = worldId ? chat.worldDetailMap[worldId]?.memberRole : '';
+  return role === 'owner' || role === 'admin' || Boolean(user.checkPerm?.('mod_admin'));
+});
+
+const refreshDice3DProfile = async () => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (!worldId || chat.observerMode) {
+    dice3dProfile.value = null;
+    return;
+  }
+  try {
+    const settings = await loadDice3DSettings(worldId);
+    dice3dProfile.value = settings.profile;
+  } catch {
+    dice3dProfile.value = null;
+  }
+};
+
+watch(() => chat.currentWorldId, () => void refreshDice3DProfile(), { immediate: true });
+
+const handleDice3DProfileSaved = (profile: Dice3DMemberProfile) => {
+  dice3dProfile.value = profile;
+};
+
+const handleDice3DDockMove = async (position: { x: number, y: number }) => {
+  const worldId = String(chat.currentWorldId || '').trim();
+  if (!worldId || !dice3dProfile.value) return;
+  dice3dProfile.value = { ...dice3dProfile.value, dockCorner: 'free', dockX: position.x, dockY: position.y };
+  try {
+    await saveDice3DProfile(worldId, dice3dProfile.value);
+  } catch {
+    // 位置保留在本次会话；下次成功保存配置时同步。
+  }
 };
 
 const resolveIFormEmbedLinkBase = () => {
@@ -13794,6 +13843,12 @@ const handleMessageCreated = (e?: Event) => {
   const incomingChannelId = String(e.channel?.id || (incoming as any)?.channel?.id || (incoming as any)?.channel_id || '').trim();
   const currentChannelId = String(chat.curChannel?.id || '').trim();
   const isCurrentChannelMessage = !!incomingChannelId && incomingChannelId === currentChannelId;
+	if (isCurrentChannelMessage && (incoming as any).diceVisual) {
+		const payload = (incoming as any).diceVisual;
+		if (!isTheaterEmbedMode.value || !dice3dRuntime.forwardToTheater(payload)) {
+			dice3dRuntime.play(payload);
+		}
+	}
   const isSelf = incoming.user?.id === user.info.id;
   const content = incoming.content || '';
   const currentUserId = user.info.id;
@@ -16010,6 +16065,8 @@ onBeforeUnmount(() => {
           :ic-ooc-split-active="false"
           :sticky-note-enabled="true"
           :sticky-note-active="stickyNoteStore.uiVisible"
+		  :dice3d-enabled="!chat.observerMode"
+		  :dice3d-active="dice3dSettingsVisible"
           :webhook-enabled="webhookManageAllowed"
           :webhook-active="webhookDrawerVisible"
           :bridge-status-active="bridgeStatusDrawerVisible"
@@ -16032,6 +16089,7 @@ onBeforeUnmount(() => {
           @open-theater="openTheaterView"
           @open-ic-ooc-split="openIcOocSplitView"
           @toggle-sticky-note="toggleStickyNotes"
+		  @open-dice3d="openDice3DSettings"
           @open-webhook="webhookDrawerVisible = true"
           @open-bridge-status="bridgeStatusDrawerVisible = true"
           @open-email-notification="emailNotificationDrawerVisible = true"
@@ -18875,6 +18933,24 @@ onBeforeUnmount(() => {
     v-if="chat.curChannel?.id"
     :channel-id="chat.curChannel.id"
   />
+
+	<DiceOverlayLoader v-if="!isTheaterEmbedMode" :surface-element="messagesListRef" />
+	<DiceDock
+		v-if="!isTheaterEmbedMode"
+		:enabled="dice3dProfile?.dockEnabled === true"
+			:x="dice3dProfile?.dockX"
+			:y="dice3dProfile?.dockY"
+			:corner="dice3dProfile?.dockCorner"
+			:stacks="dice3dProfile?.dockStacks"
+		@roll="handleDiceRollNow"
+		@move="handleDice3DDockMove"
+	/>
+	<DiceSettingsDrawer
+		v-model:show="dice3dSettingsVisible"
+		:world-id="chat.currentWorldId"
+		:can-manage-world="canManageDice3DWorld"
+		@profile-saved="handleDice3DProfileSaved"
+	/>
 
   <!-- 人物卡预览窗口 -->
   <CharacterSheetManager />

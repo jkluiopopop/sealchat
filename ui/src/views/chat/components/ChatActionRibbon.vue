@@ -18,6 +18,7 @@ import {
   Users as UsersIcon,
   Id as CharacterCardIcon,
   Message2 as CharacterRemarkIcon,
+	Dice as Dice3DIcon,
 } from '@vicons/tabler'
 import { DocumentTextOutline } from '@vicons/ionicons5'
 import { MailOutline } from '@vicons/ionicons5'
@@ -56,6 +57,8 @@ interface Props {
   icOocSplitActive?: boolean
   stickyNoteEnabled?: boolean
   stickyNoteActive?: boolean
+	dice3dEnabled?: boolean
+	dice3dActive?: boolean
   webhookEnabled?: boolean
   webhookActive?: boolean
   bridgeStatusActive?: boolean
@@ -81,6 +84,7 @@ interface Emits {
   (e: 'open-theater'): void
   (e: 'open-ic-ooc-split', side: 'left' | 'right'): void
   (e: 'toggle-sticky-note'): void
+	(e: 'open-dice3d'): void
   (e: 'open-webhook'): void
   (e: 'open-bridge-status'): void
   (e: 'open-email-notification'): void
@@ -177,6 +181,10 @@ const allActionButtons = computed<ActionButton[]>(() => {
   if (props.stickyNoteEnabled !== false) {
     buttons.push({ key: 'sticky-note', label: '便签', icon: DocumentTextOutline, emitEvent: 'toggle-sticky-note', activeKey: 'stickyNoteActive' })
   }
+
+	if (props.dice3dEnabled !== false) {
+		buttons.push({ key: 'dice3d', label: '3D 骰子', icon: Dice3DIcon, emitEvent: 'open-dice3d', activeKey: 'dice3dActive' })
+	}
 
   // Webhook 授权管理入口（通常在分屏模式下启用）
   if (props.webhookEnabled) {

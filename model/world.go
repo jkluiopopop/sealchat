@@ -48,6 +48,7 @@ type WorldModel struct {
 	CursorThemeJSON                       string  `json:"-" gorm:"type:text"`
 	TheaterPresentationTemplateJSON       string  `json:"-" gorm:"type:text"`
 	StickyNoteDefaultAppearanceJSON       string  `json:"-" gorm:"type:text"`
+	Dice3DConfigJSON                      string  `json:"-" gorm:"column:dice_3d_config_json;type:text"`
 	IsSystemDefault                       bool    `json:"isSystemDefault" gorm:"default:false;index"` // 系统默认世界标识，仅允许一个
 	OwnerID                               string  `json:"ownerId" gorm:"size:100;index"`
 	DefaultChannelID                      string  `json:"defaultChannelId" gorm:"size:100"`
@@ -114,6 +115,14 @@ func (m *WorldModel) GetStickyNoteDefaultAppearance() *protocol.StickyNoteAppear
 	return &value
 }
 
+func (m *WorldModel) GetDice3DConfig() protocol.Dice3DWorldConfig {
+	var value protocol.Dice3DWorldConfig
+	if strings.TrimSpace(m.Dice3DConfigJSON) != "" {
+		_ = json.Unmarshal([]byte(m.Dice3DConfigJSON), &value)
+	}
+	return value
+}
+
 func (m *WorldModel) GetCursorTheme() utils.CursorThemeConfig {
 	var value utils.CursorThemeConfig
 	if strings.TrimSpace(m.CursorThemeJSON) != "" {
@@ -131,6 +140,7 @@ func (m *WorldModel) MarshalJSON() ([]byte, error) {
 		TheaterPresentationTemplate protocol.WorldTheaterPresentationTemplate `json:"theaterPresentationTemplate"`
 		StickyNoteDefaultAppearance *protocol.StickyNoteAppearance            `json:"stickyNoteDefaultAppearance,omitempty"`
 		CursorTheme                 utils.CursorThemeConfig                   `json:"cursorTheme"`
+		Dice3DConfig                protocol.Dice3DWorldConfig                `json:"dice3dConfig"`
 	}{
 		worldModelAlias:             (*worldModelAlias)(m),
 		ChannelDefaultBotIDs:        m.GetChannelDefaultBotIDs(),
@@ -138,6 +148,7 @@ func (m *WorldModel) MarshalJSON() ([]byte, error) {
 		TheaterPresentationTemplate: m.GetTheaterPresentationTemplate(),
 		StickyNoteDefaultAppearance: m.GetStickyNoteDefaultAppearance(),
 		CursorTheme:                 m.GetCursorTheme(),
+		Dice3DConfig:                m.GetDice3DConfig(),
 	})
 }
 

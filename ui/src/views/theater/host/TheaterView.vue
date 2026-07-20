@@ -17,6 +17,8 @@ import type { StagePointerTraceInput } from '../shared/stage-types'
 import { TheaterDialogueRuntime } from '../dialogue/theater-dialogue-runtime'
 import { theaterPresentationSchema, type TheaterPresentation } from '@/types/theaterPresentation'
 import type { TheaterEditorCommand, TheaterSection, TheaterSelection } from '@/components/theater-presentation/theaterPresentationEditorState'
+import DiceOverlayLoader from '@/features/dice3d/components/DiceOverlayLoader.vue'
+import { dice3dRuntime, isDice3DTheaterMessage } from '@/features/dice3d/runtime'
 import {
   installTheaterBridgeDebugConsoleCommand,
   isTheaterBridgeDebugEnabled,
@@ -43,6 +45,7 @@ installTheaterBridgeDebugConsoleCommand()
 const layoutRef = ref<HTMLDivElement | null>(null)
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const stageAppRef = ref<InstanceType<typeof StageApp> | null>(null)
+const stageSurfaceRef = ref<HTMLElement | null>(null)
 const splitRatio = ref(0.7)
 const splitDragging = ref(false)
 const chatHidden = ref(false)
@@ -342,6 +345,7 @@ onBeforeMount(startTheaterBridge)
 
 onMounted(async () => {
   window.addEventListener('message', handleTheaterContext)
+	window.addEventListener('message', handleDice3DMessage)
   if (!worldId.value || !channelId.value) {
     message.warning('请先进入频道')
     await router.replace({ name: 'home' })
@@ -356,6 +360,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('message', handleTheaterContext)
+	window.removeEventListener('message', handleDice3DMessage)
   appearancePreview.value = null
   theaterBridge?.stop()
   theaterBridge = null
@@ -364,6 +369,11 @@ onBeforeUnmount(() => {
   theaterSync = null
   audioStudio.setPlaybackAuthority(true)
 })
+
+function handleDice3DMessage(event: MessageEvent) {
+	if (!isDice3DTheaterMessage(event)) return
+	dice3dRuntime.play(event.data.payload)
+}
 </script>
 
 <template>
@@ -374,6 +384,7 @@ onBeforeUnmount(() => {
       :class="{ 'is-dragging': splitDragging, 'is-narrow': isNarrow, 'is-chat-hidden': chatHidden }"
     >
       <section
+		ref="stageSurfaceRef"
         v-show="!isNarrow || mobileTab === 'stage'"
         class="theater-host-stage"
         :class="{ 'is-sync-pending': !theaterSyncReady }"
@@ -405,6 +416,7 @@ onBeforeUnmount(() => {
           @appearance-preview-phase="sendAppearancePreviewPhase"
         />
         <div v-if="!theaterSyncReady" class="theater-sync-loading">正在加载后端舞台……</div>
+		<DiceOverlayLoader :surface-element="stageSurfaceRef" :chat-surface-element="iframeRef" />
       </section>
 
       <div

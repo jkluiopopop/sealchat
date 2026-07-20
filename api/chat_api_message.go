@@ -2386,6 +2386,33 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 	rows := createResult.RowsAffected
 
 	if rows > 0 {
+		if renderResult != nil {
+			if err := model.MessageDiceRollReplace(m.ID, renderResult.Rolls); err != nil {
+				return nil, err
+			}
+		}
+		var diceRolls []*model.MessageDiceRollModel
+		if renderResult != nil {
+			diceRolls = renderResult.Rolls
+		}
+		if len(diceRolls) > 0 || ctx.User.IsBot {
+			payload, payloadErr := service.BuildDiceVisualPayload(
+				m.ID, channel.WorldID, data.ChannelID, ctx.User.ID, content, diceRolls, ctx.User.IsBot, m.CreatedAt,
+			)
+			if payloadErr != nil {
+				log.Printf("构建 3D 骰子事件失败 message=%s err=%v", m.ID, payloadErr)
+			} else if payload != nil {
+				raw, marshalErr := json.Marshal(payload)
+				if marshalErr != nil {
+					log.Printf("序列化 3D 骰子事件失败 message=%s err=%v", m.ID, marshalErr)
+				} else {
+					m.DiceVisualJSON = string(raw)
+					if updateErr := db.Model(&m).Update("dice_visual_json", m.DiceVisualJSON).Error; updateErr != nil {
+						return nil, updateErr
+					}
+				}
+			}
+		}
 		if collector := metrics.Get(); collector != nil {
 			collector.RecordMessage()
 		}
@@ -2464,11 +2491,6 @@ func apiMessageCreate(ctx *ChatContext, data *struct {
 
 		_ = model.WebhookEventLogAppendForMessage(data.ChannelID, "message-created", m.ID)
 		notifyAppMessageCreated(m.ID)
-		if renderResult != nil {
-			if err := model.MessageDiceRollReplace(m.ID, renderResult.Rolls); err != nil {
-				return nil, err
-			}
-		}
 		go func(channelID string, message model.MessageModel) {
 			if err := service.RecordDigestWindowMessage(channelID, &message); err != nil {
 				log.Printf("digest-push: 记录消息摘要窗口失败 channel=%s message=%s err=%v", channelID, message.ID, err)
@@ -4201,6 +4223,7 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 	if len(content) >= 2 && (content[0] == '/' || content[0] == '.') && content[1] == 'x' {
 		vm := ds.NewVM()
 		var botText string
+		var botRollDetail string
 		expr := strings.TrimSpace(content[2:])
 
 		if expr == "" {
@@ -4218,6 +4241,7 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 		if err != nil {
 			botText = "出错:" + err.Error()
 		} else {
+			botRollDetail = vm.GetDetailText()
 			sb := strings.Builder{}
 			sb.WriteString(fmt.Sprintf("算式: %s\n", expr))
 			sb.WriteString(fmt.Sprintf("过程: %s\n", vm.GetDetailText()))
@@ -4249,6 +4273,31 @@ func builtinSealBotSolve(ctx *ChatContext, data *struct {
 			m.WhisperTarget = ctx.User
 		}
 		model.GetDB().Create(&m)
+		if botRollDetail != "" && channelData != nil && channelData.WorldID != "" {
+			payload, payloadErr := service.BuildDiceVisualPayload(
+				m.ID,
+				channelData.WorldID,
+				data.ChannelID,
+				ctx.User.ID,
+				botText,
+				[]*model.MessageDiceRollModel{{ResultDetail: botRollDetail}},
+				false,
+				m.CreatedAt,
+			)
+			if payloadErr != nil {
+				log.Printf("构建内置小海豹 3D 骰子事件失败 message=%s err=%v", m.ID, payloadErr)
+			} else if payload != nil {
+				raw, marshalErr := json.Marshal(payload)
+				if marshalErr != nil {
+					log.Printf("序列化内置小海豹 3D 骰子事件失败 message=%s err=%v", m.ID, marshalErr)
+				} else {
+					m.DiceVisualJSON = string(raw)
+					if updateErr := model.GetDB().Model(&m).Update("dice_visual_json", m.DiceVisualJSON).Error; updateErr != nil {
+						log.Printf("保存内置小海豹 3D 骰子事件失败 message=%s err=%v", m.ID, updateErr)
+					}
+				}
+			}
+		}
 
 		userData := &protocol.User{
 			ID:     "BOT:1000",

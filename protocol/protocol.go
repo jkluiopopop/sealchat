@@ -159,42 +159,43 @@ const (
 )
 
 type Message struct {
-	ID               string           `json:"id"`
-	MessageID        string           // Deprecated
-	Channel          *Channel         `json:"channel"`
-	Guild            *Guild           `json:"guild"`
-	User             *User            `json:"user"`
-	Identity         *MessageIdentity `json:"identity,omitempty"`
-	SenderRoleID     string           `json:"senderRoleId,omitempty"`
-	Member           *GuildMember     `json:"member"`
-	Content          string           `json:"content"`
-	WidgetData       string           `json:"widgetData,omitempty"`
-	Elements         []*Element       `json:"elements"`
-	Timestamp        int64            `json:"timestamp"`
-	Quote            *Message         `json:"quote"`
-	CreatedAt        int64            `json:"createdAt"`
-	UpdatedAt        int64            `json:"updatedAt"`
-	DisplayOrder     float64          `json:"displayOrder"`
-	IcMode           string           `json:"icMode"`
-	IsWhisper        bool             `json:"isWhisper"`
-	WhisperTo        *User            `json:"whisperTo"`
-	WhisperToIds     []*User          `json:"whisperToIds,omitempty"`
-	IsEdited         bool             `json:"isEdited"`
-	EditCount        int              `json:"editCount"`
-	EditedByUserId   string           `json:"editedByUserId,omitempty"`
-	EditedByUserName string           `json:"editedByUserName,omitempty"`
-	IsArchived       bool             `json:"isArchived"`
-	ArchivedAt       int64            `json:"archivedAt"`
-	ArchivedBy       string           `json:"archivedBy"`
-	ArchiveReason    string           `json:"archiveReason"`
-	IsPinned         bool             `json:"isPinned"`
-	PinnedAt         int64            `json:"pinnedAt"`
-	PinnedBy         string           `json:"pinnedBy"`
-	IsDeleted        bool             `json:"isDeleted"`
-	DeletedAt        int64            `json:"deletedAt"`
-	DeletedBy        string           `json:"deletedBy"`
-	ClientID         string           `json:"clientId,omitempty"`
-	WhisperMeta      *WhisperMeta     `json:"whisperMeta,omitempty"`
+	ID               string             `json:"id"`
+	MessageID        string             // Deprecated
+	Channel          *Channel           `json:"channel"`
+	Guild            *Guild             `json:"guild"`
+	User             *User              `json:"user"`
+	Identity         *MessageIdentity   `json:"identity,omitempty"`
+	SenderRoleID     string             `json:"senderRoleId,omitempty"`
+	Member           *GuildMember       `json:"member"`
+	Content          string             `json:"content"`
+	WidgetData       string             `json:"widgetData,omitempty"`
+	Elements         []*Element         `json:"elements"`
+	Timestamp        int64              `json:"timestamp"`
+	Quote            *Message           `json:"quote"`
+	CreatedAt        int64              `json:"createdAt"`
+	UpdatedAt        int64              `json:"updatedAt"`
+	DisplayOrder     float64            `json:"displayOrder"`
+	IcMode           string             `json:"icMode"`
+	IsWhisper        bool               `json:"isWhisper"`
+	WhisperTo        *User              `json:"whisperTo"`
+	WhisperToIds     []*User            `json:"whisperToIds,omitempty"`
+	IsEdited         bool               `json:"isEdited"`
+	EditCount        int                `json:"editCount"`
+	EditedByUserId   string             `json:"editedByUserId,omitempty"`
+	EditedByUserName string             `json:"editedByUserName,omitempty"`
+	IsArchived       bool               `json:"isArchived"`
+	ArchivedAt       int64              `json:"archivedAt"`
+	ArchivedBy       string             `json:"archivedBy"`
+	ArchiveReason    string             `json:"archiveReason"`
+	IsPinned         bool               `json:"isPinned"`
+	PinnedAt         int64              `json:"pinnedAt"`
+	PinnedBy         string             `json:"pinnedBy"`
+	IsDeleted        bool               `json:"isDeleted"`
+	DeletedAt        int64              `json:"deletedAt"`
+	DeletedBy        string             `json:"deletedBy"`
+	ClientID         string             `json:"clientId,omitempty"`
+	WhisperMeta      *WhisperMeta       `json:"whisperMeta,omitempty"`
+	DiceVisual       *DiceVisualPayload `json:"diceVisual,omitempty"`
 }
 
 type MessageIdentity struct {
@@ -408,6 +409,8 @@ const (
 	EventExternalGlossariesUpdated      EventName = "external-glossaries-updated"
 	EventWorldExternalGlossariesUpdated EventName = "world-external-glossaries-updated"
 	EventWorldUpdated                   EventName = "world-updated"
+	EventWorldDice3DUpdated             EventName = "world-dice3d-updated"
+	EventWorldMemberDice3DUpdated       EventName = "world-member-dice3d-updated"
 	EventLobbyAnnouncementUpdated       EventName = "lobby-announcement-updated"
 	// Sticky Note Events
 	EventStickyNoteCreated EventName = "sticky-note-created"
